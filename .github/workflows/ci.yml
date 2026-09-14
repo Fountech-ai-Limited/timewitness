@@ -63,6 +63,34 @@ jobs:
           head -c 32 /dev/urandom > "$RUNNER_TEMP/throwaway-key"
           TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/key-log.txt"
 
+      - name: Verifying needs no account and no call to us
+        # Two halves, and each catches what the other cannot. The test reads what the verifier links
+        # and what its sources say, so it names the file and the line. The script takes the network
+        # away and holds the verdict to the one given with it, so it catches a way out nobody has
+        # thought to name. Generating a receipt may one day go through a service; verifying never
+        # does, and this is what fails the build the day that stops being true.
+        run: |
+          cargo test -p timewitness-architecture --test verify_path_needs_nothing_of_ours
+          TIMEWITNESS_BIN=target/debug/timewitness bash scripts/verify-offline.sh "$RUNNER_TEMP/key-log.txt"
+
+      - name: That check still catches a verifier that reaches out
+        # The script above run backwards, twice, and the run passes only if it refuses for the reason
+        # each mode is built to trip. A refusal for any other reason, such as no namespace being made
+        # at all, is not the check catching anything, so the reason is read as well as the exit.
+        run: |
+          prove() {
+            local mode="$1" expected="$2" said
+            if said="$(TW_OFFLINE_PROVE="$mode" TIMEWITNESS_BIN=target/debug/timewitness bash scripts/verify-offline.sh "$RUNNER_TEMP/key-log.txt" 2>&1)"; then
+              printf '%s\n' "$said"
+              echo "the offline check passed with TW_OFFLINE_PROVE=$mode, so it is not connected"
+              exit 1
+            fi
+            printf '%s\n' "$said"
+            printf '%s\n' "$said" | grep -qF "$expected" || { echo "it refused, and not for the reason $mode is built to trip"; exit 1; }
+          }
+          prove leaky "could still reach the internet"
+          prove lookup "answered differently with the network taken away"
+
       - name: The verifier page
         run: |
           rustup target add wasm32-unknown-unknown

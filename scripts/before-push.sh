@@ -65,10 +65,12 @@ if ! cargo audit --version >/dev/null 2>&1; then
 fi
 
 failed=()
+ran=0
 
 step() {
   local name="$1"
   shift
+  ran=$((ran + 1))
   printf '%s ... ' "$name"
   local out
   if out="$("$@" 2>&1)"; then
@@ -157,6 +159,19 @@ throwaway_key="$(mktemp)"
 head -c 32 /dev/urandom >"$throwaway_key"
 step "The key log builds from this tree" env TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$throwaway_key" "$throwaway_key.log"
 rm -f "$throwaway_key" "$throwaway_key.log"
+step "Verifying needs no account and no call to us" cargo test -p timewitness-architecture --test verify_path_needs_nothing_of_ours
+# The other half of that CI step, `scripts/verify-offline.sh`, takes the network away in a Linux
+# namespace, and this machine has no Linux to make one in. Said out loud rather than skipped quietly,
+# the same as the advisory reader above: the half that reads the sources ran here, the half that
+# unplugs the verifier runs in CI and nowhere else.
+if ! command -v unshare >/dev/null 2>&1; then
+  echo "before-push: no unshare here, so the verifier was not run with the network taken away. CI runs that half." >&2
+else
+  offline_key="$(mktemp)"
+  head -c 32 /dev/urandom >"$offline_key"
+  step "  and with the network taken away" bash -c "TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh '$offline_key' '$offline_key.log' >/dev/null && TIMEWITNESS_BIN=target/debug/timewitness bash scripts/verify-offline.sh '$offline_key.log'"
+  rm -f "$offline_key" "$offline_key.log"
+fi
 step "Repository hygiene"  bash scripts/repo-hygiene.sh
 # CI runs this on the tree route, because it grades a commit and the served page is not in one. Here
 # the sibling checkout is on disk, so the same script compares all three and this machine is the one
@@ -173,9 +188,10 @@ step "Dependency advisories" bash scripts/check-advisories.sh
 
 if [ ${#failed[@]} -ne 0 ]; then
   echo >&2
-  echo "before-push: ${#failed[@]} of 8 failed: ${failed[*]}" >&2
+  echo "before-push: ${#failed[@]} of $ran failed: ${failed[*]}" >&2
   echo "before-push: CI would go red on this. Fix it rather than pushing past it." >&2
   exit 1
 fi
 
-echo "before-push: eight for eight. This is what CI will run."
+# Counted rather than written, because a step was added once and the number beside it was not.
+echo "before-push: $ran for $ran. This is what CI will run."
