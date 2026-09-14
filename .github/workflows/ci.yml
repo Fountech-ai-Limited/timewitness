@@ -128,10 +128,14 @@ jobs:
         # The page half of verifying needing no call to us, read off the page as built with its module
         # embedded. The build step above already refuses a page that fails it; the self-test is the
         # check run backwards, one seed per rule, and passes only if every seed is refused by its own
-        # rule and the page as built is not refused at all.
+        # rule and the page as built is not refused at all. The third run drives the Chrome on the
+        # runner at the page: a fetch reached through a split string, which no rule on the text can
+        # see, has to be refused by the page's own Content-Security-Policy, and the module has to
+        # come up under it.
         run: |
           node scripts/verifier-page-offline.mjs
           node scripts/verifier-page-offline.mjs --self-test
+          node scripts/verifier-page-in-a-browser.mjs
 
       - name: Repository hygiene
         run: bash scripts/repo-hygiene.sh

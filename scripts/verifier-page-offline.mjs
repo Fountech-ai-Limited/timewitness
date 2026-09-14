@@ -70,9 +70,26 @@ const RULES = [
   { name: "an address", why: "names an address on a network, and nothing on this page needs one", test: /\b(https?|wss?|ftp):\/\//i },
 ];
 
+// The policy the page has to carry, word for word, and it is asserted before anything else is read.
+// The rules below read the page's text for ways it could ask for something; this is the line that
+// makes the browser refuse the ways they cannot see. A page carrying a different policy, or none,
+// is refused whatever else it says. `verifier-page-in-a-browser.mjs` is where the policy is watched
+// doing the refusing.
+const POLICY =
+  '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\' \'wasm-unsafe-eval\'; style-src \'unsafe-inline\'; img-src data:; form-action \'none\'; base-uri \'none\'; frame-ancestors \'none\'">';
+
 // What is wrong with a built page, one line per finding.
 function findings(page, shown) {
   const found = [];
+
+  const policies = [...page.matchAll(/<meta http-equiv="Content-Security-Policy"[^>]*>/g)];
+  if (policies.length !== 1 || policies[0][0] !== POLICY) {
+    found.push(
+      `${shown}: the policy carries ${policies.length} Content-Security-Policy metas and the page needs exactly this one: ${POLICY}`,
+    );
+  } else if (page.indexOf(POLICY) > page.indexOf("<script")) {
+    found.push(`${shown}: the policy comes after a script, and a policy the browser reads late is one a script ran before`);
+  }
 
   const modules = [...page.matchAll(MODULE)];
   if (modules.length !== 1) {
@@ -95,7 +112,12 @@ function findings(page, shown) {
 
   // The module and every data: address carry their bytes with them, and their base64 would spell
   // any short word by chance, so they are blanked before the words are read. Nothing else is.
-  const read = page.replace(MODULE, 'const WASM_BASE64 = "";').replace(/data:[^"'\s)]*/g, "data:");
+  // The policy names sources by words such as `default-src`, which the `src` rule would read as a
+  // load, so it is blanked too, after it has been held to the one line above.
+  const read = page
+    .replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/g, "")
+    .replace(MODULE, 'const WASM_BASE64 = "";')
+    .replace(/data:[^"'\s)]*/g, "data:");
   read.split("\n").forEach((line, i) => {
     for (const rule of RULES) {
       const hit = line.match(rule.test);
@@ -139,9 +161,14 @@ const SEEDS = [
   { rule: "a worker", body: "<script>new Worker(where);</script>" },
   { rule: "an address", body: '<script>const where = "https://keys.example.org";</script>' },
   { rule: "the module", module: IMPORTING_MODULE },
+  { rule: "the policy", policy: "" },
+  { rule: "the policy", policy: POLICY.replace("default-src 'none'; ", "") },
+  { rule: "the policy", policy: `<script></script>\n${POLICY}`, late: true },
 ];
 
 function seeded(page, seed) {
+  if (seed.late) return page.replace(POLICY, "").replace("</head>", `${seed.policy}\n</head>`);
+  if (seed.policy !== undefined) return page.replace(POLICY, seed.policy);
   if (seed.module) return page.replace(MODULE, `const WASM_BASE64 = "${seed.module}";`);
   if (seed.style) return page.replace("</style>", `${seed.style}\n</style>`);
   if (seed.head) return page.replace("</head>", `${seed.head}\n</head>`);
@@ -171,7 +198,11 @@ if (args[0] === "--self-test") {
       continue;
     }
     const found = findings(text, "seeded");
-    const byRule = seed.module ? found.some((f) => f.includes("the module imports")) : found.some((f) => f.includes(`: ${seed.rule} `));
+    const byRule = seed.module
+      ? found.some((f) => f.includes("the module imports"))
+      : seed.policy !== undefined
+        ? found.some((f) => f.includes("Content-Security-Policy") || f.includes("the policy comes after"))
+        : found.some((f) => f.includes(`: ${seed.rule} `));
     if (!byRule) {
       problems.push(`the seed for ${seed.rule} was not refused by that rule: ${found.join(" | ") || "nothing refused it"}`);
     }

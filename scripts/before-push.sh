@@ -200,7 +200,7 @@ fi
 # Warm, the whole of it takes seconds, and the page half of the check above is read off the page as
 # built, so it cannot run without it.
 step "The verifier page"   bash scripts/build-verifier-page.sh
-step "The verifier page asks for nothing" bash -c "node scripts/verifier-page-offline.mjs && node scripts/verifier-page-offline.mjs --self-test"
+step "The verifier page asks for nothing" bash -c "node scripts/verifier-page-offline.mjs && node scripts/verifier-page-offline.mjs --self-test && node scripts/verifier-page-in-a-browser.mjs"
 step "Repository hygiene"  bash scripts/repo-hygiene.sh
 step "Repository hygiene still refuses its seeds" bash scripts/repo-hygiene.sh --self-test
 step "The guards are written to the contract" bash -c "bash scripts/guard-lint.sh --self-test && bash scripts/guard-lint.sh scripts"

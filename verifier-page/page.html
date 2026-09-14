@@ -2,6 +2,13 @@
 <html lang="en-GB">
 <head>
 <meta charset="utf-8">
+<!-- The browser is told to refuse every request this page could make, before any script on it runs.
+     Nothing on the page may reach a network, and until 2026-09-15 that rested on a check reading the
+     built file for spellings, which a call assembled from two strings walked past. This is the same
+     rule enforced by the thing that would make the request. The inline module and its WebAssembly
+     are what is allowed, the lockup is carried as a data address, and everything else is refused:
+     no connection, no image from an address, no frame, no font, no form, no base. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Check a TimeWitness receipt</title>
 <!-- BRAND-TOKENS -->
