@@ -11,7 +11,7 @@ name: Surfaces
 #
 # Holding the markdown to the served page is a question about the world rather than about a commit,
 # so it runs here, on its own clock. Three hours, which is a decision about what a stale limitation
-# list costs against what a private repository's runner minutes cost: the site is unindexed and
+# list costs against what the runner minutes cost: the site is unindexed and
 # behind `noindex` and `robots.txt` until announce, and drift that has survived three hours has
 # survived a deploy several times over. `workflow_dispatch` is here so a run that has just shipped a
 # pair of commits can watch this rather than wait for the schedule.

@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The whole history. Three of the hygiene rules read every commit, and at the default
+          # The whole history. Three of the repository checks read every commit, and at the default
           # depth of one they see a single commit and do nothing in the place they were put to run.
           fetch-depth: 0
 

@@ -371,10 +371,10 @@ operator tests and never win them.
 
 **`max_holdover_ns` was added on 2026-09-08, and this paragraph used to say the
 body was frozen and that adding a field was version 1.** That sentence was written on the assumption
-that receipts were in somebody's hands. None are: both repositories are private, nothing is deployed,
-and the only receipt outside a test in this tree is the fixture at
-`crates/verify/tests/data/a-real-stamp/`, which predated the field when this was written and has
-been re-taken twice since, so it now carries the ceiling and `timewitness verify` prints it. The freeze starts at the first release rather than at the first version number, and after
+that receipts were in somebody's hands. None were: on that day both repositories were private,
+nothing was deployed, and the only receipt outside a test in this tree was the fixture at
+`crates/verify/tests/data/a-real-stamp/`, which predated the field and has been re-taken twice
+since, so it now carries the ceiling and `timewitness verify` prints it. The freeze starts at the first release rather than at the first version number, and after
 that a new field is version 1.
 
 ## What a stranger does with one

@@ -86,8 +86,8 @@ silently, and nobody finds out.
 
 The floor is printed beside the verdict, and `--min-width` moves the first of them. The others are
 fields on `Floor` for a reader driving the library, and there is deliberately no option for the
-operator one on the command line: lowering it is a thing to do knowingly, and nothing anybody holds
-needs it, because both repositories are private and there is no release.
+operator one on the command line: lowering it is a thing to do knowingly, and when the floor was
+written nobody outside held a receipt that needed it.
 
 ## Trust material, and what offline actually means
 
