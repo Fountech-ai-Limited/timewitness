@@ -26,7 +26,8 @@ if ! command -v rustup >/dev/null 2>&1; then
     echo "add the cargo bin directory to PATH, usually ~/.cargo/bin" >&2
     exit 1
 fi
-if ! rustup target list --installed | grep -qx "$target"; then
+installed="$(rustup target list --installed)" || { echo "rustup could not list its targets." >&2; exit 2; }
+if ! [[ "$installed" =~ (^|[[:space:]])"$target"($|[[:space:]]) ]]; then
     echo "the $target target is not installed. rustup target add $target" >&2
     exit 1
 fi

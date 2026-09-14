@@ -90,7 +90,8 @@ if ! command -v rustup >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! rustup target list --installed | grep -qx "$target"; then
+installed="$(rustup target list --installed)" || { echo "before-push: rustup could not list its targets." >&2; exit 2; }
+if ! [[ "$installed" =~ (^|[[:space:]])"$target"($|[[:space:]]) ]]; then
   echo "before-push: the $target target is not installed, and it is the whole reason this runs." >&2
   echo "before-push: rustup target add $target" >&2
   exit 1
@@ -168,7 +169,10 @@ key_log_refuses() {
   if said="$(TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$@" 2>&1)"; then
     printf '%s\n' "$said"; echo "key-log.sh wrote a log it is built to refuse: $reason"; return 1
   fi
-  printf '%s\n' "$said" | grep -qF "$reason" || { printf '%s\n' "$said"; echo "it refused, and not because $reason"; return 1; }
+  case "$said" in
+    *"$reason"*) ;;
+    *) printf '%s\n' "$said"; echo "it refused, and not because $reason"; return 1 ;;
+  esac
 }
 step "  and still refuses a first head where one exists" key_log_refuses "not the first head" "$throwaway_key" "$throwaway_key.log" --first --signer "$signer"
 cp "$throwaway_key.log" "$throwaway_key.longer"
@@ -198,6 +202,9 @@ fi
 step "The verifier page"   bash scripts/build-verifier-page.sh
 step "The verifier page asks for nothing" bash -c "node scripts/verifier-page-offline.mjs && node scripts/verifier-page-offline.mjs --self-test"
 step "Repository hygiene"  bash scripts/repo-hygiene.sh
+step "Repository hygiene still refuses its seeds" bash scripts/repo-hygiene.sh --self-test
+step "The guards are written to the contract" bash -c "bash scripts/guard-lint.sh --self-test && bash scripts/guard-lint.sh scripts"
+step "The hook's steps are this file's" bash -c "node scripts/steps-match.mjs --self-test && node scripts/steps-match.mjs"
 # CI runs this on the tree route, because it grades a commit and the served page is not in one. Here
 # the sibling checkout is on disk, so the same script compares all three and this machine is the one
 # place that catches a markdown change before it ships without the site copy beside it. Strictly more
@@ -206,8 +213,20 @@ step "The limitation list, on all three surfaces" bash scripts/three-surfaces.sh
 # Here the site repository is usually beside this one, so this run also holds the two copies of the
 # rules to each other, which CI cannot.
 step "No surface sells precision or prices a receipt" node scripts/no-price-on-evidence.mjs
-step "  and that check still refuses a precision tier" bash -c "TW_PRICE_PROVE=precision node scripts/no-price-on-evidence.mjs 2>&1 | grep -qF 'offers a reduced-precision tier'"
-step "  and a price per receipt" bash -c "TW_PRICE_PROVE=per-receipt node scripts/no-price-on-evidence.mjs 2>&1 | grep -qF 'offers a price per receipt'"
+# The check run backwards. The reason it refuses is read from a capture rather than through a pipe,
+# so a refusal for some other reason, or a check that could not run, is not read as the seed caught.
+price_refuses() {
+  local mode="$1" reason="$2" said
+  if said="$(TW_PRICE_PROVE="$mode" node scripts/no-price-on-evidence.mjs 2>&1)"; then
+    printf '%s\n' "$said"; echo "the check passed with TW_PRICE_PROVE=$mode, so it is not connected"; return 1
+  fi
+  case "$said" in
+    *"$reason"*) ;;
+    *) printf '%s\n' "$said"; echo "it refused, and not for $reason"; return 1 ;;
+  esac
+}
+step "  and that check still refuses a precision tier" price_refuses precision "offers a reduced-precision tier"
+step "  and a price per receipt" price_refuses per-receipt "offers a price per receipt"
 step "The guard that reads the served page is still running" bash scripts/wire-guard-is-alive.sh
 step "Dependency advisories" bash scripts/check-advisories.sh
 

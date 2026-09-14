@@ -189,7 +189,7 @@ flatten() {
 check() {
   local surface="$1" text="$2" missing=0
   for sentence in "${sentences[@]}"; do
-    if ! printf '%s' "$text" | grep -qF -- "$sentence"; then
+    if ! [[ "$text" == *"$sentence"* ]]; then
       echo "three surfaces: $surface does not carry \"$sentence\"" >&2
       missing=1
     fi

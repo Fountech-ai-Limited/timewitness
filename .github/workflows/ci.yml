@@ -136,6 +136,28 @@ jobs:
       - name: Repository hygiene
         run: bash scripts/repo-hygiene.sh
 
+      - name: Repository hygiene still refuses its seeds
+        # The check above run over a scratch clone with one breach of each rule planted in it, on
+        # every push. Its message rule read clean on a message it should have refused in 2 of 10
+        # runs until 2026-09-15, because it piped into grep -q under pipefail, and nothing was
+        # watching it refuse anything.
+        run: bash scripts/repo-hygiene.sh --self-test
+
+      - name: The guards are written to the contract
+        # Every script under scripts/ is read for the two shapes of shell that read a check that
+        # could not run as a check that passed, and the lint is first watched refusing one seed per
+        # shape. The site repository's build reads its own scripts with this same file.
+        run: |
+          bash scripts/guard-lint.sh --self-test
+          bash scripts/guard-lint.sh scripts
+
+      - name: The hook's steps are this file's
+        # scripts/before-push.sh promises at its head to run what this file runs, in this order,
+        # and until 2026-09-15 nothing held it to that.
+        run: |
+          node scripts/steps-match.mjs --self-test
+          node scripts/steps-match.mjs
+
       - name: The limitation list, on the surfaces this commit ships
         # The tree route, because this job grades a commit. The markdown and the README are in it and
         # the served page is not: no commit here can move the site, which is deployed from the other

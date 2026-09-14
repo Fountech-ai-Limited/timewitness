@@ -77,7 +77,14 @@ private_key_shapes=(
   'pss::SigningKey'
 )
 for shape in "${private_key_shapes[@]}"; do
-  if grep -rn --include='*.rs' -F "$shape" crates/ >/dev/null 2>&1; then
+  found="$(grep -rln --include='*.rs' -F "$shape" crates/)"
+  status=$?
+  if [ "$status" -gt 1 ]; then
+    echo "advisories: grep could not read crates/ (exit $status), so nothing was checked." >&2
+    exit 2
+  fi
+  if [ "$status" -eq 0 ]; then
+    printf '%s\n' "$found" >&2
     echo "advisories: the tree now contains $shape, which is an RSA private-key operation." >&2
     echo "advisories: that is the stated reopening condition for the RUSTSEC-2023-0071 ignore in" >&2
     echo "advisories: .cargo/audit.toml. Take the ignore out and deal with the advisory." >&2

@@ -14,9 +14,11 @@
 //
 // No pricing page and no tier exists yet, which is the cheapest moment to write this. The same rules
 // read the site in the other repository, from `scripts/no-price-on-evidence.mjs` there, and the block
-// between the two RULES markers below is the same text in both. Where the other repository is checked
-// out beside this one, this run holds the two blocks to each other; in CI it is not, and the run says
-// so rather than pretending it compared them.
+// between the two RULES markers below is the same text in both. That side holds the two blocks to
+// each other, in its build and before its pushes, because it can check this repository out and this
+// one cannot check it out: a comparison of two trees runs where both trees are. Until 2026-09-15
+// this side compared them where the other repository happened to be on disk and said "not compared
+// here" and passed where it was not, which was every build.
 //
 // What it reads here: every markdown and text file in the tree, the licence files, `action.yml`, the
 // verifier page, the scripts that write the Action's summary, and the verdict text the command line
@@ -223,12 +225,6 @@ function decodeEntities(text) {
 }
 // RULES END
 
-function rulesBlock(text) {
-  const start = text.indexOf('// RULES BEGIN');
-  const end = text.indexOf('// RULES END');
-  return start >= 0 && end > start ? text.slice(start, end) : null;
-}
-
 const broken = selfTest();
 if (broken.length) {
   for (const line of broken) console.error(`no price on evidence: ${line}`);
@@ -268,20 +264,6 @@ for (const path of files) {
     console.error(`no price on evidence: ${path} offers ${rule.name}, and ${rule.why}: "${sentence}"`);
     failures += 1;
   }
-}
-
-const twin = join(root, '..', 'timewitness-web', 'scripts', 'no-price-on-evidence.mjs');
-if (existsSync(twin)) {
-  const ours = rulesBlock(readFileSync(fileURLToPath(import.meta.url), 'utf8'));
-  const theirs = rulesBlock(readFileSync(twin, 'utf8'));
-  if (!ours || ours !== theirs) {
-    console.error('no price on evidence: the rules here and the rules the site is read with have drifted apart; the block between the RULES markers is the same text in both repositories');
-    failures += 1;
-  } else {
-    console.log('no price on evidence: the rules the site is read with are the same text as these');
-  }
-} else {
-  console.log('no price on evidence: the site repository is not beside this one, so the two copies of the rules were not compared here; its own build reads the site with its copy');
 }
 
 if (failures) {
