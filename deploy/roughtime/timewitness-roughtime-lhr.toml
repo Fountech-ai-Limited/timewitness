@@ -1,0 +1,36 @@
+# A Roughtime server of ours, in London.
+#
+# Two of these run, in two regions, because two servers in one region are one failure. **They are
+# still one party whatever the count of addresses says**, and the code already knows it: both are
+# first party, neither counts towards the independent operator floor, and a receipt that rested on
+# ours alone is refused rather than signed.
+#
+# Neither is in `RoughtimeServer::published()`. What a stranger installing the Action polls is a
+# decision about the shipped agent rather than a consequence of running a server.
+
+app = "timewitness-roughtime-lhr"
+primary_region = "lhr"
+
+[build]
+dockerfile = "Dockerfile"
+
+# UDP on this platform reaches a process only through a dedicated address, so each app holds one of
+# its own. The port is Roughtime's own 2002 on both sides: a client that has to be told a port is a
+# client whose configuration is one more thing to get wrong.
+#
+# It never stops on its own. A time server that has to be woken by the request it is meant to answer
+# is a time server whose first answer of the hour is late by however long it took to start, and a
+# stopped one answers nothing at all, since nothing about UDP wakes it.
+[[services]]
+protocol = "udp"
+internal_port = 2002
+auto_stop_machines = "off"
+auto_start_machines = false
+min_machines_running = 1
+
+[[services.ports]]
+port = 2002
+
+[[vm]]
+size = "shared-cpu-1x"
+memory = "256mb"

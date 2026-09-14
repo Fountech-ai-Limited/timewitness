@@ -1,0 +1,66 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/sources",
+    "crates/clock",
+    "crates/platform",
+    "crates/agent",
+    "crates/receipt",
+    "crates/verify",
+    "crates/verify-web",
+    "crates/cli",
+    "crates/architecture",
+    "crates/roughtime-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+authors = ["Nik Kairinos <nik@fountech.ai>"]
+# Apache-2.0 rather than MIT because of what this product is. The Action goes into other people's
+# workflows in one line and the receipt format is something other people implement, so the explicit
+# patent grant in section 3 and the retaliation clause in the same section are doing real work. MIT
+# has neither. Every member crate inherits this line, so `cargo metadata` and the LICENSE file at
+# the root cannot drift apart.
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+timewitness-core = { path = "crates/core" }
+timewitness-sources = { path = "crates/sources" }
+timewitness-clock = { path = "crates/clock" }
+timewitness-platform = { path = "crates/platform" }
+timewitness-agent = { path = "crates/agent" }
+timewitness-receipt = { path = "crates/receipt" }
+timewitness-verify = { path = "crates/verify" }
+timewitness-verify-web = { path = "crates/verify-web" }
+timewitness-roughtime-server = { path = "crates/roughtime-server" }
+
+# Arithmetic that wraps is a fault wherever it happens, and here it happens on bytes a stranger
+# sent. With this off, the multiplication that panics under a test wraps in a shipped binary into a
+# negative accuracy and a tightened bound, so the same input gives a crash to us and a wrong answer
+# to a customer. The cost is a compare and a branch on arithmetic that is not on any hot path: a
+# stamp is one counter read and a handful of additions.
+[profile.release]
+overflow-checks = true
+
+# The signature libraries, built optimised even in a debug build. Nothing of ours is optimised here,
+# so a stack trace still names our own lines and every overflow check we rely on still fires.
+#
+# The reason is the tamper battery. It changes one bit of a signed receipt at a time, seven thousand
+# times, and every one of those is an Ed25519 verification. Unoptimised curve arithmetic runs at
+# about sixty milliseconds a verification, which turns a five second test into seven and a half
+# minutes, and a test that slow gets weakened by whoever is waiting for it. Optimised, the whole
+# battery is under ten seconds and the property it proves is the strongest one in the suite.
+[profile.dev.package."*"]
+opt-level = 3
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+float_cmp = "warn"

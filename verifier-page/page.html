@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Check a TimeWitness receipt</title>
+<!-- BRAND-TOKENS -->
+<style>
+  /* The palette has a job on this product rather than a mood. Cyan is a source, indigo and violet
+     are our own claim, magenta is a discarded source or a limitation, and amber is third-party
+     evidence and the one action on the page. That assignment was settled with the interface and is
+     not decoration here either: a reader can tell what kind of thing a line is by its colour. */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--tw-colour-ink);
+    color: var(--tw-colour-paper);
+    font-family: var(--tw-font-family-body);
+    font-size: var(--tw-font-size-body);
+    line-height: 1.55;
+  }
+  main { max-width: var(--tw-measure-container-narrow); margin: 0 auto; padding: var(--tw-space-6) var(--tw-measure-gutter) var(--tw-space-9); }
+  header img { width: 200px; height: auto; display: block; margin-bottom: var(--tw-space-6); }
+  h1 { font-family: var(--tw-font-family-heading); font-size: var(--tw-font-size-h1); font-weight: var(--tw-font-weight-600); margin: 0 0 var(--tw-space-3); letter-spacing: -0.01em; }
+  h2 { font-family: var(--tw-font-family-heading); font-size: var(--tw-font-size-h2); font-weight: var(--tw-font-weight-600); margin: var(--tw-space-7) 0 var(--tw-space-3); }
+  h3 { font-size: var(--tw-font-size-body); font-weight: var(--tw-font-weight-600); margin: var(--tw-space-5) 0 var(--tw-space-2); }
+  p { margin: 0 0 var(--tw-space-4); max-width: var(--tw-measure-prose); }
+  .lede { font-size: 19px; color: color-mix(in srgb, var(--tw-colour-paper) 82%, transparent); max-width: var(--tw-measure-lede); }
+  .offline { border: var(--tw-border-hairline) solid color-mix(in srgb, var(--tw-colour-signal-cyan) 40%, transparent); border-radius: var(--tw-radius-md); padding: var(--tw-space-4); margin: var(--tw-space-5) 0; font-size: var(--tw-font-size-small); }
+  .offline strong { color: var(--tw-colour-signal-cyan); font-weight: var(--tw-font-weight-600); }
+  fieldset { border: var(--tw-border-hairline) solid color-mix(in srgb, var(--tw-colour-paper) 16%, transparent); border-radius: var(--tw-radius-frame); padding: var(--tw-space-5); margin: 0 0 var(--tw-space-4); }
+  legend { font-weight: var(--tw-font-weight-600); padding: 0 var(--tw-space-2); }
+  label { display: block; margin-bottom: var(--tw-space-2); font-size: var(--tw-font-size-small); }
+  input[type=file] { display: block; width: 100%; margin-bottom: var(--tw-space-4); color: inherit; font: inherit; font-size: var(--tw-font-size-small); }
+  input[type=file]::file-selector-button {
+    font: inherit; font-size: var(--tw-font-size-small);
+    background: transparent; color: var(--tw-colour-paper);
+    border: var(--tw-border-hairline) solid color-mix(in srgb, var(--tw-colour-paper) 30%, transparent);
+    border-radius: var(--tw-radius-sm); padding: var(--tw-space-2) var(--tw-space-4);
+    margin-right: var(--tw-space-3); cursor: pointer;
+  }
+  button {
+    font-family: var(--tw-font-family-heading); font-size: var(--tw-font-size-body);
+    font-weight: var(--tw-font-weight-600);
+    background: var(--tw-colour-witness-amber); color: var(--tw-colour-ink);
+    border: 0; border-radius: var(--tw-radius-pill);
+    padding: var(--tw-space-3) var(--tw-space-6); min-height: var(--tw-target-primary);
+    cursor: pointer; transition: opacity var(--tw-duration-quick) var(--tw-easing-standard);
+  }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button:focus-visible, input:focus-visible { outline: var(--tw-focus-ring-width) solid var(--tw-colour-signal-cyan); outline-offset: var(--tw-focus-ring-offset); }
+  .verdict { font-family: var(--tw-font-family-heading); font-size: var(--tw-font-size-h2); font-weight: var(--tw-font-weight-600); margin: var(--tw-space-6) 0 var(--tw-space-2); }
+  .verdict.held { color: var(--tw-colour-witness-amber); }
+  .verdict.refused { color: var(--tw-colour-magenta); }
+  /* A third state, and it is not a verdict. Held and refused are both answers about the receipt;
+     this one is the page saying it could not form an answer at all. It takes neither hue for that
+     reason: amber would read as a pass and magenta as a refusal, and the difference between "this
+     receipt is bad" and "I could not read your file" is the whole of what this state is for. */
+  .verdict.unavailable { color: color-mix(in srgb, var(--tw-colour-paper) 85%, transparent); }
+  /* Said on the form, before the button is pressed, about a file the browser may refuse to read.
+     It is a limitation, so it carries the limitation colour. */
+  .notice { border-left: var(--tw-border-thick) solid var(--tw-colour-magenta); padding-left: var(--tw-space-3); font-size: var(--tw-font-size-small); color: color-mix(in srgb, var(--tw-colour-paper) 82%, transparent); margin: 0 0 var(--tw-space-4); }
+  ul { list-style: none; padding: 0; margin: 0 0 var(--tw-space-4); }
+  li { margin-bottom: var(--tw-space-4); }
+  .mark { font-family: var(--tw-font-family-mono); font-size: var(--tw-font-size-small); text-transform: uppercase; letter-spacing: 0.08em; display: inline-block; min-width: 6.5em; }
+  .mark.held { color: var(--tw-colour-witness-amber); }
+  .mark.failed { color: var(--tw-colour-magenta); }
+  .mark.not-checked { color: color-mix(in srgb, var(--tw-colour-paper) 55%, transparent); }
+  .question { font-weight: var(--tw-font-weight-500); }
+  .detail { color: color-mix(in srgb, var(--tw-colour-paper) 72%, transparent); font-size: var(--tw-font-size-small); margin: var(--tw-space-1) 0 0 0; }
+  .role { color: var(--tw-colour-signal-cyan); font-weight: var(--tw-font-weight-600); }
+  .role.unchecked { color: color-mix(in srgb, var(--tw-colour-paper) 55%, transparent); }
+  table { border-collapse: collapse; width: 100%; font-size: var(--tw-font-size-small); margin-bottom: var(--tw-space-4); }
+  td { padding: var(--tw-space-2) var(--tw-space-3) var(--tw-space-2) 0; border-bottom: var(--tw-border-hairline) solid color-mix(in srgb, var(--tw-colour-paper) 12%, transparent); vertical-align: top; }
+  td.figure { font-family: var(--tw-font-family-mono); text-align: right; white-space: nowrap; color: var(--tw-colour-violet); }
+  code, .mono { font-family: var(--tw-font-family-mono); font-size: var(--tw-font-size-code); word-break: break-all; }
+  .claim { color: var(--tw-colour-violet); }
+  .limits li { margin-bottom: var(--tw-space-2); font-size: var(--tw-font-size-small); }
+  .limits h3 { color: var(--tw-colour-magenta); margin-top: var(--tw-space-4); }
+  footer { margin-top: var(--tw-space-8); padding-top: var(--tw-space-5); border-top: var(--tw-border-hairline) solid color-mix(in srgb, var(--tw-colour-paper) 12%, transparent); font-size: var(--tw-font-size-small); color: color-mix(in srgb, var(--tw-colour-paper) 62%, transparent); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+<header><!-- BRAND-LOCKUP --></header>
+
+<h1>Check a receipt</h1>
+<p class="lede">A TimeWitness receipt says UTC was somewhere in an interval when something happened,
+and carries signed evidence from parties who have never heard of us. This page checks one.</p>
+
+<div class="offline">
+  <p><strong>Nothing leaves this page.</strong> The receipt and the file it stamps are read from your
+  own disk and checked here. There is no request of any kind, no account, and nothing of ours is
+  involved: save this page, unplug the machine, and it gives the same answer. That is the point of
+  it. A verifier only we can run is not evidence.</p>
+  <p style="margin-bottom:0">It runs the same checking code as the command line tool, compiled to
+  WebAssembly, so the two cannot drift apart and say different things about the same receipt.</p>
+</div>
+
+<form id="form">
+  <fieldset>
+    <legend>What to check</legend>
+    <label for="receipt">The receipt, as it was given to you.</label>
+    <input type="file" id="receipt" required>
+    <label for="subject">The thing it stamps, if you have it. Hashed here; it is never read by
+    anybody but you.</label>
+    <input type="file" id="subject">
+    <p class="notice" id="subject-notice" hidden></p>
+    <button type="submit" id="go" disabled>Check it</button>
+  </fieldset>
+</form>
+
+<!-- role="status" rather than role="alert", because a verdict is information and not an alarm,
+     and tabindex="-1" so the handler can put the reader inside it once there is something to read. -->
+<section id="result" role="status" aria-live="polite" tabindex="-1" hidden>
+  <p class="verdict" id="verdict"></p>
+  <p class="detail" id="verdict-detail"></p>
+
+  <h2>What was checked</h2>
+  <ul id="steps"></ul>
+
+  <h2>What it claims</h2>
+  <div id="claim"></div>
+
+  <h2>The evidence, one role at a time</h2>
+  <p class="detail">Three roles and none of them does another's job. An authenticated corridor makes
+  the bound checkable by a stranger and does not tighten it. A freshness beacon says not earlier. A
+  final witness says not later. The agent's own bound is a claim and is not on this list.</p>
+  <ul id="evidence"></ul>
+  <p class="detail" id="basis"></p>
+</section>
+
+<section>
+  <h2>What TimeWitness cannot prove</h2>
+  <p class="detail">This is a section of the page rather than a note at the foot of it. Every item is
+  something somebody might reasonably expect and will not get.</p>
+  <div id="limits" class="limits"></div>
+</section>
+
+<footer>
+  <p id="build"></p>
+  <p>The source of everything this page does is in the repository, in
+  <code>crates/verify</code> and <code>crates/verify-web</code>. Reading it is the only way to know
+  what it checks; taking our word for it would be the thing this product exists to replace.</p>
+</footer>
+</main>
+
+<script type="module">
+// The whole of the boundary between this page and the checking code. Four exported functions and a
+// length-prefixed buffer: the module hands out an address, this writes bytes there, the module reads
+// its own allocation back. No binding library, so what runs here is what is written here.
+
+const WASM_BASE64 = "<!-- WASM-BASE64 -->";
+
+let wasm = null;
+
+function bytesFromBase64(text) {
+  const binary = atob(text);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+function put(bytes) {
+  const address = wasm.tw_alloc(bytes.length);
+  new Uint8Array(wasm.memory.buffer, address, bytes.length).set(bytes);
+  return address;
+}
+
+function take(address) {
+  if (address === 0) return null;
+  const view = new DataView(wasm.memory.buffer, address, 4);
+  const length = view.getUint32(0, true);
+  const bytes = new Uint8Array(wasm.memory.buffer, address + 4, length);
+  const text = new TextDecoder().decode(bytes);
+  wasm.tw_free(address);
+  return JSON.parse(text);
+}
+
+async function start() {
+  const module = await WebAssembly.instantiate(bytesFromBase64(WASM_BASE64), {});
+  wasm = module.instance.exports;
+  document.getElementById("go").disabled = false;
+  renderLimits(take(wasm.tw_cannot_prove()));
+  document.getElementById("build").textContent =
+    "Receipt format v0. This page carries the verifier as " +
+    Math.round(WASM_BASE64.length * 3 / 4 / 1024) +
+    " kilobytes of WebAssembly and needs nothing else.";
+}
+
+function element(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function renderLimits(limits) {
+  const host = document.getElementById("limits");
+  host.replaceChildren();
+  let section = null;
+  let list = null;
+  for (const limit of limits) {
+    if (limit.section !== section) {
+      section = limit.section;
+      host.append(element("h3", null, section));
+      list = element("ul");
+      host.append(list);
+    }
+    list.append(element("li", null, limit.limit));
+  }
+}
+
+function renderResult(result) {
+  // take() returns null on a zero address and nothing between here and there checked. No input put
+  // to this page has produced one, so this is a guard rather than a fix, and the alternative to it
+  // is a throw with no message and a page that does not move.
+  if (!result) {
+    renderUnavailable("The checking code returned nothing at all. Nothing was checked.");
+    return;
+  }
+  const verdict = document.getElementById("verdict");
+  const detail = document.getElementById("verdict-detail");
+  if (result.accepted) {
+    verdict.className = "verdict held";
+    verdict.textContent = "This receipt holds up as far as it was checked.";
+    detail.textContent =
+      "Read the list below rather than the line above it. A check nobody could run is not a check " +
+      "that passed, and this page says which is which.";
+  } else {
+    const refusal = result.steps.find((step) => step.state === "failed");
+    verdict.className = "verdict refused";
+    verdict.textContent = "Refused.";
+    detail.textContent = refusal ? refusal.question + ": " + refusal.detail : "";
+  }
+
+  const steps = document.getElementById("steps");
+  steps.replaceChildren();
+  for (const step of result.steps) {
+    const item = element("li");
+    const mark = element("span", "mark " + step.state,
+      step.state === "not-checked" ? "not checked" : step.state);
+    item.append(mark, element("span", "question", step.question));
+    item.append(element("p", "detail", step.detail));
+    steps.append(item);
+  }
+
+  const claim = document.getElementById("claim");
+  claim.replaceChildren();
+  if (result.claim) {
+    const c = result.claim;
+    claim.append(element("p", null,
+      "UTC was somewhere in an interval " + c.width_in_words + " wide. That width is the claim."));
+    claim.append(element("p", "detail",
+      "The reading is " + c.reading_ns + " ns since the Unix epoch. It has nanosecond resolution " +
+      "because it is a local counter read with no network in it, and it is a point inside the " +
+      "interval rather than the answer. " + c.sources_offered + " sources answered and " +
+      c.sources_kept + " survived selection."));
+    const table = element("table");
+    for (const part of c.breakdown) {
+      const row = element("tr");
+      row.append(element("td", "figure", part.in_words), element("td", null, part.part));
+      table.append(row);
+    }
+    claim.append(element("h3", null, "Where the width comes from"), table);
+    claim.append(element("p", "detail mono", "This receipt is " + result.receipt_bytes +
+      " bytes and hashes to " + result.receipt_sha256 + "."));
+  }
+
+  const evidence = document.getElementById("evidence");
+  evidence.replaceChildren();
+  const entries = result.evidence || [];
+  if (entries.length === 0) {
+    evidence.append(element("li", null, "This receipt carries no third-party evidence at all."));
+  }
+  for (const entry of entries) {
+    const item = element("li");
+    item.append(element("span", entry.checked ? "role" : "role unchecked", entry.role));
+    item.append(element("span", null,
+      " by " + entry.scheme + (entry.detail ? " from " + entry.detail : "")));
+    item.append(element("p", "detail",
+      entry.checked ? "Checked against " + entry.against : "Not checked. " + entry.against));
+    for (const line of entry.checks || []) {
+      item.append(element("p", "detail", "    " + line));
+    }
+    evidence.append(item);
+  }
+  document.getElementById("basis").textContent =
+    result.basis_reason === undefined ? "" :
+    "The bound in this receipt " + (result.basis_granted ? "does" : "does not") +
+    " rest on third-party evidence: " + result.basis_reason;
+
+  document.getElementById("result").hidden = false;
+}
+
+// The largest subject this page has been seen to read, and the smallest it has been seen refused.
+// Both are the browser's numbers and neither is ours: nothing here enforces a limit, because a
+// ceiling we invent would refuse files a different browser would have read quite happily. Measured
+// on 2026-09-12 in a browser: 1 GiB read, 2 GiB refused before the checking code was reached.
+const SUBJECT_READ = 1024 * 1024 * 1024;
+
+function inBytes(size) {
+  if (size >= 1024 * 1024 * 1024) return (size / (1024 * 1024 * 1024)).toFixed(1) + " GiB";
+  if (size >= 1024 * 1024) return Math.round(size / (1024 * 1024)) + " MiB";
+  return size + " bytes";
+}
+
+// Said on the form the moment a file is chosen, rather than after the reader has pressed the button
+// and watched nothing happen. The page knows the size straight away and there is no reason to keep it.
+document.getElementById("subject").addEventListener("change", (event) => {
+  const notice = document.getElementById("subject-notice");
+  const file = event.target.files[0];
+  if (!file || file.size <= SUBJECT_READ) {
+    notice.hidden = true;
+    notice.textContent = "";
+    return;
+  }
+  notice.textContent =
+    "This file is " + inBytes(file.size) + ". The largest this page has been seen to read is 1 GiB, " +
+    "and at 2 GiB the browser refused before any checking happened. The check may not run. That is " +
+    "your browser's limit rather than ours, and it says nothing about the receipt.";
+  notice.hidden = false;
+});
+
+// The check did not run, which is a different sentence from the receipt being refused, and the page
+// says which. Everything a verdict would have filled in is emptied, because a stale step list beside
+// a fresh heading is worse than no step list at all.
+function renderUnavailable(detail) {
+  const verdict = document.getElementById("verdict");
+  verdict.className = "verdict unavailable";
+  verdict.textContent = "The check did not run.";
+  document.getElementById("verdict-detail").textContent = detail;
+  document.getElementById("steps").replaceChildren();
+  document.getElementById("claim").replaceChildren();
+  document.getElementById("evidence").replaceChildren();
+  document.getElementById("basis").textContent = "";
+  document.getElementById("result").hidden = false;
+}
+
+// Two frames, so the busy state is on the screen before anything blocks it. The checking call is
+// synchronous and a 1 GiB subject holds it for over fifteen seconds, and a button that goes grey
+// after the freeze rather than before it tells the reader nothing at the only moment they needed it.
+function painted() {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
+document.getElementById("form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const receiptFile = document.getElementById("receipt").files[0];
+  const subjectFile = document.getElementById("subject").files[0];
+  if (!receiptFile) return;
+
+  const form = document.getElementById("form");
+  const go = document.getElementById("go");
+  const label = go.textContent;
+  go.disabled = true;
+  go.textContent = "Checking";
+  form.setAttribute("aria-busy", "true");
+  await painted();
+
+  // No spinner, no percentage and no estimate. The page cannot know how long a hash will take and
+  // will not pretend to; disabled and the word "Checking" is the whole of the treatment.
+  try {
+    const receipt = put(new Uint8Array(await receiptFile.arrayBuffer()));
+    let subject = 0;
+    try {
+      subject = subjectFile ? put(new Uint8Array(await subjectFile.arrayBuffer())) : 0;
+    } catch (error) {
+      wasm.tw_free(receipt);
+      throw error;
+    }
+    const result = take(wasm.tw_verify(receipt, subject, subjectFile ? 1 : 0));
+    wasm.tw_free(receipt);
+    if (subject !== 0) wasm.tw_free(subject);
+
+    renderResult(result);
+  } catch (error) {
+    // The one that actually happens: the browser refuses to read a file that size and rejects
+    // before the checking code is ever called. It used to reject into nothing, leaving the page
+    // exactly as it was, and a reader could only read that as the button being broken.
+    const unread = subjectFile && String(error).includes("could not be read") ? subjectFile
+      : receiptFile && String(error).includes("could not be read") ? receiptFile
+      : null;
+    renderUnavailable(unread
+      ? "Your browser would not read " + unread.name + ", which is " + inBytes(unread.size) + ". " +
+        "Nothing was checked and this says nothing about the receipt."
+      : "Something went wrong before a verdict could be formed: " + String(error) + ". Nothing was " +
+        "checked and this says nothing about the receipt.");
+  } finally {
+    go.disabled = false;
+    go.textContent = label;
+    form.removeAttribute("aria-busy");
+  }
+
+  const result = document.getElementById("result");
+  result.scrollIntoView({ behavior: "smooth", block: "start" });
+  // The reader is put inside the region rather than left at the button they pressed, so the next
+  // thing under the cursor and the next thing read aloud are both the answer.
+  result.focus({ preventScroll: true });
+});
+
+start();
+</script>
+</body>
+</html>

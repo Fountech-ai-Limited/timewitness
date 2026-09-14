@@ -1,0 +1,93 @@
+name: Surfaces
+
+# The limitation list on `main` against the page a reader is actually handed.
+#
+# The other workflow grades a commit, and a commit in this repository cannot move the site: the
+# copy goes one way, from here to `timewitness-web`, and the site is deployed from there by a Vercel
+# git integration. So at the moment a commit lands here the served page is behind it by
+# design, and a step inside the build that reads the wire reports that ordering as a disagreement.
+# It did, on 2026-09-11, and `main` sat red for twenty minutes with nothing going to run the check
+# again.
+#
+# Holding the markdown to the served page is a question about the world rather than about a commit,
+# so it runs here, on its own clock. Three hours, which is a decision about what a stale limitation
+# list costs against what a private repository's runner minutes cost: the site is unindexed and
+# behind `noindex` and `robots.txt` until announce, and drift that has survived three hours has
+# survived a deploy several times over. `workflow_dispatch` is here so a run that has just shipped a
+# pair of commits can watch this rather than wait for the schedule.
+#
+# The check waits out a deploy in flight rather than calling it drift, and the end of the wait is a
+# failure. The wait covers a deploy and not a person, and the figure it is set to is measured.
+#
+# Measured on 2026-09-11, after the deploy trigger was put back: a push to `main` in
+# `timewitness-web` produced a deployment two seconds after the push finished, and the live domain
+# served the new bytes 48 and 45 seconds after that same moment, on the two pushes that were timed
+# end to end by polling `https://timewitness.dev` every three seconds for the sha the push carried.
+# Eight deployments of that project that day took between 39 and 49 seconds to build, read off
+# `api.vercel.com/v6/deployments`, which carries `created` and `ready` per deployment. So the whole
+# path, push to served bytes, is about fifty seconds on an ordinary push of this site.
+#
+# Five minutes is six times that, which leaves room for a cold build or a queued deployment and
+# still says a stale page is stale inside five minutes rather than fifteen. It was 900 s until
+# 2026-09-11 and that number had nothing behind it: the comment here reasoned from a sequence that
+# took twenty minutes on the day the trigger was broken, and attributed about eight of those minutes
+# to the deploy. No deployment on this project has ever taken eight minutes.
+#
+# What the wait deliberately does not cover is the gap between the commit here and the commit in the
+# site repository, because that is a person and it is unbounded. A run that fires inside that gap
+# reports that the site is behind, which is true, and the next run three hours later reports it
+# again or does not.
+#
+# The three hour interval does not widen on the deploy being fast. The thing that went wrong on
+# 2026-09-11 was not a slow deploy, it was the trigger itself disappearing, silently, for three
+# hours, and this guard is what found it.
+
+on:
+  schedule:
+    - cron: '23 */3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One at a time. A scheduled run and a dispatched one arriving together would both sit in the wait
+# and bill twice for the same answer.
+concurrency:
+  group: surfaces
+  cancel-in-progress: false
+
+jobs:
+  wire:
+    name: the limitation list against the served page
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      # Read-only against the key the build job writes. Every width any surface attributes to the
+      # committed receipt is checked against what `timewitness verify` prints for the bytes at that
+      # path, and that needs the binary. Restoring the build job's cache turns that into a link
+      # rather than a compile; a miss costs a few minutes and is still correct.
+      - name: Cache the build
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build the verifier
+        run: cargo build -p timewitness-cli
+
+      - name: The limitation list against the served page
+        env:
+          TW_SURFACES_SITE: wire
+          TW_SURFACES_WAIT: '300'
+        run: bash scripts/three-surfaces.sh

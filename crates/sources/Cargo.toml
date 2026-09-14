@@ -1,0 +1,20 @@
+[package]
+name = "timewitness-sources"
+description = "The time source interface and the four-timestamp exchange it produces."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+timewitness-core = { workspace = true }
+getrandom = { version = "0.2", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = "1"
+webpki-roots = "1"
+aes-siv = { version = "0.8", default-features = false }
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+# What `cargo audit` is told to pass over, and why. Read by `scripts/check-advisories.sh`.
+#
+# One entry, and an entry only ever goes in here with three things beside it: what the advisory is,
+# why the vulnerable path is not walked by this product, and the change that would put it back in
+# scope. An ignore with no reason beside it is the same failure as a skipped check, and this product
+# has already had one of those on each repository.
+
+[advisories]
+ignore = [
+  # RUSTSEC-2023-0071, the Marvin attack: a timing side channel in `rsa 0.9.10`. There is no fixed
+  # version to upgrade to, on 2026-09-10.
+  #
+  # The advisory is about private-key operations. An attacker who can time many decryptions or
+  # signatures recovers the private key. This product holds no RSA private key, does not decrypt and
+  # does not sign with RSA. The only RSA in the tree is signature verification of an RFC 3161
+  # timestamp token, in `crates/core/src/evidence/rfc3161.rs`, which imports `RsaPublicKey` and
+  # `Pkcs1v15Sign` and nothing else from the crate. Verifying uses the public key, the attacker
+  # already has the public key, and there is no secret in that operation to leak.
+  #
+  # **What reopens it: this product ever holding an RSA private key.** That is not left to a reader
+  # to notice. `scripts/check-advisories.sh` fails the build if `RsaPrivateKey`, `Pkcs1v15Encrypt`
+  # or either signing key type appears anywhere under `crates/`, and its message sends whoever hit
+  # it here to take this entry out.
+  "RUSTSEC-2023-0071",
+]

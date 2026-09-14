@@ -1,0 +1,11 @@
+# Real timestamp tokens, fetched on 2026-09-07 from two free authorities, neither of which wanted an
+# account. Each line is the authority, the SHA-256 of the certificate that signed its token, the
+# hash the token is about, and the file holding the request and the reply as the client stored them.
+#
+# Four authorities were tried. The two here answered from the same signing certificate on every one
+# of four consecutive requests, which is what makes a pin usable. The other two are recorded in
+# docs/test-reports/rfc3161-watched-failing-2026-09-07.md and are not built in.
+#
+# name      certificate                                                      subject                                                          file
+digicert    2da09da7f4131f9fe72db6c5e6e9c9656755af043f1ea742cc0d2120e141ebfc 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a digicert.hex
+sectigo     d14751ba71cd8883e560166406cf62cd229a5fe91e308d301976feb23ea90156 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a sectigo.hex

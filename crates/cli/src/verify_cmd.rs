@@ -1,0 +1,177 @@
+//! `timewitness verify`, which is the whole of what a consumer ever runs.
+//!
+//! It reads a receipt off disk, reads whatever the reader is checking it against off disk, and says
+//! what held. There is no network call anywhere in this path and there is no account. A reader who
+//! unplugs the machine gets the same answer, which is the property, not a nice side effect.
+
+use std::fs;
+use std::path::Path;
+
+use timewitness_core::keylog::file::{parse as parse_key_log, KeyLog};
+use timewitness_receipt::anchors::TrustAnchors;
+use timewitness_verify::{anchor_file, verify_with_key_log, Floor, Subject};
+
+use crate::args::Args;
+use crate::{as_json, render};
+
+/// What a run of the verifier ended as.
+pub struct Outcome {
+    /// What to print.
+    pub text: String,
+    /// What to exit with. Zero where nothing was refused.
+    pub code: i32,
+}
+
+/// Run it.
+pub fn run(args: &Args) -> Outcome {
+    let Some(path) = args.positional.first() else {
+        return refuse("verify needs the path to a receipt");
+    };
+
+    let receipt_bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) => return refuse(&format!("{path} could not be read: {e}")),
+    };
+
+    // The subject is hashed here, on this machine, out of the file where it already sits. Sending it
+    // somewhere to have its digest taken would leak whatever it is in order to prove something about
+    // when it was made, and a verifier that does that is worse than no verifier.
+    let subject_bytes = match args.value("--subject") {
+        None => None,
+        Some(subject_path) => match fs::read(Path::new(subject_path)) {
+            Ok(bytes) => Some(bytes),
+            Err(e) => return refuse(&format!("{subject_path} could not be read: {e}")),
+        },
+    };
+    let digest = match args.value("--digest") {
+        None => None,
+        Some(text) => match unhex(text) {
+            Ok(bytes) => Some(bytes),
+            Err(e) => return refuse(&format!("--digest is not hexadecimal: {e}")),
+        },
+    };
+    if subject_bytes.is_some() && digest.is_some() {
+        return refuse("--subject and --digest say the same thing two ways; give one");
+    }
+
+    let subject = match (&subject_bytes, &digest) {
+        (Some(bytes), _) => Subject::Bytes(bytes),
+        (_, Some(bytes)) => Subject::Digest(bytes),
+        _ => Subject::NotSupplied,
+    };
+
+    let anchors = match anchors_from(args) {
+        Ok(a) => a,
+        Err(text) => return refuse(&text),
+    };
+
+    let mut floor = Floor::default();
+    match args.number("--min-width") {
+        Ok(Some(width)) => floor.min_interval_width = width,
+        Ok(None) => {}
+        Err(e) => return refuse(&e.0),
+    }
+
+    // The log is read off disk like everything else here. There is no fetch: a verifier that went
+    // and got the log would be a verifier that needs us to be reachable, and a reader we can cut
+    // off is a reader we can lie to by going quiet.
+    let key_log = match key_log_from(args) {
+        Ok(log) => log,
+        Err(text) => return refuse(&text),
+    };
+
+    let assessment =
+        verify_with_key_log(&receipt_bytes, subject, &anchors, &floor, key_log.as_ref());
+    let code = i32::from(!assessment.accepted());
+
+    let text = if args.flag("--fields") {
+        render::fields(&assessment)
+    } else if args.flag("--json") {
+        as_json::render(&assessment)
+    } else {
+        render::assessment(&assessment, subject, args.flag("--quiet"))
+    };
+
+    Outcome { text, code }
+}
+
+/// The key log the reader was handed, where they were handed one.
+///
+/// A file that will not parse refuses the run rather than being read as no log at all. A reader who
+/// supplied a log and got back `nothing here can say` would reasonably think the question had been
+/// asked and answered, and it would not have been.
+fn key_log_from(args: &Args) -> Result<Option<KeyLog>, String> {
+    let Some(path) = args.value("--key-log") else {
+        return Ok(None);
+    };
+    let text = fs::read_to_string(path)
+        .map_err(|e| format!("the key log at {path} could not be read: {e}"))?;
+    parse_key_log(&text)
+        .map(Some)
+        .map_err(|e| format!("the key log at {path} is not readable: {e}"))
+}
+
+/// What the reader decided to trust, before anything was read.
+fn anchors_from(args: &Args) -> Result<TrustAnchors, String> {
+    if args.flag("--no-anchors") {
+        // A legitimate state and not a degraded one. Every arithmetic claim the receipt makes about
+        // itself is still checked, and an attestation nobody here holds a key for is reported as
+        // unchecked rather than glossed over, which is what a reader holding no keys actually knows.
+        //
+        // Unchecked is not the same as unread, and it was until 2026-09-08. A blob that is not a
+        // stored attestation of its scheme at all is a fault anybody can see without a key, so it
+        // fails here as well as under the keys that ship, and the verdict follows it.
+        return Ok(TrustAnchors::none());
+    }
+    match args.value("--anchors") {
+        None => Ok(anchor_file::published()),
+        Some(path) => {
+            let text = fs::read_to_string(path)
+                .map_err(|e| format!("the trust material at {path} could not be read: {e}"))?;
+            anchor_file::parse(&text)
+                .map_err(|e| format!("the trust material at {path} is not readable: {e}"))
+        }
+    }
+}
+
+fn refuse(what: &str) -> Outcome {
+    Outcome {
+        text: render::failure(what),
+        code: 2,
+    }
+}
+
+fn unhex(text: &str) -> Result<Vec<u8>, String> {
+    let cleaned: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    if cleaned.len() % 2 != 0 {
+        return Err("an odd number of digits".to_string());
+    }
+    let bytes = cleaned.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() / 2);
+    for pair in bytes.chunks(2) {
+        let mut byte = 0u8;
+        for (shift, b) in pair.iter().enumerate() {
+            let digit = match b {
+                b'0'..=b'9' => b - b'0',
+                b'a'..=b'f' => b - b'a' + 10,
+                b'A'..=b'F' => b - b'A' + 10,
+                other => return Err(format!("{:?} is not a digit", char::from(*other))),
+            };
+            byte |= digit << (4 * (1 - shift));
+        }
+        out.push(byte);
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hexadecimal_reads_and_rubbish_refuses() {
+        assert_eq!(unhex("deadBEEF").unwrap(), vec![0xde, 0xad, 0xbe, 0xef]);
+        assert!(unhex("abc").is_err());
+        assert!(unhex("zz").is_err());
+    }
+}

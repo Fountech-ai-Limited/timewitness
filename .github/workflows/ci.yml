@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+# Narrowed here rather than left to whatever the repository default is, because one step now reads
+# the Actions API to check the scheduled guard is still firing and a token that can only clone is
+# not enough for it.
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  check:
+    name: build, lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whole history. Three of the hygiene rules read every commit, and at the default
+          # depth of one they see a single commit and do nothing in the place they were put to run.
+          fetch-depth: 0
+
+      - name: Install the toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lints
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --workspace --all-targets
+
+      - name: Tests
+        run: cargo test --workspace
+
+      - name: The key log builds from this tree
+        # The signed log a reader is handed is built by this script and nothing else, so it is run
+        # here on every push with a key made for the run and thrown away with it. What this proves is
+        # the path: the committed entries sign, the result is an extension of nothing, and the
+        # verifier reads it back under a head it checks. The key that signs the served copy is never
+        # in this repository or this workflow.
+        run: |
+          head -c 32 /dev/urandom > "$RUNNER_TEMP/throwaway-key"
+          TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/key-log.txt"
+
+      - name: The verifier page
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build --release -p timewitness-cli
+          bash scripts/build-verifier-page.sh
+
+      - name: Repository hygiene
+        run: bash scripts/repo-hygiene.sh
+
+      - name: The limitation list, on the surfaces this commit ships
+        # The tree route, because this job grades a commit. The markdown and the README are in it and
+        # the served page is not: no commit here can move the site, which is deployed from the other
+        # repository, so reading the wire from this job asked whether the world agreed with a commit
+        # the world had not seen. The head of the script says more.
+        env:
+          TW_SURFACES_SITE: tree
+        run: bash scripts/three-surfaces.sh
+
+      - name: The guard that reads the served page is still running
+        # The other half of splitting the surfaces check, and the reason the step above may finish
+        # without reading the site. A scheduled workflow that GitHub has disabled for inactivity
+        # looks exactly like one that is passing.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/wire-guard-is-alive.sh
+
+      # Its own cache, keyed on the version rather than on the lockfile. Sharing the cache above
+      # would mean a build whose Cargo.lock has not moved restores a cache saved before this step
+      # existed, finds no reader, and compiles one from source every run.
+      - name: Cache the advisory reader
+        id: audit-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit-0.22.2
+
+      - name: Install the advisory reader
+        if: steps.audit-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --locked --version 0.22.2
+
+      # The pinned database, so this step only ever goes red on what changed here. The live one is
+      # read by `.github/workflows/advisories.yml`, weekly and on its own.
+      - name: Dependency advisories
+        run: bash scripts/check-advisories.sh

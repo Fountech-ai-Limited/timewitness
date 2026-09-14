@@ -1,0 +1,11 @@
+# Real responses from public Roughtime servers, captured on 2026-09-07 by
+# cargo test -p timewitness-sources --test roughtime_live -- --ignored --nocapture
+#
+# Each line is the server, its published long-term Ed25519 key in hex, and the file holding one
+# response as the client stored it: the nonce binding, the request packet and the reply packet.
+# The keys come from ecosystem.json in github.com/cloudflare/roughtime, read the same day.
+#
+# name                  key                                                              file
+roughtime.int08h.com    016e6e0284d24c37c6e4d7d8d5b4e1d3c1949ceaa545bf875616c9dce0c9bec1 int08h.hex
+roughtime.se            4b70337d92790a349d909db564919bc6a7583ff4a813c7d7298d3e6a272c7a12 roughtime-se.hex
+time.txryan.com         881563c60ff58fbcb5fa44144c161d4da6f10a9a5eb14ff4ec3e0f303264d960 txryan.hex

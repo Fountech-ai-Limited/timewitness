@@ -1,0 +1,16 @@
+[package]
+name = "timewitness-verify"
+description = "The verifier. Checks a receipt with none of our infrastructure and no account."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+timewitness-core = { workspace = true }
+timewitness-receipt = { workspace = true }
+
+[lints]
+workspace = true

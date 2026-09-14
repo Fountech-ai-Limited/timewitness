@@ -1,0 +1,143 @@
+# The verifier, and how to check a receipt without asking us anything
+
+Written 2026-09-08. Supersedes nothing.
+
+A receipt only we can check is not evidence. It is a request to be trusted, and this product's whole
+argument is that a stranger who trusts neither party can check one for themselves. So the verifier is
+built as a thing that runs with none of our infrastructure and no account, and it is tested that way.
+
+There are two of them and they are one implementation. `crates/verify` holds every check;
+`crates/cli` and `crates/verify-web` are shells around it. `scripts/check-verifier-page.mjs` puts one
+receipt through both and fails the build if the two disagree about anything, because two
+implementations drift and the day they drift is the day the page says a receipt is good and the
+binary says it is not.
+
+## The two ways to run it
+
+**The command line.**
+
+```
+cargo build --release -p timewitness-cli
+./target/release/timewitness verify a-receipt.cbor --subject the-thing-it-stamps
+```
+
+**The page.** `bash scripts/build-verifier-page.sh` produces `verifier-page/verifier.html`, which is
+one file with the checking code inside it as WebAssembly. Save it, open it from your own disk, and it
+works with the network off. It makes no request of any kind.
+
+Neither needs an account, a key from us, or a route to anything of ours.
+
+## What it checks, in the order it checks it
+
+1. **Is this a receipt or an unbounded file.** Size first, because everything after it allocates from
+   what the file says about itself.
+2. **Was this signed by the key it names, over exactly these bytes.** Ed25519 over the COSE
+   `Signature1` structure, which covers the protected header as well as the payload. Signing the
+   payload alone would let a signature be moved onto a receipt naming a weaker algorithm.
+3. **Is that key one of ours.** Unanswered for a reader who has only the receipt, and said so
+   rather than skipped. The receipt proves that whoever signed it held that key. A reader who
+   recognises the key can compare it and a reader who does not learns that one key signed this.
+
+   A reader handed a key log can pass it with `--key-log <file>` and get an answer: held where the
+   log names that key over a window the reading falls in, refused where it names it outside that
+   window or does not name it at all. **The answer is worth what a list we signed is worth**, and the
+   step says so in the words it gives back. What a log buys is that a key we published is one we
+   cannot quietly unpublish, because a reader who kept an earlier head can prove the log was
+   rewritten. It is not third-party evidence and it never becomes any. No log is published today, so
+   in practice this step is still the shrug for everybody who has not been handed one by hand.
+4. **Do the receipt's own numbers support each other.** The reading inside the interval, the parts of
+   the width adding to the width and to no more than it, a majority of the sources that answered
+   kept, the agent keeping to the policy it states, every evidence entry in a role its scheme can
+   support, and each entry's own instant consistent with the interval it is offered as support for.
+5. **Does the bound clear this reader's own floor.** See below.
+6. **Is the thing you have the thing this receipt stamps.** Hashed where the file sits.
+7. **Does this receipt sit where it says in a chain.** Never answered on one receipt, and said so:
+   placing two receipts in order needs both of them.
+
+Then every evidence entry is checked against the trust material the reader holds, and the report says
+which entries were checked, against whose key, and what each check established, line by line.
+
+## The reader's own floor
+
+Every plausibility test has two possible sources for its threshold. One is the receipt, which states
+the widest bound its agent would sign for and the fewest sources it would answer on. The other is the
+reader, who decided in advance.
+
+Checking only against the first is checking a document against its own opinion of itself. A receipt
+claiming a bound zero nanoseconds wide, resting on one source, and stating a width ceiling of zero
+passes every check inside the receipt crate, because it kept every promise it made. It is also a
+claim nothing in this field can support, and passing it would put a figure no measurement supports
+under our name.
+
+So the reader holds numbers of their own. The shipped ones:
+
+| | | Why |
+|---|---|---|
+| narrowest interval | 1 us | Two orders of magnitude under the tightest condition the product quotes, which is about 100 us of accuracy on a cloud instance with a hypervisor clock. Deliberately not set at the 200 us today's agent policy cannot beat, because a future agent on better hardware honestly will, and refusing those would look identical to catching a lie. |
+| widest interval | 1 hour | Past an hour an interval says nothing a calendar would not. |
+| fewest sources answering | 3 | With three, a majority beats one bad clock. Two is two clocks agreeing. |
+| fewest operators behind the sources kept | 3 | The row above counts names and names are free: nine addresses at one company clear it with six to spare and are one chance to be wrong. A fault happens to whoever runs a server, so this is the count Marzullo's guarantee rests on. Three and not the four the shipped agent requires, because four is chosen against the server lists this product ships against today and a verifier is read years later by somebody pointing an agent at their own. Counted by the reader from the `operator` labels and never read out of the receipt. A receipt naming no operator anywhere does not clear it: the receipt crate accepts such a receipt, because its question is whether the agent kept its own word, and this question is whether there is any reason to believe the sources failed separately. |
+| largest receipt | 64 KiB | A receipt with three real attestations is about nine kilobytes. This refuses one padded to a megabyte through a header nobody reads. |
+
+**Every one of these only ever refuses**, which is what makes it safe to set a threshold on a
+quantity nobody has measured. Being wrong in one direction refuses an honest receipt, which the
+reader sees and can act on by supplying their own. Being wrong in the other accepts a false one
+silently, and nobody finds out.
+
+The floor is printed beside the verdict, and `--min-width` moves the first of them. The others are
+fields on `Floor` for a reader driving the library, and there is deliberately no option for the
+operator one on the command line: lowering it is a thing to do knowingly, and nothing anybody holds
+needs it, because both repositories are private and there is no release.
+
+## Trust material, and what offline actually means
+
+The verifier checks three kinds of third-party signature and needs a key for each: a Roughtime
+server's long-term key, a drand chain's group key, a timestamp authority's signing certificate.
+
+Three Roughtime keys, one drand chain and two certificate pins ship with the code. Every one of them
+is published by somebody who has never heard of this product, and shipping a copy is not being the
+root of trust for it: a reader can compare each against the publisher's own list.
+
+A reader who would rather not take the shipped copy supplies their own with `--anchors <file>`:
+
+```
+# One anchor per line. Blank lines and lines from a # are ignored.
+roughtime <name> <32 bytes of hex>
+drand     <name> <chain hash, 32 bytes> <group key, 96 bytes> <period seconds> <genesis second>
+rfc3161   <name> <certificate sha-256> [more certificate digests]
+```
+
+A line nobody can parse refuses the file rather than being skipped, because a skipped line is a key
+the reader meant to trust and would go on believing they had.
+
+`--no-anchors` trusts nothing. That is a legitimate state and not a degraded one: every arithmetic
+claim the receipt makes about itself is still checked, and every attestation is reported as unchecked
+rather than glossed over, which is what that reader actually knows.
+
+## What is deliberately not a boolean
+
+The answer to "is this receipt good" is a list. Three evidence roles do three different jobs, and a
+report that collapses them into one badge has hidden the only thing a careful reader wants. Every
+step comes back as held, failed, or not checked, and not-checked is never a pass.
+
+The exit code is there for a script: zero where nothing was refused, one where something was, two
+where the command line itself was wrong.
+
+## What this does not do
+
+- It does not check that the agent's key belongs to anybody. There is no public key log. It can
+  check a key against a log a reader was handed, `--key-log`, and that is a list we signed
+  rather than anybody else's word for it.
+- It does not check order. `sequence` and `chain_previous` are signed and are reported; nothing
+  compares two receipts, and one verifier run has one receipt.
+- It does not check that a receipt sits in a chain, which is the point above. What it does check is
+  that the receipt in front of it has one spelling: the COSE unprotected header is outside the
+  signature by design, so the format pins it to the single key identifier entry and a restated
+  receipt is refused rather than accepted with a chain link of its own. The digest the verifier
+  prints is therefore the chain link, and two readers holding what they believe is the same receipt
+  can compare one number.
+- It does not chain a timestamp authority's certificate to a commercial root. It pins a leaf, which
+  is narrower than trusted.
+
+The full list of what the product cannot prove is `timewitness cannot-prove`, and it is printed with
+every result rather than under it.

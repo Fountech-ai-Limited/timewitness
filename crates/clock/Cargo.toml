@@ -1,0 +1,16 @@
+[package]
+name = "timewitness-clock"
+description = "The clock model: filter, selection, weighted combination, regression, discipline, holdover."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+timewitness-core = { workspace = true }
+timewitness-sources = { workspace = true }
+
+[lints]
+workspace = true

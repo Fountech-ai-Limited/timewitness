@@ -1,0 +1,30 @@
+[package]
+name = "timewitness-cli"
+description = "The command line entry point. Wires the clock model, the receipt issuer and the verifier together."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "timewitness"
+path = "src/main.rs"
+
+[dependencies]
+timewitness-core = { workspace = true }
+timewitness-sources = { workspace = true }
+timewitness-clock = { workspace = true }
+timewitness-platform = { workspace = true }
+timewitness-agent = { workspace = true }
+timewitness-receipt = { workspace = true }
+timewitness-verify = { workspace = true }
+# What `timewitness roughtime-serve` runs. It was a development dependency for one test until the
+# subcommand landed, which meant a crate nothing in the shipped binary depended on and so a crate
+# that did not ship.
+timewitness-roughtime-server = { workspace = true }
+getrandom = "0.2"
+
+[lints]
+workspace = true

@@ -1,0 +1,45 @@
+name: Advisories
+
+# The half of the dependency check that is allowed to go red on somebody else's morning.
+#
+# `ci.yml` reads a pinned copy of the RustSec database, so a push only ever fails on what that push
+# changed. That is the right trade for a build gate and it has a hole in it: a pin that nobody moves
+# stops answering the question. This job is what moves it. It reads the live database against the
+# same lockfile, on a schedule and by hand, and when it goes red somebody deals with what it found
+# and moves the pin in `scripts/check-advisories.sh` in the same act.
+#
+# Weekly rather than daily because Actions minutes are a real constraint on this organisation and
+# the change that matters is from nothing looking to something looking. Anybody who wants an answer
+# sooner runs it from the Actions tab, or runs `bash scripts/check-advisories.sh --latest` here.
+
+on:
+  schedule:
+    # Monday, 07:00 UTC. Early enough in the week that a finding has the week to be dealt with.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+jobs:
+  advisories:
+    name: the live advisory database
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache the advisory reader
+        id: audit-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit-0.22.2
+
+      - name: Install the advisory reader
+        if: steps.audit-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --locked --version 0.22.2
+
+      - name: Dependency advisories, against today's database
+        run: bash scripts/check-advisories.sh --latest
