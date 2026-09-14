@@ -56,12 +56,39 @@ jobs:
       - name: The key log builds from this tree
         # The signed log a reader is handed is built by this script and nothing else, so it is run
         # here on every push with a key made for the run and thrown away with it. What this proves is
-        # the path: the committed entries sign, the result is an extension of nothing, and the
-        # verifier reads it back under a head it checks. The key that signs the served copy is never
-        # in this repository or this workflow.
+        # the path: the committed entries sign, the first head is written with --first and nothing
+        # else, the verifier reads it back under a head it checks against the key it was told to
+        # hold, and a second run holds a new log to the first. The key that signs the served copy is
+        # never in this repository or this workflow. The throwaway's public half comes from openssl
+        # rather than from the script's own output, which is the fault the --signer check exists
+        # for.
         run: |
           head -c 32 /dev/urandom > "$RUNNER_TEMP/throwaway-key"
-          TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/key-log.txt"
+          signer="$({ printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x70\x04\x22\x04\x20'; cat "$RUNNER_TEMP/throwaway-key"; } | openssl pkey -inform DER -pubout -outform DER | tail -c 32 | od -An -v -tx1 | tr -d ' \n')"
+          echo "signer=$signer" >> "$GITHUB_ENV"
+          TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/key-log.txt" --first --signer "$signer"
+          TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/key-log.txt" --signer "$signer"
+
+      - name: That script still refuses what it is built to refuse
+        # The script run backwards, four ways, and each has to refuse for its own reason. A first
+        # head where a copy already exists; a copy last served that the tree does not extend, made
+        # by appending a third entry to the served copy with the shipped tool; a head signed by a
+        # key the verifier does not hold; and no copy last served without --first.
+        run: |
+          refuse() {
+            local reason="$1"; shift
+            if said="$(TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$@" 2>&1)"; then
+              printf '%s\n' "$said"; echo "key-log.sh wrote a log it is built to refuse: $reason"; exit 1
+            fi
+            printf '%s\n' "$said" | grep -qF "$reason" || { printf '%s\n' "$said"; echo "it refused, and not because $reason"; exit 1; }
+          }
+          refuse "not the first head" "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/key-log.txt" --first --signer "$signer"
+          cp "$RUNNER_TEMP/key-log.txt" "$RUNNER_TEMP/longer.txt"
+          target/debug/timewitness key-log --log "$RUNNER_TEMP/longer.txt" --add "$(printf '09%.0s' $(seq 32))" --role server --label "a third server" --sign "$RUNNER_TEMP/throwaway-key" >/dev/null
+          refuse "not a prefix of the one this would write" "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/longer.txt" --signer "$signer"
+          head -c 32 /dev/urandom > "$RUNNER_TEMP/another-key"
+          refuse "not signed by the key the verifier holds for us" "$RUNNER_TEMP/another-key" "$RUNNER_TEMP/key-log.txt" --signer "$signer"
+          refuse "no copy last served" "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/nowhere/key-log.txt" --signer "$signer"
 
       - name: Verifying needs no account and no call to us
         # Two halves, and each catches what the other cannot. The test reads what the verifier links

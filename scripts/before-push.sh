@@ -157,8 +157,28 @@ step "Build"               cargo build --workspace --all-targets
 step "Tests"               cargo test --workspace
 throwaway_key="$(mktemp)"
 head -c 32 /dev/urandom >"$throwaway_key"
-step "The key log builds from this tree" env TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$throwaway_key" "$throwaway_key.log"
-rm -f "$throwaway_key" "$throwaway_key.log"
+# The throwaway's public half, derived here rather than read off the script's own output, which is
+# the comparison the script's --signer check exists for.
+signer="$({ printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x70\x04\x22\x04\x20'; cat "$throwaway_key"; } | openssl pkey -inform DER -pubout -outform DER | tail -c 32 | od -An -v -tx1 | tr -d ' \n')"
+step "The key log builds from this tree" bash -c "TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh '$throwaway_key' '$throwaway_key.log' --first --signer '$signer' && TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh '$throwaway_key' '$throwaway_key.log' --signer '$signer'"
+# The same four refusals CI drives, so a script that stopped refusing is seen here first.
+key_log_refuses() {
+  local reason="$1"; shift
+  local said
+  if said="$(TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$@" 2>&1)"; then
+    printf '%s\n' "$said"; echo "key-log.sh wrote a log it is built to refuse: $reason"; return 1
+  fi
+  printf '%s\n' "$said" | grep -qF "$reason" || { printf '%s\n' "$said"; echo "it refused, and not because $reason"; return 1; }
+}
+step "  and still refuses a first head where one exists" key_log_refuses "not the first head" "$throwaway_key" "$throwaway_key.log" --first --signer "$signer"
+cp "$throwaway_key.log" "$throwaway_key.longer"
+target/debug/timewitness key-log --log "$throwaway_key.longer" --add "$(printf '09%.0s' $(seq 32))" --role server --label "a third server" --sign "$throwaway_key" >/dev/null
+step "  and a log that does not extend the copy last served" key_log_refuses "not a prefix of the one this would write" "$throwaway_key" "$throwaway_key.longer" --signer "$signer"
+another_key="$(mktemp)"
+head -c 32 /dev/urandom >"$another_key"
+step "  and a head by a key the verifier does not hold" key_log_refuses "not signed by the key the verifier holds for us" "$another_key" "$throwaway_key.log" --signer "$signer"
+step "  and no copy last served without --first" key_log_refuses "no copy last served" "$throwaway_key" "$throwaway_key.nowhere/key-log.txt" --signer "$signer"
+rm -f "$throwaway_key" "$throwaway_key.log" "$throwaway_key.longer" "$another_key"
 step "Verifying needs no account and no call to us" cargo test -p timewitness-architecture --test verify_path_needs_nothing_of_ours
 # The other half of that CI step, `scripts/verify-offline.sh`, takes the network away in a Linux
 # namespace, and this machine has no Linux to make one in. Said out loud rather than skipped quietly,
@@ -169,7 +189,7 @@ if ! command -v unshare >/dev/null 2>&1; then
 else
   offline_key="$(mktemp)"
   head -c 32 /dev/urandom >"$offline_key"
-  step "  and with the network taken away" bash -c "TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh '$offline_key' '$offline_key.log' >/dev/null && TIMEWITNESS_BIN=target/debug/timewitness bash scripts/verify-offline.sh '$offline_key.log'"
+  step "  and with the network taken away" bash -c "TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh '$offline_key' '$offline_key.log' --first >/dev/null && TIMEWITNESS_BIN=target/debug/timewitness bash scripts/verify-offline.sh '$offline_key.log'"
   rm -f "$offline_key" "$offline_key.log"
 fi
 # The verifier page stood outside this script until 2026-09-14 on the reading that it took minutes.

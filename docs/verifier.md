@@ -38,13 +38,32 @@ Neither needs an account, a key from us, or a route to anything of ours.
    rather than skipped. The receipt proves that whoever signed it held that key. A reader who
    recognises the key can compare it and a reader who does not learns that one key signed this.
 
-   A reader handed a key log can pass it with `--key-log <file>` and get an answer: held where the
-   log names that key over a window the reading falls in, refused where it names it outside that
-   window or does not name it at all. **The answer is worth what a list we signed is worth**, and the
-   step says so in the words it gives back. What a log buys is that a key we published is one we
-   cannot quietly unpublish, because a reader who kept an earlier head can prove the log was
-   rewritten. It is not third-party evidence and it never becomes any. No log is published today, so
-   in practice this step is still the shrug for everybody who has not been handed one by hand.
+   A reader handed a key log can pass it with `--key-log <file>`. The head of the log is checked
+   first, under the key this reader holds for us: one ships in the trust material below and
+   `--anchors` or `--key-log-signer` replaces it. A head signed by any other key answers nothing,
+   and the step says whose it was not, because whatever that list says, it is not us saying it. A
+   log with no head is signed by nobody and answers nothing either.
+
+   Under a head of ours the step reads the entries that name agent keys. Held where one names the
+   receipt's key over a window the reading falls in. Refused where the key was retired before the
+   reading, where every window naming it falls elsewhere, where the log names it as a server key,
+   or where the log names agent keys and not this one. Not checked, and not refused, where the log
+   holds no agent entry at all, which is what the log we serve first looks like: it carries the keys
+   of our two Roughtime servers, and a list of server keys has nothing to say about the key that
+   signed a receipt.
+
+   **The answer is worth what a list we signed is worth**, and the step says so in the words it
+   gives back. What a log buys is that a key we published is one we cannot quietly unpublish,
+   because a reader who kept an earlier head can prove the log was rewritten. It is not third-party
+   evidence and it never becomes any. The window is judged on the receipt's own reading, which
+   whoever holds the key wrote, so this step catches a receipt that says it was signed outside the
+   window and not one that lies about when.
+
+   **Proving a rewrite.** A reader who kept the log we served last time passes both,
+   `--key-log <new> --kept-log <old>`, and a further step, *is this log an extension of the one you
+   kept*, holds the old entries as the first entries of the new log, rebuilds the old root from
+   them, checks the old head under the same key, and runs the RFC 6962 consistency proof between
+   the two heads. A removed, changed or reordered entry is a refusal that names the entry.
 4. **Do the receipt's own numbers support each other.** The reading inside the interval, the parts of
    the width adding to the width and to no more than it, a majority of the sources that answered
    kept, the agent keeping to the policy it states, every evidence entry in a role its scheme can
@@ -73,7 +92,7 @@ So the reader holds numbers of their own. The shipped ones:
 
 | | | Why |
 |---|---|---|
-| narrowest interval | 1 us | Two orders of magnitude under the tightest condition the product quotes, which is about 100 us of accuracy on a cloud instance with a hypervisor clock. Deliberately not set at the 200 us today's agent policy cannot beat, because a future agent on better hardware honestly will, and refusing those would look identical to catching a lie. |
+| narrowest interval | 1 us | Two orders of magnitude under the tightest condition the product quotes, which is about 100 us to UTC on a cloud instance with a hypervisor clock. That figure is quoted from public research and has not been measured by this product or by us. Deliberately not set at the 200 us today's agent policy cannot beat, because a future agent on better hardware honestly will, and refusing those would look identical to catching a lie. |
 | widest interval | 1 hour | Past an hour an interval says nothing a calendar would not. |
 | fewest sources answering | 3 | With three, a majority beats one bad clock. Two is two clocks agreeing. |
 | fewest operators behind the sources kept | 3 | The row above counts names and names are free: nine addresses at one company clear it with six to spare and are one chance to be wrong. A fault happens to whoever runs a server, so this is the count Marzullo's guarantee rests on. Three and not the four the shipped agent requires, because four is chosen against the server lists this product ships against today and a verifier is read years later by somebody pointing an agent at their own. Counted by the reader from the `operator` labels and never read out of the receipt. A receipt naming no operator anywhere does not clear it: the receipt crate accepts such a receipt, because its question is whether the agent kept its own word, and this question is whether there is any reason to believe the sources failed separately. |
@@ -98,6 +117,11 @@ Three Roughtime keys, one drand chain and two certificate pins ship with the cod
 is published by somebody who has never heard of this product, and shipping a copy is not being the
 root of trust for it: a reader can compare each against the publisher's own list.
 
+One more key ships beside them and is different in kind: the key that signs the head of our key
+log. It is ours, it vouches for no evidence, and it is not counted among the trust material the
+evidence is checked against. What it decides is whether a key log in front of the reader is one we
+signed, so that step 3 is answered off our list rather than off a list anybody made.
+
 A reader who would rather not take the shipped copy supplies their own with `--anchors <file>`:
 
 ```
@@ -105,6 +129,7 @@ A reader who would rather not take the shipped copy supplies their own with `--a
 roughtime <name> <32 bytes of hex>
 drand     <name> <chain hash, 32 bytes> <group key, 96 bytes> <period seconds> <genesis second>
 rfc3161   <name> <certificate sha-256> [more certificate digests]
+keylog    <name> <32 bytes of hex, the key that signs the head of our key log>
 ```
 
 A line nobody can parse refuses the file rather than being skipped, because a skipped line is a key
@@ -125,9 +150,17 @@ where the command line itself was wrong.
 
 ## What this does not do
 
-- It does not check that the agent's key belongs to anybody. There is no public key log. It can
-  check a key against a log a reader was handed, `--key-log`, and that is a list we signed
-  rather than anybody else's word for it.
+- It does not check that the agent's key belongs to anybody. It can check a key against a log a
+  reader was handed, `--key-log`, and that is a list we signed rather than anybody else's word for
+  it: our own word, checked under our own key, and never third-party evidence. A log signed by
+  anybody else answers nothing, and a log holding no agent key, which is the log we serve first,
+  answers nothing about a receipt and does not refuse it.
+- It does not catch a stolen key by the window in that log. The window is compared with the
+  receipt's own reading, which whoever holds the key wrote. What the log's window does catch is a
+  receipt that says it was signed after the key was retired.
+- It does not prove the log is honest to a reader seeing it for the first time. What it proves, to
+  a reader who kept an earlier copy and passes it as `--kept-log`, is that nothing they held has
+  been removed, changed or reordered since.
 - It does not check order. `sequence` and `chain_previous` are signed and are reported; nothing
   compares two receipts, and one verifier run has one receipt.
 - It does not check that a receipt sits in a chain, which is the point above. What it does check is

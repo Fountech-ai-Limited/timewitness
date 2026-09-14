@@ -32,9 +32,10 @@
 //! own argument parser.
 //!
 //! ```text
-//! timewitness-key-log v0
-//! entry <public key, 64 hex> <valid from, nanos> <valid until, nanos or -> <deployment>
-//! entry ...
+//! timewitness-key-log v1
+//! entry agent   <public key, 64 hex> <valid from, nanos> <valid until, nanos or -> <deployment>
+//! entry server  <public key, 64 hex> <valid from, nanos> <valid until, nanos or -> <deployment>
+//! entry retired <public key, 64 hex> <retired at, nanos> - <note>
 //! head <size> <root, 64 hex> <at, nanos> <signature, 128 hex> <signed by, 64 hex>
 //! ```
 //!
@@ -43,19 +44,26 @@
 //! not hold a newline, and the writer refuses one rather than producing a file that reads back as
 //! something else.
 //!
-//! The head is optional. A log with no head is still worth checking a key against and says less: a
-//! reader has entries nobody has put their name to. A log with a head whose root disagrees with its
-//! own entries is refused outright rather than read as either.
+//! `v1` because the leaf gained a version byte and a role on 2026-09-15, before any head was served,
+//! and a `v0` file read under this parser would take the key for a role. No `v0` log was ever
+//! served, so a file that says `v0` is refused with that said rather than read.
+//!
+//! The head is optional in the format and answers nothing when absent: a reader has entries nobody
+//! has put their name to, and the verifier says so and leaves its question unanswered. A log with a
+//! head whose root disagrees with its own entries is refused outright rather than read as either.
 
 use core::fmt;
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
-use super::{root, KeyEntry, LogError, Standing, TreeHead};
+use super::{root, KeyEntry, LogError, Role, Standing, TreeHead};
 use crate::time::UnixNanos;
 
 /// What the first line of a log says it is.
-pub const MAGIC: &str = "timewitness-key-log v0";
+pub const MAGIC: &str = "timewitness-key-log v1";
+
+/// What the first line of a log written before the leaf carried a version and a role said.
+const RETIRED_MAGIC: &str = "timewitness-key-log v0";
 
 /// A head with the signature somebody put on it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,16 +103,30 @@ impl KeyLog {
         )
     }
 
-    /// Whether this log vouches for a key at a moment.
+    /// Whether this log vouches for an agent key at a moment.
     #[must_use]
     pub fn standing(&self, key: &[u8; 32], at: UnixNanos) -> Standing {
         super::standing(&self.entries, key, at)
+    }
+
+    /// How many entries say an agent key was ours. A log with none has nothing to say about the
+    /// key that signed a receipt, and the verifier says that rather than refusing.
+    #[must_use]
+    pub fn agent_entries(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| entry.role == Role::Agent)
+            .count()
     }
 
     /// Whether the head this log carries is signed by the key it names.
     ///
     /// `None` where there is no head. A head whose signature does not check is a head somebody
     /// edited, and the entries under it are then worth exactly what an unsigned list is worth.
+    ///
+    /// `verify_strict` rather than `verify`, as a receipt's own signature is checked: the two differ
+    /// on keys and signatures with a small order component, which no honest signer produces and
+    /// which give one head more than one valid signature.
     #[must_use]
     pub fn head_is_signed_by_the_key_it_names(&self) -> Option<bool> {
         let signed = self.head.as_ref()?;
@@ -112,12 +134,76 @@ impl KeyLog {
             return Some(false);
         };
         Some(
-            key.verify(
+            key.verify_strict(
                 &signed.head.canonical(),
                 &Signature::from_bytes(&signed.signature),
             )
             .is_ok(),
         )
+    }
+
+    /// The head, checked against the keys a reader holds for us.
+    ///
+    /// This is the check that makes a log ours rather than somebody's. A head names the key that
+    /// signed it, and until 2026-09-15 the verifier checked the signature against that key and
+    /// nothing else, so a log signed a minute ago by a key from `os.urandom` read as a list we
+    /// signed. The key a reader holds for us is trust material the reader chose, carried the way
+    /// the Roughtime keys are: a published default, and a file of their own where they would rather
+    /// not take the shipped copy.
+    #[must_use]
+    pub fn check_head(&self, held: &[[u8; 32]]) -> HeadCheck {
+        match self.head_is_signed_by_the_key_it_names() {
+            None => HeadCheck::None,
+            Some(false) => HeadCheck::BadSignature,
+            Some(true) => {
+                let signer = self
+                    .head
+                    .as_ref()
+                    .expect("a checked head is a head")
+                    .signed_by;
+                if held.contains(&signer) {
+                    HeadCheck::Checked(signer)
+                } else {
+                    HeadCheck::SignerNotHeld(signer)
+                }
+            }
+        }
+    }
+}
+
+/// What a reader established about a log's head.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeadCheck {
+    /// The log carries no head, so nobody has put their name to it.
+    None,
+    /// The head is not signed by the key it names: the log was edited or the signature was moved.
+    BadSignature,
+    /// A real signature by the key the head names, and that key is not one the reader holds for
+    /// us. Whatever the list says, it is not us saying it.
+    SignerNotHeld([u8; 32]),
+    /// A real signature by a key the reader holds for us.
+    Checked([u8; 32]),
+}
+
+impl HeadCheck {
+    /// One word for a script.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            HeadCheck::None => "none",
+            HeadCheck::BadSignature => "bad-signature",
+            HeadCheck::SignerNotHeld(_) => "signer-not-held",
+            HeadCheck::Checked(_) => "checked",
+        }
+    }
+
+    /// The key that signed the head, where a real signature was found.
+    #[must_use]
+    pub const fn signed_by(self) -> Option<[u8; 32]> {
+        match self {
+            HeadCheck::SignerNotHeld(key) | HeadCheck::Checked(key) => Some(key),
+            HeadCheck::None | HeadCheck::BadSignature => None,
+        }
     }
 }
 
@@ -185,6 +271,12 @@ pub fn parse(text: &str) -> Result<KeyLog, FormatError> {
     let first = lines
         .find(|(_, line)| !is_skipped(line))
         .ok_or_else(|| FormatError::NotAKeyLog("the file is empty".to_string()))?;
+    if first.1.trim() == RETIRED_MAGIC {
+        return Err(FormatError::NotAKeyLog(format!(
+            "this is a {RETIRED_MAGIC:?} log, a format that carried no role on an entry and was \
+             never served. Rewrite it as {MAGIC:?} with a role on each entry"
+        )));
+    }
     if first.1.trim() != MAGIC {
         return Err(FormatError::NotAKeyLog(format!(
             "the first line reads {:?} and a key log begins {MAGIC:?}",
@@ -255,8 +347,17 @@ pub fn write(log: &KeyLog) -> Result<String, FormatError> {
                 "a deployment name with a line break in it".to_string(),
             ));
         }
+        if entry.role == Role::Retired && entry.valid_until.is_some() {
+            return Err(FormatError::BadLine(
+                index + 1,
+                "a retirement with an end on it. A retirement is one moment and closes every \
+                 window from it on"
+                    .to_string(),
+            ));
+        }
         out.push_str(&format!(
-            "entry {} {} {} {}\n",
+            "entry {} {} {} {} {}\n",
+            entry.role.word(),
             hex(&entry.public_key),
             entry.valid_from.0,
             match entry.valid_until {
@@ -292,12 +393,20 @@ fn split_once(line: &str) -> (&str, &str) {
 }
 
 fn read_entry(number: usize, rest: &str) -> Result<KeyEntry, FormatError> {
-    let mut parts = rest.splitn(4, char::is_whitespace);
+    let mut parts = rest.splitn(5, char::is_whitespace);
+    let role = field(number, parts.next(), "a role: agent, server or retired")?;
     let key = field(number, parts.next(), "a public key")?;
     let from = field(number, parts.next(), "a valid-from in nanoseconds")?;
     let until = field(number, parts.next(), "a valid-until, or -")?;
     // The name takes the rest of the line, spaces and all, which is why it is last.
     let deployment = parts.next().unwrap_or("").trim().to_string();
+
+    let role = Role::from_word(role).ok_or_else(|| {
+        FormatError::BadLine(
+            number,
+            format!("{role:?} is not a role. An entry is agent, server or retired"),
+        )
+    })?;
 
     if deployment.is_empty() {
         return Err(FormatError::BadLine(
@@ -307,15 +416,26 @@ fn read_entry(number: usize, rest: &str) -> Result<KeyEntry, FormatError> {
         ));
     }
 
+    let valid_until = match until {
+        "-" => None,
+        text => Some(UnixNanos(number_field(number, text)?)),
+    };
+    if role == Role::Retired && valid_until.is_some() {
+        return Err(FormatError::BadLine(
+            number,
+            "a retirement with an end on it. A retirement is one moment and closes every window \
+             from it on"
+                .to_string(),
+        ));
+    }
+
     Ok(KeyEntry {
         public_key: from_hex_32(key)
             .ok_or_else(|| FormatError::BadLine(number, format!("{key:?} is not a 32-byte key")))?,
+        role,
         deployment,
         valid_from: UnixNanos(number_field(number, from)?),
-        valid_until: match until {
-            "-" => None,
-            text => Some(UnixNanos(number_field(number, text)?)),
-        },
+        valid_until,
     })
 }
 
@@ -401,10 +521,101 @@ mod tests {
     fn entry(key: u8, from: i128, until: Option<i128>, name: &str) -> KeyEntry {
         KeyEntry {
             public_key: [key; 32],
+            role: Role::Agent,
             deployment: name.to_string(),
             valid_from: UnixNanos(from),
             valid_until: until.map(UnixNanos),
         }
+    }
+
+    #[test]
+    fn every_role_reads_back_and_a_retirement_has_no_end() {
+        let signing = SigningKey::from_bytes(&[7u8; 32]);
+        let log = signed(
+            vec![
+                entry(1, 100, None, "an agent"),
+                KeyEntry {
+                    role: Role::Server,
+                    ..entry(2, 100, None, "a server")
+                },
+                KeyEntry {
+                    role: Role::Retired,
+                    ..entry(1, 300, None, "the runner was decommissioned")
+                },
+            ],
+            &signing,
+        );
+        let text = write(&log).expect("written");
+        assert!(text.contains("\nentry agent 0101"), "{text}");
+        assert!(text.contains("\nentry server 0202"), "{text}");
+        assert!(text.contains("\nentry retired 0101"), "{text}");
+        assert_eq!(parse(&text).expect("read back"), log);
+        assert_eq!(log.agent_entries(), 1);
+
+        let with_an_end = KeyLog {
+            entries: vec![KeyEntry {
+                role: Role::Retired,
+                ..entry(1, 300, Some(400), "retired")
+            }],
+            head: None,
+        };
+        assert!(write(&with_an_end).is_err(), "a retirement is one moment");
+        let line = format!(
+            "{MAGIC}\nentry retired {} 300 400 retired\n",
+            hex(&[1u8; 32])
+        );
+        assert!(matches!(parse(&line), Err(FormatError::BadLine(2, _))));
+
+        let no_such_role = format!("{MAGIC}\nentry witness {} 300 - x\n", hex(&[1u8; 32]));
+        assert!(matches!(
+            parse(&no_such_role),
+            Err(FormatError::BadLine(2, _))
+        ));
+    }
+
+    #[test]
+    fn a_log_of_the_retired_format_is_refused_by_name() {
+        let text = format!(
+            "timewitness-key-log v0\nentry {} 100 - old\n",
+            hex(&[1u8; 32])
+        );
+        let refused = parse(&text).expect_err("no v0 log was ever served");
+        assert!(refused.to_string().contains("v0"), "{refused}");
+        assert!(refused.to_string().contains("v1"), "{refused}");
+    }
+
+    #[test]
+    fn a_head_is_checked_against_the_keys_the_reader_holds() {
+        let ours = SigningKey::from_bytes(&[7u8; 32]);
+        let theirs = SigningKey::from_bytes(&[8u8; 32]);
+        let held = [ours.verifying_key().to_bytes()];
+
+        let by_us = signed(vec![entry(1, 100, None, "one")], &ours);
+        assert_eq!(
+            by_us.check_head(&held),
+            HeadCheck::Checked(ours.verifying_key().to_bytes())
+        );
+
+        // The fault of 2026-09-15: a real signature by a key nobody holds for us.
+        let by_them = signed(vec![entry(1, 100, None, "one")], &theirs);
+        assert_eq!(
+            by_them.check_head(&held),
+            HeadCheck::SignerNotHeld(theirs.verifying_key().to_bytes())
+        );
+        assert_eq!(
+            by_them.check_head(&[]),
+            HeadCheck::SignerNotHeld(theirs.verifying_key().to_bytes())
+        );
+
+        let mut moved = by_us.clone();
+        moved.head.as_mut().expect("a head").signature = by_them.head.expect("a head").signature;
+        assert_eq!(moved.check_head(&held), HeadCheck::BadSignature);
+
+        let headless = KeyLog {
+            entries: by_us.entries.clone(),
+            head: None,
+        };
+        assert_eq!(headless.check_head(&held), HeadCheck::None);
     }
 
     fn signed(entries: Vec<KeyEntry>, signing: &SigningKey) -> KeyLog {
@@ -476,7 +687,7 @@ mod tests {
         // An entry removed, which is the edit a log exists to catch. The head still states two.
         let shortened = text
             .lines()
-            .filter(|line| !line.starts_with("entry 0202"))
+            .filter(|line| !line.starts_with("entry agent 0202"))
             .collect::<Vec<_>>()
             .join("\n");
         let refused = parse(&shortened).expect_err("the head states two entries and one is there");
@@ -503,7 +714,7 @@ mod tests {
     #[test]
     fn a_log_with_no_head_is_read_and_says_less() {
         let text = format!(
-            "{MAGIC}\n# where this came from\n\nentry {} 100 - a deployment\n",
+            "{MAGIC}\n# where this came from\n\nentry agent {} 100 - a deployment\n",
             hex(&[3u8; 32])
         );
         let log = parse(&text).expect("a log with no head is still a log");
@@ -535,9 +746,11 @@ mod tests {
     #[test]
     fn the_lines_that_could_be_read_two_ways_are_refused_instead() {
         let cases = [
-            format!("{MAGIC}\nentry abcd 1 - name\n"),
-            format!("{MAGIC}\nentry {} x - name\n", hex(&[1u8; 32])),
-            format!("{MAGIC}\nentry {} 1 -\n", hex(&[1u8; 32])),
+            format!("{MAGIC}\nentry agent abcd 1 - name\n"),
+            format!("{MAGIC}\nentry agent {} x - name\n", hex(&[1u8; 32])),
+            format!("{MAGIC}\nentry agent {} 1 -\n", hex(&[1u8; 32])),
+            // The line a v0 log carried, which reads here as a key in the role's place.
+            format!("{MAGIC}\nentry {} 1 - name\n", hex(&[1u8; 32])),
             format!("{MAGIC}\nwhatever 1 2 3\n"),
             format!(
                 "{MAGIC}\nhead 0 {} 1 {} {}\nhead 0 {} 1 {} {}\n",
@@ -559,7 +772,7 @@ mod tests {
         // Written out, it would read back as an entry and then as a line that is not one, so the
         // file would either fail to parse or, worse, parse as something nobody wrote.
         let log = KeyLog {
-            entries: vec![entry(1, 100, None, "one\nentry 00 1 - two")],
+            entries: vec![entry(1, 100, None, "one\nentry agent 00 1 - two")],
             head: None,
         };
         assert!(write(&log).is_err());

@@ -43,6 +43,11 @@ const TAKES_A_VALUE: &[&str] = &[
     "--from",
     "--until",
     "--sign",
+    "--kept-log",
+    "--key-log-signer",
+    "--role",
+    "--retire",
+    "--at",
 ];
 
 /// What each subcommand accepts, and how many things it takes that are not options.
@@ -59,6 +64,8 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
             "--anchors",
             "--no-anchors",
             "--key-log",
+            "--kept-log",
+            "--key-log-signer",
             "--min-width",
             "--fields",
             "--json",
@@ -90,7 +97,10 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
     ),
     (
         "key-log",
-        &["--log", "--add", "--label", "--from", "--until", "--sign"],
+        &[
+            "--log", "--add", "--role", "--label", "--from", "--until", "--retire", "--at",
+            "--sign",
+        ],
         0,
     ),
     ("cannot-prove", &[], 0),
@@ -326,12 +336,25 @@ mod tests {
             "--no-anchors",
             "--min-width",
             "1000",
+            "--key-log",
+            "log",
+            "--kept-log",
+            "old",
+            "--key-log-signer",
+            "00",
             "--fields",
             "--json",
             "--quiet",
         ]))
         .unwrap();
         assert!(verify.check_accepted().is_ok());
+
+        let key_log = parse(&argv(&[
+            "key-log", "--log", "l", "--add", "k", "--role", "agent", "--label", "n", "--from",
+            "1", "--until", "2", "--retire", "k", "--at", "3", "--sign", "s",
+        ]))
+        .unwrap();
+        assert!(key_log.check_accepted().is_ok());
 
         let stamp = parse(&argv(&[
             "stamp",

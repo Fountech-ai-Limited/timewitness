@@ -31,8 +31,8 @@ pub mod anchor_file;
 pub mod cannot_prove;
 pub mod floor;
 
-use timewitness_core::keylog::file::KeyLog;
-use timewitness_core::keylog::Standing;
+use timewitness_core::keylog::file::{HeadCheck, KeyLog};
+use timewitness_core::keylog::{check_consistency, consistency_proof, KeyEntry, Standing};
 use timewitness_core::time::{Nanos, NANOS_PER_MICRO, NANOS_PER_MILLI, NANOS_PER_SEC};
 use timewitness_receipt::anchors::TrustAnchors;
 use timewitness_receipt::report::Verified;
@@ -149,7 +149,29 @@ pub struct Assessment {
     pub floor: Floor,
     /// How many anchors the reader was holding.
     pub anchors_held: usize,
+    /// What was established about the key log, where the reader supplied one.
+    pub key_log: Option<KeyLogReport>,
 }
+
+/// What a reader established about the key log they supplied, for a script reading fields.
+///
+/// The step itself carries the words. This carries the two facts a script wants without parsing
+/// them: whether the head was checked under a key the reader holds for us, and by which key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyLogReport {
+    /// How many entries the log carries.
+    pub entries: usize,
+    /// How many of them say an agent key was ours.
+    pub agent_entries: usize,
+    /// What was established about the head.
+    pub head: HeadCheck,
+}
+
+/// The question the key log step answers.
+pub const KEY_LOG_QUESTION: &str = "is that key one of ours";
+
+/// The question the kept log step answers.
+pub const KEPT_LOG_QUESTION: &str = "is this log an extension of the one you kept";
 
 impl Assessment {
     /// Whether every check that ran held.
@@ -172,6 +194,12 @@ impl Assessment {
     #[must_use]
     pub fn checked_entries(&self) -> usize {
         self.evidence.as_ref().map_or(0, Verified::checked)
+    }
+
+    /// The step that asked a question, where it was asked.
+    #[must_use]
+    pub fn step(&self, question: &str) -> Option<&Step> {
+        self.steps.iter().find(|s| s.question == question)
     }
 }
 
@@ -203,9 +231,46 @@ pub fn verify_with_key_log(
     floor: &Floor,
     key_log: Option<&KeyLog>,
 ) -> Assessment {
+    assess(signed_receipt, subject, anchors, floor, key_log, None)
+}
+
+/// The same, with the log the reader was handed and the copy of it they kept from before.
+///
+/// This is the check the log exists for. A log we alone sign proves nothing to a reader seeing it
+/// for the first time; what it proves, to a reader who kept an earlier head, is that nothing they
+/// held has been removed, changed or reordered since. That reader passes both, and the step
+/// [`KEPT_LOG_QUESTION`] says whether the new log extends the old one under a head we signed.
+#[must_use]
+pub fn verify_with_kept_log(
+    signed_receipt: &[u8],
+    subject: Subject<'_>,
+    anchors: &TrustAnchors,
+    floor: &Floor,
+    key_log: &KeyLog,
+    kept: &KeyLog,
+) -> Assessment {
+    assess(
+        signed_receipt,
+        subject,
+        anchors,
+        floor,
+        Some(key_log),
+        Some(kept),
+    )
+}
+
+fn assess(
+    signed_receipt: &[u8],
+    subject: Subject<'_>,
+    anchors: &TrustAnchors,
+    floor: &Floor,
+    key_log: Option<&KeyLog>,
+    kept: Option<&KeyLog>,
+) -> Assessment {
     let mut steps = Vec::new();
     let link = chain_link(signed_receipt);
     let encoded_bytes = signed_receipt.len();
+    let held = anchors.key_log_signer_keys();
 
     let mut assessment = Assessment {
         steps: Vec::new(),
@@ -215,6 +280,11 @@ pub fn verify_with_key_log(
         encoded_bytes,
         floor: *floor,
         anchors_held: anchors.count(),
+        key_log: key_log.map(|log| KeyLogReport {
+            entries: log.entries.len(),
+            agent_entries: log.agent_entries(),
+            head: log.check_head(&held),
+        }),
     };
 
     // Size first, because everything after it allocates from what the file says about itself.
@@ -255,7 +325,10 @@ pub fn verify_with_key_log(
             short_hex(&receipt.agent_public_key)
         ),
     ));
-    steps.push(against_the_key_log(&receipt, key_log));
+    steps.push(against_the_key_log(&receipt, key_log, &held));
+    if let (Some(log), Some(kept)) = (key_log, kept) {
+        steps.push(against_the_kept_log(log, kept, &held));
+    }
     steps.push(Step::held(
         "do the receipt's own numbers support each other",
         "the reading falls inside the interval, the parts of the width add to the width, a majority \
@@ -284,11 +357,24 @@ pub fn verify_with_key_log(
 /// says which it is. Our own word is never third-party evidence: the weight of a receipt rests on
 /// the third-party signatures in it.
 ///
-/// A key the log does not carry, or carries outside the window the reading falls in, **fails**
-/// rather than going unchecked. A reader who supplied a log is asking the question, and "the log
-/// you gave me does not have this key" is an answer to it.
-fn against_the_key_log(receipt: &Receipt, key_log: Option<&KeyLog>) -> Step {
-    let question = "is that key one of ours";
+/// # Whose list it is
+///
+/// "A list we signed" is only true of a list we signed. The head is checked under a key the reader
+/// holds for us, and a head by any other key answers nothing: the step is not checked and the
+/// detail says whose it was not. Until 2026-09-15 the head was checked against the key it named
+/// itself, so a log anybody made a minute ago read as ours, exit 0.
+///
+/// # What refuses and what does not
+///
+/// A key the log names as an agent key outside its window, a key the log has retired, and a key
+/// missing from a log that does name agent keys all **fail** rather than going unchecked: a reader
+/// who supplied a log is asking the question, and "the log you gave me does not have this key" is
+/// an answer to it. A log with no agent entry has nothing to say about the key that signed a
+/// receipt and says so, because the log we serve first holds our two server keys and nothing else,
+/// and a verifier that refused our own receipts against our own log would be wrong in the way that
+/// matters most.
+fn against_the_key_log(receipt: &Receipt, key_log: Option<&KeyLog>, held: &[[u8; 32]]) -> Step {
+    let question = KEY_LOG_QUESTION;
 
     let Some(log) = key_log else {
         return Step::not_checked(
@@ -309,52 +395,238 @@ fn against_the_key_log(receipt: &Receipt, key_log: Option<&KeyLog>) -> Step {
         );
     };
 
-    let head =
-        match log.head_is_signed_by_the_key_it_names() {
-            Some(true) => {
-                let signed = log.head.as_ref().expect("a checked head is a head");
-                format!(
-                    "the log states {} entries under a head signed by {}",
-                    signed.head.size,
-                    short_hex(&signed.signed_by)
-                )
-            }
-            Some(false) => return Step::failed(
+    let head = match log.check_head(held) {
+        HeadCheck::Checked(signer) => format!(
+            "the log states {} entries under a head signed by {}, a key this reader holds for us",
+            log.entries.len(),
+            short_hex(&signer)
+        ),
+        HeadCheck::BadSignature => {
+            return Step::failed(
                 question,
                 "the head on this key log is not signed by the key the head itself names, so the \
                  log has been edited or the signature was moved onto it from somewhere else. \
                  Nothing in it is worth reading",
-            ),
-            None => format!(
-                "the log carries {} entries and no signed head, so nobody has put their name to it",
-                log.entries.len()
-            ),
-        };
+            )
+        }
+        HeadCheck::SignerNotHeld(signer) => {
+            return Step::not_checked(
+                question,
+                format!(
+                    "the log carries {} entries under a head signed by {}, and that is not a key \
+                     this reader holds for us{}. Whatever the list says, it is not us saying it, so \
+                     it answers nothing about this key",
+                    log.entries.len(),
+                    short_hex(&signer),
+                    if held.is_empty() {
+                        " (this reader holds none)"
+                    } else {
+                        ""
+                    }
+                ),
+            )
+        }
+        HeadCheck::None => {
+            return Step::not_checked(
+                question,
+                format!(
+                    "the log carries {} entries and no signed head, so it is signed by nobody. A \
+                     list nobody has put their name to answers nothing about whose keys these are",
+                    log.entries.len()
+                ),
+            )
+        }
+    };
+
+    // Judged on the receipt's own reading, which whoever holds the key wrote. A window checked
+    // against that catches a receipt that says it was signed outside the window; it does not catch
+    // one that lies about when, and the words below say so rather than implying a stolen key is
+    // caught here. Judging the window on outside evidence is later work.
+    let judged = "This window is judged on the receipt's own reading, which whoever holds the key \
+                  wrote, so it catches a receipt that says it was signed outside the window and \
+                  not one that lies about when";
 
     match log.standing(&key, receipt.utc_estimate) {
         Standing::Published => Step::held(
             question,
             format!(
-                "{head}, and one of them names this key over a window the reading falls in. **This \
-                 is a list we signed and not third-party evidence.** It makes a key we published \
-                 one we cannot quietly unpublish, to a reader who kept an earlier head; it does not \
-                 make us trustworthy to a stranger, and the weight of this receipt still rests on \
-                 the third-party signatures in it"
+                "{head}, and one of them names this key as an agent key over a window the reading \
+                 falls in. **This is a list we signed and not third-party evidence.** It makes a \
+                 key we published one we cannot quietly unpublish, to a reader who kept an earlier \
+                 head; it does not make us trustworthy to a stranger, and the weight of this receipt \
+                 still rests on the third-party signatures in it. {judged}"
+            ),
+        ),
+        Standing::Retired(at) => Step::failed(
+            question,
+            format!(
+                "{head}, and one of them retired this key at {} ns, before this reading. A retired \
+                 key is retired for every later moment whatever window an earlier entry names. \
+                 {judged}",
+                at.as_nanos()
             ),
         ),
         Standing::OutsideItsWindow => Step::failed(
             question,
             format!(
-                "{head}, and one of them names this key over a window this reading falls outside. \
-                 An agent key is short-lived on purpose, so a receipt signed after the key was \
-                 retired is what a stolen key produces"
+                "{head}, and the entries naming this key as an agent key all name a window this \
+                 reading falls outside. {judged}"
+            ),
+        ),
+        Standing::AServerKey => Step::failed(
+            question,
+            format!(
+                "{head}, and the only entries naming this key say it is a server key. A server key \
+                 signs no receipt, so a receipt signed by one was not signed by an agent of ours"
+            ),
+        ),
+        Standing::NotInTheLog if log.agent_entries() == 0 => Step::not_checked(
+            question,
+            format!(
+                "{head}, and no agent entry: every entry is a server key or a retirement, so the \
+                 log has nothing to say about the key that signed this receipt. It is not a \
+                 refusal. The receipt proves the agent that signed it held that key, and this log \
+                 says which server keys are ours, not which agent keys"
             ),
         ),
         Standing::NotInTheLog => Step::failed(
             question,
-            format!("{head}, and none of them names this key"),
+            format!(
+                "{head}, {} of them agent keys, and none of them names this key",
+                log.agent_entries()
+            ),
         ),
     }
+}
+
+/// `is this log an extension of the one you kept`, for a reader holding an earlier copy.
+///
+/// The only thing a log we alone sign proves, and it proves it only to this reader: nothing they
+/// held has been removed, changed or reordered. Three checks, in order, and each stops the run of
+/// them. Both heads have to be ours, because an old copy signed by nobody, or by somebody else,
+/// pins nothing. The old entries have to be the first entries of the new log, compared as entries
+/// rather than as hashes so the reader is told which one moved. And the consistency proof between
+/// the two heads has to hold, run through the same RFC 6962 algorithm a reader with somebody
+/// else's tooling would run, so that a proof this accepts is one they can rebuild.
+fn against_the_kept_log(log: &KeyLog, kept: &KeyLog, held: &[[u8; 32]]) -> Step {
+    let question = KEPT_LOG_QUESTION;
+
+    let kept_check = kept.check_head(held);
+    if kept_check == HeadCheck::BadSignature {
+        return Step::failed(
+            question,
+            "the head on the log you kept is not signed by the key it names, so what you kept was \
+             edited after it was signed and pins nothing",
+        );
+    }
+    if let HeadCheck::SignerNotHeld(signer) = kept_check {
+        return Step::not_checked(
+            question,
+            format!(
+                "the log you kept is signed by {}, which is not a key this reader holds for us, so \
+                 it pins nothing of ours and there is nothing to hold the new log to",
+                short_hex(&signer)
+            ),
+        );
+    }
+    if kept_check == HeadCheck::None {
+        return Step::not_checked(
+            question,
+            "the log you kept carries no head, so nobody signed what it held and there is nothing \
+             to hold the new log to",
+        );
+    }
+    let kept_head = kept.head.as_ref().expect("a checked head is a head");
+
+    if !matches!(log.check_head(held), HeadCheck::Checked(_)) {
+        return Step::not_checked(
+            question,
+            "the new log's head is not one this reader holds for us, which the step above says in \
+             full, so there is nothing to hold to the log you kept",
+        );
+    }
+    let new_head = log.head.as_ref().expect("a checked head is a head");
+
+    if kept.entries.len() > log.entries.len() {
+        return Step::failed(
+            question,
+            format!(
+                "you kept {} entries and this log carries {}. A log that got shorter is a log that \
+                 removed something you were told",
+                kept.entries.len(),
+                log.entries.len()
+            ),
+        );
+    }
+    for (index, (old, new)) in kept.entries.iter().zip(&log.entries).enumerate() {
+        if old != new {
+            return Step::failed(
+                question,
+                format!(
+                    "entry {index} of the log you kept is not entry {index} of this one: {}. A \
+                     log whose old entries change is not a log, and this is the change",
+                    describe_difference(old, new)
+                ),
+            );
+        }
+    }
+
+    let leaves: Vec<[u8; 32]> = log.entries.iter().map(KeyEntry::leaf_hash).collect();
+    let proof = consistency_proof(&leaves, kept.entries.len());
+    if let Err(e) = check_consistency(&kept_head.head, &new_head.head, &proof) {
+        return Step::failed(
+            question,
+            format!(
+                "the entries match as a prefix and the consistency proof between the two heads \
+                 does not hold: {e}. One of the two heads does not describe its own entries"
+            ),
+        );
+    }
+
+    Step::held(
+        question,
+        format!(
+            "the {} entries you kept are the first {} of these {}, the head you kept is over \
+             exactly them, and the consistency proof between the two heads holds. Nothing you \
+             were told has been removed, changed or reordered. That is the whole of what a log \
+             we sign can prove, and it proves it to you and not to a stranger",
+            kept.entries.len(),
+            kept.entries.len(),
+            log.entries.len()
+        ),
+    )
+}
+
+/// Which field moved between two entries at the same index, for a reader told their copy differs.
+fn describe_difference(old: &KeyEntry, new: &KeyEntry) -> String {
+    if old.public_key != new.public_key {
+        return format!(
+            "the key was {} and is now {}",
+            short_hex(&old.public_key),
+            short_hex(&new.public_key)
+        );
+    }
+    if old.role != new.role {
+        return format!(
+            "the role was {} and is now {}",
+            old.role.word(),
+            new.role.word()
+        );
+    }
+    if old.valid_from != new.valid_from {
+        return format!(
+            "the window opened at {} ns and now opens at {} ns",
+            old.valid_from.as_nanos(),
+            new.valid_from.as_nanos()
+        );
+    }
+    if old.valid_until != new.valid_until {
+        return "the window's end moved".to_string();
+    }
+    format!(
+        "the name was {:?} and is now {:?}",
+        old.deployment, new.deployment
+    )
 }
 
 /// The verifier's own floor, applied to the numbers rather than to what the receipt says about them.
@@ -593,7 +865,7 @@ fn question_for(e: &ReceiptError) -> String {
     .to_string()
 }
 
-/// The first four bytes of something, which is enough for a person comparing two by eye.
+/// The first eight bytes of something, which is enough for a person comparing two by eye.
 fn short_hex(bytes: &[u8]) -> String {
     let shown: String = bytes
         .iter()

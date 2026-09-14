@@ -18,7 +18,9 @@ use std::collections::BTreeMap;
 
 use timewitness_core::SourceKind;
 use timewitness_receipt::schema::Receipt;
-use timewitness_verify::{cannot_prove, width_in_words, Assessment, Subject};
+use timewitness_verify::{
+    cannot_prove, width_in_words, Assessment, State, Subject, KEPT_LOG_QUESTION, KEY_LOG_QUESTION,
+};
 
 /// The tool's own name, as it appears to a person.
 pub const TOOL_NAME: &str = "timewitness";
@@ -55,7 +57,22 @@ pub fn usage() -> String {
     out.push_str(
         "                          not third-party evidence: what it buys is that a key\n",
     );
-    out.push_str("                          we published is one we cannot quietly unpublish\n");
+    out.push_str("                          we published is one we cannot quietly unpublish.\n");
+    out.push_str(
+        "                          Its head is checked under the key that ships for it,\n",
+    );
+    out.push_str("                          and a head by any other key answers nothing\n");
+    out.push_str(
+        "      --kept-log <file>   the copy of that log you kept from before. Holds the new\n",
+    );
+    out.push_str(
+        "                          log to it: every old entry still there, in order, under\n",
+    );
+    out.push_str("                          a head we signed, or the run says what moved\n");
+    out.push_str(
+        "      --key-log-signer <hex>\n                          the key you hold for our log's head, instead of the\n",
+    );
+    out.push_str("                          one that ships. --anchors replaces it too\n");
     out.push_str("      --quiet             the verdict and the refusal only\n\n");
     out.push_str("  timewitness stamp --subject <file> --key <file> --out <file> [options]\n");
     out.push_str("      Take a bounded-time receipt over the hash of a file. This one does use\n");
@@ -131,18 +148,24 @@ pub fn usage() -> String {
         "                          will not stand behind one gets silence, not a guess\n\n",
     );
     out.push_str("  timewitness key-log --log <file> [options]\n");
-    out.push_str(
-        "      Write the public log of agent keys. Appending is the only edit there is:\n",
-    );
+    out.push_str("      Write the public log of our keys. Appending is the only edit there is:\n");
     out.push_str("      a log whose old entries change is not a log, and retiring a key is an\n");
     out.push_str("      entry that says so rather than an edit to the one before it.\n\n");
-    out.push_str("      --add <hex>         a 32-byte agent public key to append\n");
+    out.push_str("      --add <hex>         a 32-byte public key to append\n");
+    out.push_str("      --role <word>       what the key is: agent, which signs receipts, or\n");
+    out.push_str("                          server, a Roughtime server's. Agent by default\n");
     out.push_str("      --label <name>      which deployment that key belongs to. A label a\n");
     out.push_str(
         "                          person chose, and not an identity claim about anybody\n",
     );
     out.push_str("      --from <ns>         when the key started being used. Now by default\n");
-    out.push_str("      --until <ns>        when it stopped, where it has\n");
+    out.push_str("      --until <ns>        when it will stop, where that is known when the\n");
+    out.push_str("                          entry is written. Not how a key is retired\n");
+    out.push_str("      --retire <hex>      append the entry that retires a key already in the\n");
+    out.push_str("                          log, for every moment from --at on. Permanent: a\n");
+    out.push_str("                          retired key is never added again\n");
+    out.push_str("      --at <ns>           the moment the retirement takes effect. Now by\n");
+    out.push_str("                          default\n");
     out.push_str("      --sign <file>       sign the head over what the log now holds\n\n");
     out.push_str("  timewitness cannot-prove\n");
     out.push_str("      What this product cannot prove, in full. It ships with the claim rather\n");
@@ -351,6 +374,49 @@ pub fn fields(a: &Assessment) -> String {
 ",
         a.anchors_held
     ));
+    // The key log, where one was supplied, as the two facts a script wants before it reads the
+    // words: whether the head was checked under a key this reader holds for us, and by which key.
+    // `scripts/key-log.sh` refuses to serve a log on anything less than `checked`.
+    if let Some(log) = &a.key_log {
+        out.push_str(&format!(
+            "key_log_entries={}
+",
+            log.entries
+        ));
+        out.push_str(&format!(
+            "key_log_agent_entries={}
+",
+            log.agent_entries
+        ));
+        out.push_str(&format!(
+            "key_log_head={}
+",
+            log.head.word()
+        ));
+        out.push_str(&format!(
+            "key_log_head_signed_by={}
+",
+            log.head
+                .signed_by()
+                .map_or_else(|| "none".to_string(), |key| hex(&key))
+        ));
+        for (name, question) in [
+            ("key_log_step", KEY_LOG_QUESTION),
+            ("kept_log", KEPT_LOG_QUESTION),
+        ] {
+            if let Some(step) = a.step(question) {
+                out.push_str(&format!(
+                    "{name}={}
+",
+                    match step.state {
+                        State::Held(_) => "held",
+                        State::Failed(_) => "failed",
+                        State::NotChecked(_) => "not-checked",
+                    }
+                ));
+            }
+        }
+    }
     if let Some(receipt) = &a.receipt {
         out.push_str(&format!(
             "earliest_ns={}

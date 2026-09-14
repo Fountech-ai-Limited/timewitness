@@ -6,13 +6,16 @@
 //!
 //! So there are two routes and a reader picks. [`published`] is the set that ships: three Roughtime
 //! server keys, one drand chain and two timestamp authority certificate pins, every one of them
-//! published by a third party who has never heard of this product. [`parse`] reads a reader's own
-//! set out of a plain text file, which is what somebody who would rather not take our word for which
-//! keys are which uses.
+//! published by a third party who has never heard of this product, and one key of our own, the one
+//! that signs the head of our key log. [`parse`] reads a reader's own set out of a plain text file,
+//! which is what somebody who would rather not take our word for which keys are which uses.
 //!
-//! Shipping a key is not being the root of trust for it. Each one is a public fact a reader can
-//! compare against its publisher's own list, and the file format exists so that comparing is not the
-//! only option.
+//! Shipping a key is not being the root of trust for it. Each third-party key is a public fact a
+//! reader can compare against its publisher's own list, and the file format exists so that comparing
+//! is not the only option. Our own key is different in kind and is said to be: it makes nothing
+//! third-party evidence. What it decides is whether a key log in front of the reader is one we
+//! signed, so that the step `is that key one of ours` is answered off our list rather than off a
+//! list anybody made.
 //!
 //! ## The file
 //!
@@ -22,6 +25,7 @@
 //! roughtime <name> <32 bytes of hex>
 //! drand     <name> <32 bytes of hex, the chain hash> <96 bytes of hex, the group key> <period seconds> <genesis unix second>
 //! rfc3161   <name> <32 bytes of hex, a certificate digest> [more certificate digests]
+//! keylog    <name> <32 bytes of hex, the key that signs the head of our key log>
 //! ```
 
 use timewitness_core::evidence::drand::Chain;
@@ -29,11 +33,25 @@ use timewitness_core::evidence::rfc3161::{self, Authority};
 use timewitness_core::evidence::roughtime;
 use timewitness_receipt::anchors::TrustAnchors;
 
+/// The key that signs the head of our key log, as of 2026-09-15.
+///
+/// The secret half is held outside every repository and has signed nothing that was served. A
+/// rotation is a new entry here and a new head on the log, and a reader who would rather hold a
+/// different key names it in their own anchors file, which replaces this one.
+pub const KEY_LOG_SIGNER: [u8; 32] = [
+    0x54, 0x85, 0x0c, 0x83, 0x61, 0x0a, 0x33, 0xe4, 0x46, 0x30, 0x9a, 0x31, 0xc1, 0x4e, 0x12, 0x26,
+    0x0c, 0x68, 0xe7, 0x24, 0x0c, 0x9b, 0x54, 0x22, 0x90, 0x93, 0xfd, 0x2c, 0x96, 0x39, 0x9a, 0x05,
+];
+
+/// The name the shipped key log signer is reported under.
+pub const KEY_LOG_SIGNER_NAME: &str = "our key log";
+
 /// The anchors that ship with this code.
 ///
-/// Everything on this list is published by somebody else and none of it is ours. The reader who
-/// wants to check that for themselves compares each against the publisher's own list; the reader who
-/// would rather not trust the shipped copy supplies a file instead.
+/// Every evidence key on this list is published by somebody else. The reader who wants to check
+/// that for themselves compares each against the publisher's own list; the reader who would rather
+/// not trust the shipped copy supplies a file instead. The one key that is ours is the key log's
+/// signer, and it vouches for no evidence.
 #[must_use]
 pub fn published() -> TrustAnchors {
     let mut anchors = TrustAnchors::none().with_drand(Chain::quicknet());
@@ -43,7 +61,7 @@ pub fn published() -> TrustAnchors {
     for authority in rfc3161::published_authorities() {
         anchors = anchors.with_authority(authority);
     }
-    anchors
+    anchors.with_key_log_signer(KEY_LOG_SIGNER_NAME, KEY_LOG_SIGNER)
 }
 
 /// Why a trust material file could not be read.
@@ -131,9 +149,19 @@ pub fn parse(text: &str) -> Result<TrustAnchors, AnchorError> {
                     accepted_certificates: certificates,
                 });
             }
+            "keylog" => {
+                if fields.len() != 3 {
+                    return Err(fail(
+                        "a keylog anchor is the word, a name and thirty-two bytes of hex".into(),
+                    ));
+                }
+                let key = fixed::<32>(fields[2]).map_err(&fail)?;
+                anchors = anchors.with_key_log_signer(fields[1].to_string(), key);
+            }
             other => {
                 return Err(fail(format!(
-                    "{other:?} is not a kind of anchor. This reads roughtime, drand and rfc3161"
+                    "{other:?} is not a kind of anchor. This reads roughtime, drand, rfc3161 and \
+                     keylog"
                 )))
             }
         }
@@ -184,11 +212,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_shipped_set_holds_all_three_kinds() {
+    fn the_shipped_set_holds_all_three_kinds_and_our_key_log_signer() {
         let anchors = published();
         assert_eq!(anchors.roughtime_servers.len(), 3);
         assert_eq!(anchors.drand_chains.len(), 1);
         assert_eq!(anchors.timestamp_authorities.len(), 2);
+        assert_eq!(anchors.key_log_signer_keys(), vec![KEY_LOG_SIGNER]);
+        assert_eq!(
+            anchors.count(),
+            6,
+            "our own key is held and is not counted as evidence material"
+        );
     }
 
     #[test]
@@ -197,11 +231,16 @@ mod tests {
 # my own list
 roughtime somewhere 4b70337d92790a349d909db564919bc6a7583ff4a813c7d7298d3e6a272c7a12
 rfc3161 an-authority 2da09da7f4131f9fe72db6c5e6e9c9656755af043f1ea742cc0d2120e141ebfc
+keylog my-copy-of-theirs 54850c83610a33e446309a31c14e12260c68e7240c9b54229093fd2c96399a05
 ";
-        let anchors = parse(text).expect("two well-formed lines");
+        let anchors = parse(text).expect("three well-formed lines");
         assert_eq!(anchors.roughtime_servers.len(), 1);
         assert_eq!(anchors.timestamp_authorities.len(), 1);
+        assert_eq!(anchors.key_log_signer_keys(), vec![KEY_LOG_SIGNER]);
         assert_eq!(anchors.count(), 2);
+
+        let err = parse("keylog only-two-fields").expect_err("a key is missing");
+        assert!(err.detail.contains("thirty-two bytes"), "{}", err.detail);
     }
 
     #[test]

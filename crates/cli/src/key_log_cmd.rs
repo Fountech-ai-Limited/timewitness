@@ -1,7 +1,7 @@
 //! `timewitness key-log`, which is how a key log gets written at all.
 //!
-//! The tree, the proofs and the file format are in [`timewitness_core::keylog`]. This is the two
-//! things a person does with them: add a key, and sign what the log now holds.
+//! The tree, the proofs and the file format are in [`timewitness_core::keylog`]. This is the three
+//! things a person does with them: add a key, retire one, and sign what the log now holds.
 //!
 //! ## Why appending is the only edit
 //!
@@ -16,6 +16,15 @@
 //! that would drop or change an entry stops rather than writing, which is the one protection a file
 //! on a disk can have against the hand that holds it.
 //!
+//! ## Why retiring is its own edit
+//!
+//! Until 2026-09-15 the way to retire a key was to append the same key again with an end on it,
+//! and the verifier read the two entries as a union of windows, so the open entry above went on
+//! covering every later moment and nothing was retired. Now `--retire` appends an entry of the
+//! retired role, which closes every window of the key from its moment on, and `--add` refuses a
+//! key that already has an open entry or a retirement, so the old procedure cannot be followed by
+//! mistake.
+//!
 //! ## What signing a head does and does not buy
 //!
 //! It makes the log something we cannot quietly rewrite for a reader who kept an earlier head. It
@@ -29,7 +38,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use timewitness_core::keylog::file::{
     parse, sign_head as sign, write as write_log, KeyLog, SignedHead,
 };
-use timewitness_core::keylog::KeyEntry;
+use timewitness_core::keylog::{KeyEntry, Role};
 use timewitness_core::UnixNanos;
 
 use crate::args::Args;
@@ -49,8 +58,18 @@ pub fn run(args: &Args) -> Outcome {
     };
     let mut log = before.clone();
 
+    if args.value("--add").is_some() && args.value("--retire").is_some() {
+        return fail("--add and --retire in one run. One edit at a time, so each is its own entry with its own reason");
+    }
     if let Some(key) = args.value("--add") {
-        let entry = match entry_from(args, key) {
+        let entry = match entry_from(args, key, &log) {
+            Ok(entry) => entry,
+            Err(text) => return fail(&text),
+        };
+        log.entries.push(entry);
+    }
+    if let Some(key) = args.value("--retire") {
+        let entry = match retirement_from(args, key, &log) {
             Ok(entry) => entry,
             Err(text) => return fail(&text),
         };
@@ -115,10 +134,20 @@ fn read_existing(path: &Path) -> Result<KeyLog, String> {
 }
 
 /// The entry the command line describes.
-fn entry_from(args: &Args, key: &str) -> Result<KeyEntry, String> {
+fn entry_from(args: &Args, key: &str, log: &KeyLog) -> Result<KeyEntry, String> {
     let public_key = from_hex(key).ok_or_else(|| {
         format!("--add takes a 32-byte public key as 64 hex characters and was given {key:?}")
     })?;
+    let role = match args.value("--role") {
+        None => Role::Agent,
+        Some("retired") => {
+            return Err(
+                "--role retired is not how a key is retired. Use --retire <key>".to_string(),
+            )
+        }
+        Some(word) => Role::from_word(word)
+            .ok_or_else(|| format!("--role is agent or server and was given {word:?}"))?,
+    };
     let deployment = args
         .value("--label")
         .ok_or(
@@ -146,12 +175,83 @@ fn entry_from(args: &Args, key: &str) -> Result<KeyEntry, String> {
         }
     }
 
+    // The two states of a key that a second `--add` cannot honestly follow. A retirement is
+    // permanent, and an open entry above is the old retirement procedure about to be repeated.
+    let about_this_key = || log.entries.iter().filter(|e| e.public_key == public_key);
+    if let Some(retired) = about_this_key().find(|e| e.role == Role::Retired) {
+        return Err(format!(
+            "{} was retired at {} ns, and a retirement is permanent. Issue a new key rather than \
+             reopening this one",
+            short(key),
+            retired.valid_from.as_nanos()
+        ));
+    }
+    if let Some(open) = about_this_key().find(|e| e.valid_until.is_none()) {
+        return Err(format!(
+            "{} already has an open {} entry above, for {:?}. A second entry does not close the \
+             first: to retire the key, --retire {key} --at <ns>",
+            short(key),
+            open.role.word(),
+            open.deployment
+        ));
+    }
+
     Ok(KeyEntry {
         public_key,
+        role,
         deployment,
         valid_from,
         valid_until,
     })
+}
+
+/// The retirement the command line describes.
+fn retirement_from(args: &Args, key: &str, log: &KeyLog) -> Result<KeyEntry, String> {
+    let public_key = from_hex(key).ok_or_else(|| {
+        format!("--retire takes a 32-byte public key as 64 hex characters and was given {key:?}")
+    })?;
+    let at = match args.number("--at") {
+        Ok(Some(n)) => UnixNanos(n),
+        Ok(None) => UnixNanos(now_nanos()?),
+        Err(e) => return Err(e.0),
+    };
+    if args.value("--from").is_some() || args.value("--until").is_some() {
+        return Err("--retire takes its moment as --at, not as a window".to_string());
+    }
+
+    let mut named = false;
+    for earlier in &log.entries {
+        if earlier.public_key != public_key {
+            continue;
+        }
+        if earlier.role == Role::Retired {
+            return Err(format!(
+                "{} was already retired at {} ns",
+                short(key),
+                earlier.valid_from.as_nanos()
+            ));
+        }
+        named = true;
+    }
+    if !named {
+        return Err(format!(
+            "{} is not in this log, so there is nothing to retire",
+            short(key)
+        ));
+    }
+
+    Ok(KeyEntry {
+        public_key,
+        role: Role::Retired,
+        deployment: args.value("--label").unwrap_or("retired").to_string(),
+        valid_from: at,
+        valid_until: None,
+    })
+}
+
+/// The first eight bytes of a key as typed, for a refusal that names it.
+fn short(hex: &str) -> String {
+    format!("{}...", &hex[..16.min(hex.len())])
 }
 
 /// Sign what the log now holds.
@@ -210,10 +310,91 @@ mod tests {
     fn entry(key: u8) -> KeyEntry {
         KeyEntry {
             public_key: [key; 32],
+            role: Role::Agent,
             deployment: "a deployment".to_string(),
             valid_from: UnixNanos(100),
             valid_until: None,
         }
+    }
+
+    fn args(items: &[&str]) -> Args {
+        crate::args::parse(&items.iter().map(|s| (*s).to_string()).collect::<Vec<_>>())
+            .expect("a well-formed line")
+    }
+
+    fn hex32(byte: u8) -> String {
+        [byte; 32].iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn a_key_with_an_open_entry_cannot_be_added_again_and_a_retired_one_never() {
+        let open = log(&[1]);
+        let again = args(&["key-log", "--add", &hex32(1), "--label", "x"]);
+        let err = entry_from(&again, &hex32(1), &open).expect_err("already open above");
+        assert!(err.contains("--retire"), "{err}");
+
+        let mut retired = log(&[1]);
+        retired.entries.push(KeyEntry {
+            role: Role::Retired,
+            valid_from: UnixNanos(200),
+            ..entry(1)
+        });
+        let err = entry_from(&again, &hex32(1), &retired).expect_err("retired for good");
+        assert!(err.contains("permanent"), "{err}");
+
+        // A closed window above is not an open one, so a later window may follow it.
+        let mut closed = log(&[1]);
+        closed.entries[0].valid_until = Some(UnixNanos(150));
+        let ok =
+            entry_from(&again, &hex32(1), &closed).expect("a second window after a closed one");
+        assert_eq!(ok.role, Role::Agent);
+
+        let as_server = args(&[
+            "key-log",
+            "--add",
+            &hex32(2),
+            "--role",
+            "server",
+            "--label",
+            "x",
+        ]);
+        assert_eq!(
+            entry_from(&as_server, &hex32(2), &open)
+                .expect("a server key")
+                .role,
+            Role::Server
+        );
+        let as_retired = args(&[
+            "key-log",
+            "--add",
+            &hex32(2),
+            "--role",
+            "retired",
+            "--label",
+            "x",
+        ]);
+        assert!(entry_from(&as_retired, &hex32(2), &open).is_err());
+    }
+
+    #[test]
+    fn a_retirement_needs_a_key_the_log_names_and_happens_once() {
+        let open = log(&[1]);
+        let retire = args(&["key-log", "--retire", &hex32(1), "--at", "500"]);
+        let entry = retirement_from(&retire, &hex32(1), &open).expect("a key the log names");
+        assert_eq!(entry.role, Role::Retired);
+        assert_eq!(entry.valid_from, UnixNanos(500));
+        assert_eq!(entry.valid_until, None);
+
+        let unknown = retirement_from(&retire, &hex32(9), &open).expect_err("not in the log");
+        assert!(unknown.contains("nothing to retire"), "{unknown}");
+
+        let mut twice = open.clone();
+        twice.entries.push(entry);
+        let err = retirement_from(&retire, &hex32(1), &twice).expect_err("already retired");
+        assert!(err.contains("already retired"), "{err}");
+
+        let with_a_window = args(&["key-log", "--retire", &hex32(1), "--until", "9"]);
+        assert!(retirement_from(&with_a_window, &hex32(1), &open).is_err());
     }
 
     fn log(keys: &[u8]) -> KeyLog {
