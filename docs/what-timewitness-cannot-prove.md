@@ -522,10 +522,10 @@ the second half of it is carried rather than checked.
 nothing portable is produced, so there is no artefact a third party could be shown. The phrase reads
 as a description of something that exists and it describes something that does not.
 
-**There is no release, so nothing is downloadable.** The verifier is built and works, as a command
-line tool and as one HTML page that runs from a local disk with no network. Both are built from
-source in this repository. There is no released binary and no published page, so today a stranger
-compiles it rather than downloading it.
+**There is no released binary, so nothing is downloadable.** The verifier is built and works, as a
+command line tool and as one HTML page that runs from a local disk with no network. Both are built
+from source in this repository. The `v0` release carries no binary and there is no published page,
+so today a stranger compiles it rather than downloading it.
 
 **Nothing links an agent's key to anybody.** A receipt proves that whoever signed it held that key.
 There is no public log of agent keys to check one against, so a reader who does not already recognise
