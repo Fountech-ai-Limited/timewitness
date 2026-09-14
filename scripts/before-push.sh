@@ -172,6 +172,11 @@ else
   step "  and with the network taken away" bash -c "TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh '$offline_key' '$offline_key.log' >/dev/null && TIMEWITNESS_BIN=target/debug/timewitness bash scripts/verify-offline.sh '$offline_key.log'"
   rm -f "$offline_key" "$offline_key.log"
 fi
+# The verifier page stood outside this script until 2026-09-14 on the reading that it took minutes.
+# Warm, the whole of it takes seconds, and the page half of the check above is read off the page as
+# built, so it cannot run without it.
+step "The verifier page"   bash scripts/build-verifier-page.sh
+step "The verifier page asks for nothing" bash -c "node scripts/verifier-page-offline.mjs && node scripts/verifier-page-offline.mjs --self-test"
 step "Repository hygiene"  bash scripts/repo-hygiene.sh
 # CI runs this on the tree route, because it grades a commit and the served page is not in one. Here
 # the sibling checkout is on disk, so the same script compares all three and this machine is the one
@@ -185,11 +190,6 @@ step "  and that check still refuses a precision tier" bash -c "TW_PRICE_PROVE=p
 step "  and a price per receipt" bash -c "TW_PRICE_PROVE=per-receipt node scripts/no-price-on-evidence.mjs 2>&1 | grep -qF 'offers a price per receipt'"
 step "The guard that reads the served page is still running" bash scripts/wire-guard-is-alive.sh
 step "Dependency advisories" bash scripts/check-advisories.sh
-
-# The verifier page is CI's seventh step and it is not here. It needs the wasm target and a release
-# build of the whole workspace, which is minutes rather than seconds, and it has its own check in
-# `scripts/check-verifier-page.mjs` that whoever touches that page runs. Named rather than dropped
-# quietly, so the two lists still line up.
 
 if [ ${#failed[@]} -ne 0 ]; then
   echo >&2

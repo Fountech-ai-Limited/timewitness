@@ -8,23 +8,34 @@
 //! the check is written now rather than then.
 //!
 //! What counts as the verify path. The verifier crate, the WebAssembly build of it, every crate
-//! either of those links, the four files of the command line that `timewitness verify` runs through,
-//! and the page the verifier is served in. The rest of the command line is not on it: the agent and
-//! the stamp talk to time sources by design, and which of them may need an account is a separate
-//! question that is not settled.
+//! either of those links, every file of the command line that `timewitness verify` can reach, and
+//! the page the verifier is served in. The command line's files are found by reading them: from the
+//! arm of `main.rs` that runs `verify`, every module a reached file names is reached too, so a new
+//! file the verifier calls into is read the day it is added rather than the day somebody lists it.
+//! The rest of the command line is not on it: the agent and the stamp talk to time sources by
+//! design, and which of them may need an account is a separate question that is not settled.
 //!
 //! Three rules, and each names what it refuses and why, so an honest change that trips one can say
 //! which rule it is arguing with:
 //!
 //! - nothing linked may be an HTTP client, a TLS stack, a socket runtime or a binding to the
 //!   browser's fetch, checked by package name over the whole dependency closure;
-//! - no source on the path may name a host under `timewitness.dev`, open a socket, or read the
-//!   environment;
+//! - no source on the path may name `timewitness.dev` at all, open a socket, start another program,
+//!   read the environment at run time or at build time, or bring in code from a file this check
+//!   does not read;
 //! - no source on the path may carry the name of a credential variable.
+//!
+//! The first version of this file, of 2026-09-14, read spellings rather than reach, and a test run
+//! the same evening showed it: a spawned `curl`, a host built with `format!`, a module the command
+//! line reached from a fifth file, a module loaded by `#[path]` from outside `src/` and an `env!`
+//! read all stayed green. Each of those is now a seed below, and each was watched turning the build
+//! red on a harness copy of the tree before this version went in.
 //!
 //! The network itself is the other half and it is not here. `scripts/verify-offline.sh` runs the
 //! verifier in a process with no network at all and holds its verdict to the one it gives with a
-//! network, which catches a path this file cannot see, such as a crate it has never heard of.
+//! network, which catches a path this file cannot see, such as a crate it has never heard of or a
+//! host spelled so that no line of source holds it. The page has a half of its own too:
+//! `scripts/verifier-page-offline.mjs` reads the page as built, module and all.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -33,13 +44,16 @@ use std::path::{Path, PathBuf};
 /// The crates whose whole closure is the verify path.
 const ROOTS: [&str; 2] = ["timewitness-verify", "timewitness-verify-web"];
 
-/// The files of the command line that `timewitness verify` runs through, and nothing else of it.
-const COMMAND_LINE_FILES: [&str; 4] = [
-    "crates/cli/src/verify_cmd.rs",
-    "crates/cli/src/args.rs",
-    "crates/cli/src/render.rs",
-    "crates/cli/src/as_json.rs",
-];
+/// Where the command line's modules live, and the file it starts in.
+const COMMAND_LINE_SRC: &str = "crates/cli/src";
+const COMMAND_LINE_MAIN: &str = "main.rs";
+
+/// The subcommand whose reach is the verify path.
+const VERIFY_SUBCOMMAND: &str = "verify";
+
+/// The command line's modules the reach has to find, because they are the ones `verify` runs through
+/// today. Finding fewer means the reader broke, not that the path got shorter.
+const COMMAND_LINE_FLOOR: [&str; 4] = ["verify_cmd", "args", "render", "as_json"];
 
 /// The page the verifier module is served in. The built page embeds the module and is not tracked;
 /// this is the source it is built from.
@@ -114,8 +128,28 @@ const SOURCE_RULES: &[(&str, &str)] = &[
         "reads the environment, which is where an account token would come from",
     ),
     (
-        "option_env!",
-        "bakes an environment variable into the build",
+        "env::{",
+        "brings in part of the environment under a name this check cannot follow",
+    ),
+    (
+        "Command::new",
+        "starts another program, and that program can reach anything",
+    ),
+    (
+        "process::Command",
+        "starts another program, and that program can reach anything",
+    ),
+    (
+        ".spawn(",
+        "starts another program or thread, and a program can reach anything",
+    ),
+    (
+        "#[path",
+        "loads a module from a file of its own choosing, which this check never reads",
+    ),
+    (
+        "include!(",
+        "pastes in code from a file of its own choosing, which this check never reads",
     ),
     ("fetch(", "fetches from a network"),
     ("XMLHttpRequest", "fetches from a network"),
@@ -123,6 +157,11 @@ const SOURCE_RULES: &[(&str, &str)] = &[
     ("EventSource", "opens a connection"),
     ("sendBeacon", "sends to a network"),
 ];
+
+/// Environment variables a build may bake in. Cargo writes these from the manifest, which is in the
+/// tree this check reads, so nothing of the building machine's own environment reaches the binary
+/// through them. `--version` is the reason the door is open at all.
+const BUILD_VARIABLES_ALLOWED: &str = "CARGO_PKG_";
 
 /// Credential names. Only inside a string, so an identifier that happens to hold the word, such as
 /// the part of a timestamp authority's answer called its token, is not caught.
@@ -357,33 +396,387 @@ fn closure() -> BTreeMap<String, String> {
 // The sources on the path
 // ---------------------------------------------------------------------------
 
-/// Every source file on the verify path, relative to the workspace root.
-fn path_sources(linked: &BTreeMap<String, String>) -> Vec<PathBuf> {
+/// Every source file on the verify path, each with how it was reached.
+fn path_sources(linked: &BTreeMap<String, String>) -> BTreeMap<PathBuf, String> {
     let root = workspace_root();
-    let mut files = Vec::new();
-    for name in linked.keys().filter(|n| n.starts_with("timewitness-")) {
+    let mut files = BTreeMap::new();
+    for (name, chain) in linked.iter().filter(|(n, _)| n.starts_with("timewitness-")) {
         let dir = manifest_path(name)
             .parent()
             .expect("a manifest sits in a directory")
             .to_path_buf();
         let build_script = dir.join("build.rs");
+        let mut found = Vec::new();
         if build_script.is_file() {
-            files.push(build_script);
+            found.push(build_script);
         }
-        collect(&dir.join("src"), &mut files);
+        collect(&dir.join("src"), &mut found);
+        for file in found {
+            files.entry(file).or_insert_with(|| chain.clone());
+        }
     }
-    for file in COMMAND_LINE_FILES.iter().chain([PAGE].iter()) {
-        let path = root.join(file);
+
+    let src = root.join(COMMAND_LINE_SRC);
+    let reached = command_line_reach(|relative| fs::read_to_string(src.join(relative)).ok());
+    for module in COMMAND_LINE_FLOOR {
+        assert!(
+            reached.contains_key(module),
+            "the command line's {module} was not reached from the arm that runs `verify`, and it is \
+             on that path today, so the reader below has stopped seeing what it should"
+        );
+    }
+    for (module, (relative, chain)) in &reached {
+        let path = src.join(relative);
         assert!(
             path.is_file(),
-            "{file} is named as part of the verify path and is not there; if it moved, tell this \
-             check where it went rather than dropping it"
+            "{module} was reached and {relative} is not there"
         );
-        files.push(path);
+        files.insert(path, chain.clone());
     }
-    files.sort();
-    files.dedup();
+
+    let page = root.join(PAGE);
+    assert!(
+        page.is_file(),
+        "{PAGE} is named as part of the verify path and is not there; if it moved, tell this check \
+         where it went rather than dropping it"
+    );
+    files.insert(page, "the page".to_string());
     files
+}
+
+// ---------------------------------------------------------------------------
+// The command line's reach
+// ---------------------------------------------------------------------------
+
+/// Every module of the command line that `timewitness verify` can reach, keyed by its path inside
+/// the crate, with the file it lives in and the chain of modules that reached it.
+///
+/// It starts from `main.rs`, which always runs, and from the module its `verify` arm calls. It
+/// follows what `main.rs` names outside the arms that run some other subcommand, and from every
+/// reached file it follows each `crate::` path, each `super::` path and each `mod` declaration. A
+/// `crate::*` reaches every module there is. A top-level name it reaches whose file is not there
+/// fails the check by name, so a shape this reader does not know refuses rather than passes.
+///
+/// `read` takes a path relative to the crate's `src/` and gives the file's text, which is what lets
+/// the test below hand it a crate that lives only in memory.
+fn command_line_reach(read: impl Fn(&str) -> Option<String>) -> BTreeMap<String, (String, String)> {
+    let main = read(COMMAND_LINE_MAIN)
+        .unwrap_or_else(|| panic!("{COMMAND_LINE_SRC}/{COMMAND_LINE_MAIN} could not be read"));
+    let declared = declared_modules(&main);
+
+    let arm = verify_arm(&main, &declared).unwrap_or_else(|| {
+        panic!(
+            "{COMMAND_LINE_MAIN} has no arm this check can read that runs `{VERIFY_SUBCOMMAND}` \
+             as `Some(\"{VERIFY_SUBCOMMAND}\") => module::...`; if the dispatch changed shape, \
+             teach this reader the new one rather than listing files"
+        )
+    });
+
+    let mut reached: BTreeMap<String, (String, String)> = BTreeMap::new();
+    reached.insert(
+        String::new(),
+        (COMMAND_LINE_MAIN.to_string(), COMMAND_LINE_MAIN.to_string()),
+    );
+
+    let mut queue: Vec<(String, String)> = vec![(
+        arm.clone(),
+        format!("{COMMAND_LINE_MAIN} -> {arm}, the arm that runs {VERIFY_SUBCOMMAND}"),
+    )];
+    for name in named_by_main(&main, &declared) {
+        queue.push((name.clone(), format!("{COMMAND_LINE_MAIN} -> {name}")));
+    }
+
+    while let Some((module, chain)) = queue.pop() {
+        if module.is_empty() || reached.contains_key(&module) {
+            continue;
+        }
+        let file = module_file(&module, &read);
+        let Some(text) = read(&file) else {
+            // Below the top level, `super::name` is as likely to be an item of the parent as a
+            // module beside it, and the parent is read already. At the top level every name here
+            // is a declared module, so a missing file is kept and fails the check by name.
+            if module.contains("::") {
+                continue;
+            }
+            reached.insert(module.clone(), (file, chain.clone()));
+            continue;
+        };
+        reached.insert(module.clone(), (file, chain.clone()));
+        for next in modules_named_in(&text, &module, &declared) {
+            if !reached.contains_key(&next) {
+                queue.push((next.clone(), format!("{chain} -> {next}")));
+            }
+        }
+    }
+    reached
+}
+
+/// The modules `main.rs` declares, by name.
+fn declared_modules(main: &str) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    for line in main.lines() {
+        if let Some(name) = mod_declaration(line) {
+            found.insert(name);
+        }
+    }
+    found
+}
+
+/// The module a `mod name;` line declares, where the line is one.
+fn mod_declaration(line: &str) -> Option<String> {
+    let line = line.trim();
+    let rest = line
+        .strip_prefix("pub mod ")
+        .or_else(|| line.strip_prefix("pub(crate) mod "))
+        .or_else(|| line.strip_prefix("mod "))?;
+    let name = rest.strip_suffix(';')?.trim();
+    identifier(name).then(|| name.to_string())
+}
+
+fn identifier(text: &str) -> bool {
+    !text.is_empty()
+        && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !text.starts_with(|c: char| c.is_ascii_digit())
+}
+
+/// The module the `verify` arm of the dispatch calls.
+fn verify_arm(main: &str, declared: &BTreeSet<String>) -> Option<String> {
+    let arm = format!("Some(\"{VERIFY_SUBCOMMAND}\") =>");
+    let line = main.lines().find(|l| l.contains(&arm))?;
+    let after = &line[line.find(&arm)? + arm.len()..];
+    let name = after.trim_start().split("::").next()?.trim();
+    declared.contains(name).then(|| name.to_string())
+}
+
+/// The declared modules `main.rs` names outside the arms that run another subcommand.
+///
+/// Those arms are the one place `main.rs` names a module the verify path does not run. An arm is
+/// recognised by its opening, `Some("name") =>`, and only its opening line is set aside; an arm
+/// written over several lines puts its module on the path, which refuses more rather than less.
+fn named_by_main(main: &str, declared: &BTreeSet<String>) -> BTreeSet<String> {
+    let kept: String = main
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let other_arm = trimmed.starts_with("Some(\"")
+                && trimmed.contains("\") =>")
+                && !trimmed.starts_with(&format!("Some(\"{VERIFY_SUBCOMMAND}\")"));
+            if other_arm || mod_declaration(line).is_some() {
+                ""
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut found = modules_named_in(&kept, "", declared);
+    for line in kept.lines() {
+        for name in declared {
+            if names_path_start(line, name) {
+                found.insert(name.clone());
+            }
+        }
+    }
+    found
+}
+
+/// Whether a line uses `name::` as the start of a path, rather than as the tail of a longer one.
+fn names_path_start(line: &str, name: &str) -> bool {
+    let needle = format!("{name}::");
+    let mut from = 0;
+    while let Some(offset) = line[from..].find(&needle) {
+        let at = from + offset;
+        let before = line[..at].chars().next_back();
+        let tail_of_longer =
+            before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':');
+        if !tail_of_longer {
+            return true;
+        }
+        from = at + needle.len();
+    }
+    false
+}
+
+/// The modules a file names: each `crate::` path, each `super::` path and each `mod` declaration,
+/// resolved against `module`, which is the file's own path inside the crate, empty for `main.rs`.
+///
+/// `super::` means the parent of the file's module at the top level of the file, and the file's own
+/// module inside an inline `mod name { ... }`, which is where every test module's `use super::*;`
+/// sits. A glob of the crate root reaches every module; a glob of anything else reaches nothing the
+/// `mod` declarations below do not already.
+fn modules_named_in(text: &str, module: &str, declared: &BTreeSet<String>) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    let parent = module.rsplit_once("::").map_or("", |(p, _)| p);
+    let inline = inline_module_spans(text);
+
+    for prefix in ["crate::", "super::"] {
+        let mut from = 0;
+        while let Some(offset) = text[from..].find(prefix) {
+            let at = from + offset + prefix.len();
+            from = at;
+            let base = if prefix == "crate::" {
+                ""
+            } else if inline.iter().any(|(s, e)| (*s..*e).contains(&at)) {
+                module
+            } else {
+                parent
+            };
+            let rest = &text[at..];
+            let items = if let Some(group) = rest.strip_prefix('{') {
+                top_level_items(group)
+            } else {
+                vec![rest.to_string()]
+            };
+            for item in items {
+                if item.starts_with('*') {
+                    if base.is_empty() {
+                        found.extend(declared.iter().cloned());
+                    }
+                } else if let Some(first) = first_segment(&item) {
+                    found.insert(join(base, &first));
+                }
+            }
+        }
+    }
+
+    if !module.is_empty() {
+        for line in text.lines() {
+            if let Some(child) = mod_declaration(line) {
+                found.insert(join(module, &child));
+            }
+        }
+    }
+
+    // A path such as `crate::helper` names something in `main.rs` rather than a module, and
+    // `main.rs` is read already. Only a name that is a module goes further.
+    found.retain(|m| {
+        let top = m.split("::").next().unwrap_or(m);
+        !m.is_empty() && top != "self" && (declared.contains(top) || m.contains("::"))
+    });
+    found
+}
+
+/// The byte ranges of the inline modules in a file, each from its opening brace to its closing one.
+///
+/// Braces inside a string or a comment are skipped, well enough for source that compiles, and an
+/// inline module this misreads only moves where `super::` points, never whether a file is read.
+fn inline_module_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let code = line.split("//").next().unwrap_or(line).trim();
+        let opens = code
+            .strip_prefix("pub ")
+            .unwrap_or(code)
+            .strip_prefix("mod ")
+            .and_then(|r| r.strip_suffix('{'))
+            .is_some_and(|name| identifier(name.trim()));
+        if opens {
+            let start = offset + line.rfind('{').unwrap_or(0);
+            spans.push((start, matching_brace(text, start)));
+        }
+        offset += line.len();
+    }
+    spans
+}
+
+/// Where the brace opened at `start` closes, or the end of the text if it never does.
+fn matching_brace(text: &str, start: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut i = start;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    if bytes[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            // A character literal, such as the `'{'` a parser holds, rather than a lifetime.
+            b'\'' if bytes.get(i + 1) == Some(&b'\\') => {
+                i += 2;
+                while i < bytes.len() && bytes[i] != b'\'' {
+                    i += 1;
+                }
+            }
+            b'\'' if bytes.get(i + 2) == Some(&b'\'') => i += 2,
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    bytes.len()
+}
+
+/// The items of a `{ ... }` group, split at its own commas and not at those of a nested group.
+fn top_level_items(group: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut depth = 0usize;
+    let mut current = String::new();
+    for c in group.chars() {
+        match c {
+            '{' => {
+                depth += 1;
+                current.push(c);
+            }
+            '}' if depth == 0 => break,
+            '}' => {
+                depth -= 1;
+                current.push(c);
+            }
+            ',' if depth == 0 => items.push(std::mem::take(&mut current)),
+            _ => current.push(c),
+        }
+    }
+    items.push(current);
+    items
+        .into_iter()
+        .map(|i| i.trim().to_string())
+        .filter(|i| !i.is_empty())
+        .collect()
+}
+
+/// The first segment of a path, where it starts with a name.
+fn first_segment(path: &str) -> Option<String> {
+    let name: String = path
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    identifier(&name).then_some(name)
+}
+
+fn join(base: &str, name: &str) -> String {
+    if base.is_empty() {
+        name.to_string()
+    } else {
+        format!("{base}::{name}")
+    }
+}
+
+/// The file a module lives in, relative to `src/`: `a/b.rs` where it exists, `a/b/mod.rs` otherwise.
+fn module_file(module: &str, read: &impl Fn(&str) -> Option<String>) -> String {
+    let stem = module.replace("::", "/");
+    let flat = format!("{stem}.rs");
+    if read(&flat).is_some() {
+        flat
+    } else {
+        format!("{stem}/mod.rs")
+    }
 }
 
 fn collect(dir: &Path, files: &mut Vec<PathBuf>) {
@@ -410,13 +803,31 @@ fn findings(text: &str) -> Vec<String> {
         let at = number + 1;
         if let Some(host) = our_host(line) {
             found.push(format!(
-                "line {at}: names {host}, and the verify path may not know any host of ours"
+                "line {at}: names {host}, and the verify path may not know any address of ours"
             ));
         }
         for (word, why) in SOURCE_RULES {
             if line.contains(word) {
                 found.push(format!("line {at}: `{word}` {why}"));
             }
+        }
+        if let Some(variable) = baked_variable(line) {
+            found.push(format!(
+                "line {at}: bakes {variable} into the build, and what the building machine's \
+                 environment holds is where a service address or a token would come from"
+            ));
+        }
+        if line.contains("process::{") && line.contains("Command") {
+            found.push(format!(
+                "line {at}: brings in `Command`, which starts another program, and that program can \
+                 reach anything"
+            ));
+        }
+        if host_import_block(line) {
+            found.push(format!(
+                "line {at}: declares a function the host provides, which on the page is the \
+                 browser and on the command line is the system, and either can reach a network"
+            ));
         }
         for literal in strings_in(line) {
             if let Some(word) = CREDENTIAL_WORDS.iter().find(|w| literal.contains(**w)) {
@@ -430,23 +841,52 @@ fn findings(text: &str) -> Vec<String> {
     found
 }
 
-/// A host under our domain named on a line, such as the app's. The bare domain is allowed, because
-/// a verdict may point a reader at the page that lists what a receipt cannot prove; a host under it
-/// is a service, and a service is what the path may not depend on.
+/// Our domain named on a line, however the rest of the address is built: the app's host, a host
+/// whose first label comes from `format!`, and the bare domain as well.
+///
+/// The bare domain was allowed until 2026-09-14, on the thought that a verdict might point a reader
+/// at the page of what a receipt cannot prove. Nothing on the path did, and the allowance is what let
+/// a `curl` to `https://timewitness.dev/api/key/...` through. What a receipt cannot prove is printed
+/// by the verifier itself, so the path needs no address of ours for anything.
 fn our_host(line: &str) -> Option<String> {
     let lower = line.to_ascii_lowercase();
-    let mut from = 0;
-    while let Some(offset) = lower[from..].find(".timewitness.dev") {
-        let end = from + offset;
-        let start = lower[..end]
-            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '.'))
-            .map_or(0, |i| i + 1);
-        if start < end {
-            return Some(line[start..end + ".timewitness.dev".len()].to_string());
-        }
-        from = end + 1;
-    }
-    None
+    let end = lower.find("timewitness.dev")? + "timewitness.dev".len();
+    let start = lower[..end]
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || "-.{}_".contains(c)))
+        .map_or(0, |i| i + 1);
+    Some(line[start..end].to_string())
+}
+
+/// The variable an `env!` or `option_env!` on a line reads, where it is not one Cargo writes from
+/// the manifest.
+fn baked_variable(line: &str) -> Option<String> {
+    let at = line.find("env!(")?;
+    let rest = &line[at + "env!(".len()..];
+    let variable = rest
+        .trim_start()
+        .strip_prefix('"')
+        .and_then(|r| r.split('"').next())
+        .unwrap_or(rest);
+    (!variable.starts_with(BUILD_VARIABLES_ALLOWED)).then(|| variable.to_string())
+}
+
+/// Whether a line opens an `extern` block, which declares functions for somebody else to supply,
+/// as against `extern "C" fn`, which hands one of ours out.
+fn host_import_block(line: &str) -> bool {
+    let code = line.split("//").next().unwrap_or(line).trim();
+    let Some(rest) = code
+        .strip_prefix("unsafe ")
+        .unwrap_or(code)
+        .strip_prefix("extern")
+    else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let rest = match rest.strip_prefix('"') {
+        Some(abi) => abi.split_once('"').map_or("", |(_, r)| r).trim_start(),
+        None => rest,
+    };
+    rest.starts_with('{')
 }
 
 /// The double-quoted strings on a line.
@@ -487,13 +927,13 @@ fn no_source_on_the_verify_path_needs_an_account_or_our_host() {
     let linked = closure();
     let files = path_sources(&linked);
     assert!(
-        files.len() > COMMAND_LINE_FILES.len() + 1,
+        files.len() > COMMAND_LINE_FLOOR.len() + 2,
         "only {} files were read, so the crates on the path contributed none",
         files.len()
     );
 
     let mut refused = Vec::new();
-    for file in &files {
+    for (file, chain) in &files {
         let text = fs::read_to_string(file)
             .unwrap_or_else(|e| panic!("could not read {}: {e}", file.display()));
         let shown = file
@@ -503,7 +943,7 @@ fn no_source_on_the_verify_path_needs_an_account_or_our_host() {
             .to_string()
             .replace('\\', "/");
         for finding in findings(&text) {
-            refused.push(format!("{shown} {finding}"));
+            refused.push(format!("{shown} {finding} (on the path as {chain})"));
         }
     }
     assert!(
@@ -527,6 +967,22 @@ fn each_source_rule_refuses_what_it_names() {
         "let token = std::env::var(\"TIMEWITNESS_TOKEN\");",
         "await fetch(url);",
         "headers.insert(\"X_API_KEY\", key);",
+        // The five the first version passed, each as the test run of 2026-09-14 wrote it.
+        "pub fn key_host(sub: &str) -> String { format!(\"https://{}.timewitness.dev/keys\", sub) }",
+        "std::process::Command::new(\"curl\").arg(\"-s\").output().ok()",
+        "    s.send_to(key.as_bytes(), \"keys.timewitness.dev:4460\")?;",
+        "#[path = \"../net/net.rs\"] pub mod net;",
+        "pub const KEY_SERVICE: &str = env!(\"TW_KEY_SERVICE\");",
+        // And the near relations of each.
+        "let page = format!(\"https://timewitness.dev/api/key/{key}\");",
+        "use std::process::{Command, ExitCode};",
+        "let child = program.spawn()?;",
+        "include!(\"../../outside/net.rs\");",
+        "const SERVICE: Option<&str> = option_env!(\"KEY_SERVICE\");",
+        "use std::env::{var as read};",
+        "extern \"C\" {",
+        "unsafe extern \"C\" { fn fetch_key(at: usize) -> usize; }",
+        "extern {",
     ];
     for seed in seeds {
         assert!(!findings(seed).is_empty(), "nothing refused: {seed}");
@@ -537,13 +993,104 @@ fn each_source_rule_refuses_what_it_names() {
 fn what_the_path_legitimately_says_passes() {
     let fine = [
         "use std::net::IpAddr;",
-        "see https://timewitness.dev/cannot-prove for what this cannot prove",
         "if token.peek_tag() == Some(TAG_TOKEN_AUTHORITY_NAME) {",
         "<!-- BRAND-TOKENS -->",
+        // What the path carries today, and what `--version` needs.
+        "use std::process::ExitCode;",
+        "let argv: Vec<String> = std::env::args().skip(1).collect();",
+        "pub extern \"C\" fn tw_alloc(len: usize) -> usize {",
+        "pub const DOCUMENT: &str = include_str!(\"../../../docs/what-timewitness-cannot-prove.md\");",
+        "const VERSION: &str = env!(\"CARGO_PKG_VERSION\");",
     ];
     for line in fine {
         assert!(findings(line).is_empty(), "refused an honest line: {line}");
     }
+}
+
+/// A command line held in memory, so the reach can be shown finding what it should and nothing
+/// more without touching the real tree.
+fn in_memory(files: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+    let files: BTreeMap<String, String> = files
+        .iter()
+        .map(|(p, t)| ((*p).to_string(), (*t).to_string()))
+        .collect();
+    move |path: &str| files.get(path).cloned()
+}
+
+#[test]
+fn the_reach_follows_what_verify_names_and_not_what_stamp_does() {
+    let read = in_memory(&[
+        (
+            "main.rs",
+            "mod args;
+mod lookup;
+mod render;
+mod stamp_cmd;
+mod verify_cmd;
+
+fn main() {
+    let parsed = args::parse();
+    match parsed {
+        Some(\"verify\") => verify_cmd::run(),
+        Some(\"stamp\") => stamp_cmd::run(),
+        None => render::usage(),
+    }
+}
+",
+        ),
+        ("args.rs", "pub fn parse() {}\n"),
+        ("render.rs", "pub fn usage() {}\n"),
+        (
+            "verify_cmd.rs",
+            "use crate::{render, lookup::fetch as key_lookup};
+pub fn run() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+}
+",
+        ),
+        (
+            "lookup.rs",
+            "mod wire;\npub fn fetch() { super::render::usage(); }\n",
+        ),
+        ("lookup/wire.rs", "pub fn send() {}\n"),
+        (
+            "stamp_cmd.rs",
+            "pub fn run() { std::net::UdpSocket::bind(\"0.0.0.0:0\"); }\n",
+        ),
+    ]);
+    let reached = command_line_reach(read);
+    let names: Vec<&str> = reached.keys().map(String::as_str).collect();
+    assert_eq!(
+        names,
+        ["", "args", "lookup", "lookup::wire", "render", "verify_cmd"]
+    );
+    assert_eq!(reached["lookup::wire"].0, "lookup/wire.rs");
+    assert!(reached["lookup"].1.contains("verify_cmd -> lookup"));
+}
+
+#[test]
+fn the_reach_takes_a_glob_of_the_crate_as_every_module() {
+    let read = in_memory(&[
+        (
+            "main.rs",
+            "mod stamp_cmd;
+mod verify_cmd;
+
+fn main() {
+    match command {
+        Some(\"verify\") => verify_cmd::run(),
+        Some(\"stamp\") => stamp_cmd::run(),
+    }
+}
+",
+        ),
+        ("verify_cmd.rs", "use crate::*;\n"),
+        ("stamp_cmd.rs", "pub fn run() {}\n"),
+    ]);
+    assert!(command_line_reach(read).contains_key("stamp_cmd"));
 }
 
 #[test]

@@ -97,6 +97,15 @@ jobs:
           cargo build --release -p timewitness-cli
           bash scripts/build-verifier-page.sh
 
+      - name: The verifier page asks for nothing
+        # The page half of verifying needing no call to us, read off the page as built with its module
+        # embedded. The build step above already refuses a page that fails it; the self-test is the
+        # check run backwards, one seed per rule, and passes only if every seed is refused by its own
+        # rule and the page as built is not refused at all.
+        run: |
+          node scripts/verifier-page-offline.mjs
+          node scripts/verifier-page-offline.mjs --self-test
+
       - name: Repository hygiene
         run: bash scripts/repo-hygiene.sh
 

@@ -68,6 +68,11 @@ open(out_path, "w", encoding="utf-8", newline="\n").write(page)
 print("wrote", out_path, len(page), "characters")
 PYTHON
 
+# A page that fetches anything cannot be opened years later on a machine with no network, so the page
+# as assembled is read for any way it could ask for something before it is compared with anything.
+echo "checking the page asks for nothing"
+node scripts/verifier-page-offline.mjs
+
 # The comparison is only worth anything if both sides are this working tree. The checker runs
 # `target/release/timewitness`, and that binary is whatever was built last, so a run that changed a
 # sentence in the verifier and rebuilt only the module compared a fresh page against a stale command
