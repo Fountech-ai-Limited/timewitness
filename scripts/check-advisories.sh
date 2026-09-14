@@ -26,9 +26,11 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 # The revision of https://github.com/RustSec/advisory-db that the build reads. Moved by hand, by
-# whoever has dealt with what the weekly job reported. Read 2026-09-10 at 20:13 off
-# `git -C ~/.cargo/advisory-db rev-parse HEAD`, at RUSTSEC-2026-0282.
-pin='b50980aad8b8f14f77e25a97b32dd94bf008b0af'
+# whoever has dealt with what the weekly job reported. Read 2026-09-15 at 02:04 off
+# `bash scripts/check-advisories.sh --latest`, at RUSTSEC-2026-0285, which it found against rustls
+# 0.23.44 a day after publication and which the pin before this one could not see. rustls moved to
+# 0.23.45 in the same act.
+pin='e2e640471715167f73e22eaf761f2e547adafeec'
 
 # The reader, pinned for the same reason the database is. `wanted_audit` is what CI installs and
 # what a message here tells somebody to install; `minimum_audit` is what this refuses to run below.
