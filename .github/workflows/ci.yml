@@ -109,6 +109,19 @@ jobs:
           TW_SURFACES_SITE: tree
         run: bash scripts/three-surfaces.sh
 
+      - name: No surface sells precision or prices a receipt
+        # Full precision for everybody, and never a price per receipt. The same rules read the site
+        # in the other repository. The two runs below it are this one backwards, and pass only if it
+        # refuses for the reason each seed is built to trip.
+        run: |
+          node scripts/no-price-on-evidence.mjs
+          for mode in precision:"a reduced-precision tier" per-receipt:"a price per receipt"; do
+            if said="$(TW_PRICE_PROVE="${mode%%:*}" node scripts/no-price-on-evidence.mjs 2>&1)"; then
+              printf '%s\n' "$said"; echo "the check passed with TW_PRICE_PROVE=${mode%%:*}, so it is not connected"; exit 1
+            fi
+            printf '%s\n' "$said" | grep -qF "offers ${mode#*:}" || { printf '%s\n' "$said"; echo "it refused, and not for ${mode#*:}"; exit 1; }
+          done
+
       - name: The guard that reads the served page is still running
         # The other half of splitting the surfaces check, and the reason the step above may finish
         # without reading the site. A scheduled workflow that GitHub has disabled for inactivity
