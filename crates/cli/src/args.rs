@@ -100,6 +100,16 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
 /// thing a reader tries first and the one thing that stops working.
 pub const HELP: &str = "--help";
 
+/// Accepted everywhere for the same reason. Which verifier this is, and which receipt format it
+/// reads, is the first question somebody holding a `v0` receipt has.
+pub const VERSION: &str = "--version";
+
+/// The words that ask for help or for the version where a subcommand would go. Until 2026-09-15
+/// the first thing a stranger typed, `timewitness --help`, was refused as an option with nothing to
+/// apply to, and `-h` and `help` as subcommands this does not have.
+const ASKS_FOR_HELP: [&str; 3] = [HELP, "-h", "help"];
+const ASKS_FOR_VERSION: [&str; 2] = [VERSION, "version"];
+
 /// Why a command line could not be read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArgError(pub String);
@@ -116,12 +126,17 @@ pub fn parse(argv: &[String]) -> Result<Args, ArgError> {
     let mut rest = argv.iter();
 
     if let Some(first) = rest.next() {
-        if first.starts_with("--") {
+        if ASKS_FOR_HELP.contains(&first.as_str()) {
+            args.flags.push(HELP.to_string());
+        } else if ASKS_FOR_VERSION.contains(&first.as_str()) {
+            args.flags.push(VERSION.to_string());
+        } else if first.starts_with("--") {
             return Err(ArgError(format!(
                 "{first} came before a subcommand, and there is nothing for it to apply to"
             )));
+        } else {
+            args.command = Some(first.clone());
         }
-        args.command = Some(first.clone());
     }
 
     while let Some(item) = rest.next() {
@@ -169,6 +184,12 @@ impl Args {
         self.flag(HELP)
     }
 
+    /// Whether the reader asked which build this is.
+    #[must_use]
+    pub fn wants_version(&self) -> bool {
+        self.flag(VERSION)
+    }
+
     /// Refuse anything this subcommand does not have, by name.
     ///
     /// Without this a mistyped option is parsed as a flag nobody reads, so `verify --min-sources 9`
@@ -187,7 +208,7 @@ impl Args {
         };
 
         for given in self.flags.iter().chain(self.values.keys()) {
-            if given != HELP && !accepted.contains(&given.as_str()) {
+            if given != HELP && given != VERSION && !accepted.contains(&given.as_str()) {
                 return Err(ArgError(format!(
                     "{command} has no {given}. Run `timewitness` with nothing after it for what it does have"
                 )));

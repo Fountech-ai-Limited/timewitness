@@ -146,8 +146,25 @@ pub fn usage() -> String {
     out.push_str("      --sign <file>       sign the head over what the log now holds\n\n");
     out.push_str("  timewitness cannot-prove\n");
     out.push_str("      What this product cannot prove, in full. It ships with the claim rather\n");
-    out.push_str("      than under it.\n");
+    out.push_str("      than under it.\n\n");
+    out.push_str("  timewitness --version\n");
+    out.push_str("      Which build this is, and the receipt format it reads.\n\n");
+    out.push_str("  timewitness --help\n");
+    out.push_str("      This, which is also what the tool prints with nothing after it.\n");
     out
+}
+
+/// What `timewitness --version` prints: the build, and the one receipt format it reads.
+///
+/// Cargo writes the version from the manifest, which is in the tree the verify-path check reads, so
+/// nothing of the building machine's own environment comes in through it.
+#[must_use]
+pub fn version() -> String {
+    format!(
+        "timewitness {}\nreads receipt format v{}",
+        env!("CARGO_PKG_VERSION"),
+        timewitness_receipt::FORMAT_VERSION
+    )
 }
 
 /// The whole of what a verifier found, as a person reads it.
