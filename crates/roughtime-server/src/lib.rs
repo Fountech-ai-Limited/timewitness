@@ -33,7 +33,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -121,6 +121,14 @@ pub enum Dropped {
     NoReading(String),
     /// The response could not be built, which is a fault in this server rather than in the request.
     CouldNotAnswer(String),
+    /// The response was built and the socket would not send it to that address.
+    ///
+    /// Dropped and counted rather than returned, from 2026-09-15. Until then one failed send ended
+    /// `serve`, the process exited, and the host started it again cold, which on a platform that
+    /// disciplines its own clock before answering was two to three minutes of no answers for
+    /// whatever made one send fail. A send to one address failing says nothing about the socket
+    /// for the next address.
+    CouldNotSend(String),
 }
 
 impl core::fmt::Display for Dropped {
@@ -130,7 +138,40 @@ impl core::fmt::Display for Dropped {
             Dropped::RateLimited => write!(f, "over this address's share of the socket"),
             Dropped::NoReading(d) => write!(f, "this server will not date a response: {d}"),
             Dropped::CouldNotAnswer(d) => write!(f, "this server could not build a response: {d}"),
+            Dropped::CouldNotSend(d) => write!(f, "the socket would not send the response: {d}"),
         }
+    }
+}
+
+/// What the serve loop needs of a socket, so that a test can hand it one whose sends fail.
+///
+/// `UdpSocket` is the one that runs. The trait exists because a real socket cannot be made to
+/// refuse a send to an address it just received from, and the one path this loop has to survive
+/// is exactly that.
+pub trait Datagrams {
+    /// One packet, and where it came from.
+    fn recv_from(&mut self, buffer: &mut [u8]) -> io::Result<(usize, SocketAddr)>;
+    /// One packet, to there.
+    fn send_to(&mut self, response: &[u8], to: SocketAddr) -> io::Result<usize>;
+}
+
+impl Datagrams for &UdpSocket {
+    fn recv_from(&mut self, buffer: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+        UdpSocket::recv_from(self, buffer)
+    }
+
+    fn send_to(&mut self, response: &[u8], to: SocketAddr) -> io::Result<usize> {
+        UdpSocket::send_to(self, response, to)
+    }
+}
+
+impl<D: Datagrams + ?Sized> Datagrams for &mut D {
+    fn recv_from(&mut self, buffer: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+        (**self).recv_from(buffer)
+    }
+
+    fn send_to(&mut self, response: &[u8], to: SocketAddr) -> io::Result<usize> {
+        (**self).send_to(response, to)
     }
 }
 
@@ -376,12 +417,26 @@ fn delegation_from(
 /// The counts are cleared wholesale at the end of each window rather than decayed, which is coarse
 /// and is chosen for it: a decaying counter is one allocation per address that never goes away, and
 /// a map that is emptied cannot be grown without bound by an attacker picking new addresses.
+///
+/// Keyed on the address and not the port, from 2026-09-15. Until then the key was the whole
+/// `SocketAddr`, so a client varying its source port was never limited and the map grew by one
+/// entry per port it chose. And the map has a ceiling of distinct addresses per window, because a
+/// key on the address alone is still a map an attacker fills by choosing addresses: past the
+/// ceiling a new address gets nothing until the window ends, which is what the emptied map already
+/// does for everybody, and the addresses already counted keep their share.
 pub struct RateLimit {
     per_window: u32,
     window: Duration,
     started: Instant,
-    seen: HashMap<SocketAddr, u32>,
+    seen: HashMap<IpAddr, u32>,
+    address_ceiling: usize,
 }
+
+/// How many distinct addresses one window will count before a new one is refused.
+///
+/// At a few tens of bytes an entry this is under three megabytes, which is the most the map can
+/// ever hold, and it is far above what two servers of ours see in a minute.
+pub const DEFAULT_ADDRESS_CEILING: usize = 65_536;
 
 impl RateLimit {
     /// A limit of `per_window` packets from one address per `window`.
@@ -392,7 +447,21 @@ impl RateLimit {
             window,
             started: Instant::now(),
             seen: HashMap::new(),
+            address_ceiling: DEFAULT_ADDRESS_CEILING,
         }
+    }
+
+    /// The same, counting no more than this many addresses in one window.
+    #[must_use]
+    pub fn with_address_ceiling(mut self, addresses: usize) -> Self {
+        self.address_ceiling = addresses;
+        self
+    }
+
+    /// How many addresses this window has counted so far.
+    #[must_use]
+    pub fn addresses(&self) -> usize {
+        self.seen.len()
     }
 
     /// Whether this address may send another packet now, counting this one.
@@ -401,7 +470,11 @@ impl RateLimit {
             self.seen.clear();
             self.started = now;
         }
-        let count = self.seen.entry(from).or_insert(0);
+        let address = from.ip();
+        if !self.seen.contains_key(&address) && self.seen.len() >= self.address_ceiling {
+            return false;
+        }
+        let count = self.seen.entry(address).or_insert(0);
         *count += 1;
         *count <= self.per_window
     }
@@ -431,10 +504,12 @@ impl Default for RateLimit {
 ///
 /// # Errors
 ///
-/// Anything the socket says other than a timeout. A timeout is how `keep_going` gets looked at, so
-/// the socket wants a read timeout set before this is called.
-pub fn serve<C, K, W>(
-    socket: &UdpSocket,
+/// Anything the socket says on a read other than a timeout. A timeout is how `keep_going` gets
+/// looked at, so the socket wants a read timeout set before this is called. A failed send is not an
+/// error here: it is a drop, handed to `watch` as [`Dropped::CouldNotSend`], and the loop carries
+/// on to the next packet.
+pub fn serve<D, C, K, W>(
+    mut socket: D,
     server: &mut Server,
     limit: &mut RateLimit,
     mut clock: C,
@@ -442,6 +517,7 @@ pub fn serve<C, K, W>(
     mut watch: W,
 ) -> Result<(), io::Error>
 where
+    D: Datagrams,
     C: FnMut() -> Option<Reading>,
     K: FnMut() -> bool,
     W: FnMut(SocketAddr, &Dropped),
@@ -484,7 +560,9 @@ where
 
         match server.answer(&buffer[..len], reading) {
             Ok(response) => {
-                socket.send_to(&response, from)?;
+                if let Err(e) = socket.send_to(&response, from) {
+                    watch(from, &Dropped::CouldNotSend(e.to_string()));
+                }
             }
             Err(dropped) => watch(from, &dropped),
         }
@@ -657,6 +735,133 @@ mod tests {
         assert!(
             limit.allows(from, start + Duration::from_secs(61)),
             "the window ends and the counts go with it"
+        );
+    }
+
+    #[test]
+    fn one_address_is_one_address_whatever_port_it_sends_from() {
+        // The fault of 2026-09-15: the limit was keyed on address and port, so a client varying
+        // its source port was never limited and the map grew by one entry per port.
+        let mut limit = RateLimit::new(3, Duration::from_secs(60));
+        let start = Instant::now();
+        for port in 1..=3u16 {
+            let from: SocketAddr = format!("203.0.113.7:{port}").parse().unwrap();
+            assert!(limit.allows(from, start), "port {port} is inside the share");
+        }
+        let fourth: SocketAddr = "203.0.113.7:4".parse().unwrap();
+        assert!(
+            !limit.allows(fourth, start),
+            "the fourth packet is over the address's share whichever port it came from"
+        );
+        let other: SocketAddr = "203.0.113.8:4".parse().unwrap();
+        assert!(
+            limit.allows(other, start),
+            "another address has its own share"
+        );
+    }
+
+    #[test]
+    fn the_map_of_addresses_has_a_ceiling_per_window() {
+        // A limit keyed on the address is still a map an attacker fills by picking addresses, so
+        // the map has a ceiling. Past it a new address gets nothing until the window ends, which
+        // is what an emptied map already does for everybody else.
+        let mut limit = RateLimit::new(3, Duration::from_secs(60)).with_address_ceiling(2);
+        let start = Instant::now();
+        let a: SocketAddr = "203.0.113.1:2002".parse().unwrap();
+        let b: SocketAddr = "203.0.113.2:2002".parse().unwrap();
+        let c: SocketAddr = "203.0.113.3:2002".parse().unwrap();
+        assert!(limit.allows(a, start));
+        assert!(limit.allows(b, start));
+        assert!(
+            !limit.allows(c, start),
+            "a third address is over the ceiling"
+        );
+        assert!(
+            limit.allows(a, start),
+            "the two already counted keep their share"
+        );
+        assert_eq!(limit.addresses(), 2, "the refused address was not added");
+        assert!(
+            limit.allows(c, start + Duration::from_secs(61)),
+            "the window ends and the map is emptied"
+        );
+    }
+
+    /// A transport whose sends fail as often as it is told to, and which hands the serve loop the
+    /// requests it was given, in order.
+    struct Flaky {
+        requests: Vec<(Vec<u8>, SocketAddr)>,
+        failed_sends_left: u32,
+        sent: Vec<SocketAddr>,
+    }
+
+    impl Datagrams for Flaky {
+        fn recv_from(&mut self, buffer: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+            if self.requests.is_empty() {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "nothing more"));
+            }
+            let (packet, from) = self.requests.remove(0);
+            buffer[..packet.len()].copy_from_slice(&packet);
+            Ok((packet.len(), from))
+        }
+
+        fn send_to(&mut self, _response: &[u8], to: SocketAddr) -> io::Result<usize> {
+            if self.failed_sends_left > 0 {
+                self.failed_sends_left -= 1;
+                return Err(io::Error::other("no route to that address"));
+            }
+            self.sent.push(to);
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn a_send_that_fails_is_dropped_and_counted_and_the_server_carries_on() {
+        // The fault of 2026-09-15: one failed send_to returned out of serve, the process exited,
+        // and the host restarted it cold, two to three minutes of no answers for whatever made one
+        // send fail. Here the first send fails and the second request still gets its answer.
+        let mut server = a_server();
+        let request = build_request(&[0x33u8; 32], &server.public_key());
+        let first: SocketAddr = "203.0.113.7:2002".parse().unwrap();
+        let second: SocketAddr = "203.0.113.8:2002".parse().unwrap();
+        let mut transport = Flaky {
+            requests: vec![(request.clone(), first), (request, second)],
+            failed_sends_left: 1,
+            sent: Vec::new(),
+        };
+        let mut dropped = Vec::new();
+        let mut left = 3;
+        let outcome = serve(
+            &mut transport,
+            &mut server,
+            &mut RateLimit::default(),
+            || {
+                Some(Reading {
+                    seconds: NOW,
+                    radius_seconds: 1,
+                })
+            },
+            || {
+                left -= 1;
+                left > 0
+            },
+            |from, why| dropped.push((from, why.clone())),
+        );
+        assert!(
+            outcome.is_ok(),
+            "a failed send is not a socket fault: {outcome:?}"
+        );
+        assert_eq!(
+            transport.sent,
+            vec![second],
+            "the second request was answered"
+        );
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].0, first);
+        assert!(
+            matches!(dropped[0].1, Dropped::CouldNotSend(_)),
+            "{:?}",
+            dropped[0].1
         );
     }
 

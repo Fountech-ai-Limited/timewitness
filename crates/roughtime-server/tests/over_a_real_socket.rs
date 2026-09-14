@@ -158,33 +158,28 @@ fn an_address_over_its_share_gets_silence_and_the_server_keeps_running() {
     let server = Running::start(2);
     let request = build_request(&[2u8; 32], &server.public_key);
 
-    // The limit counts by source address, and `ask` binds a fresh port each time, so this sends
-    // from three different addresses and none of them is over its own share. That is the point of
-    // the assertion below: the limit is per address, so three clients asking once each all get an
-    // answer where one client asking three times would not.
+    // The limit counts by address and not by port. `ask` binds a fresh port each time, and until
+    // 2026-09-15 that was enough to be a fresh address, so a client varying its port was never
+    // limited. Now three asks from one address are one address asking three times: two inside
+    // the share, the third silence.
     assert!(server.ask(&request).is_some());
     assert!(server.ask(&request).is_some());
-    assert!(server.ask(&request).is_some());
-
-    // One client, over its share on the third.
-    let client = UdpSocket::bind("127.0.0.1:0").expect("a client port");
-    let mut buffer = [0u8; 1500];
-    for _ in 0..2 {
-        // Patient, because being slow is not being over the share.
-        client
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .expect("a read timeout");
-        client.send_to(&request, server.address).expect("sent");
-        assert!(client.recv_from(&mut buffer).is_ok(), "inside its share");
-    }
-    // Impatient, because a packet the limit refused is never answered.
-    client
-        .set_read_timeout(Some(Duration::from_millis(300)))
-        .expect("a read timeout");
-    client.send_to(&request, server.address).expect("sent");
     assert!(
-        client.recv_from(&mut buffer).is_err(),
-        "the third from one address is over the share and gets nothing"
+        server.ask_expecting_nothing(&request).is_none(),
+        "the third from one address is over the share whichever port it came from"
+    );
+
+    // Another address has its own share, and the server is still answering. The second loopback
+    // address is one every host this runs on has.
+    let other = UdpSocket::bind("127.0.0.2:0").expect("the second loopback address");
+    other
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("a read timeout");
+    other.send_to(&request, server.address).expect("sent");
+    let mut buffer = [0u8; 1500];
+    assert!(
+        other.recv_from(&mut buffer).is_ok(),
+        "one address being over does not close the socket to anybody else"
     );
 }
 
