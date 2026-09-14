@@ -150,12 +150,16 @@ while read -r path; do
   fi
 done < <(git ls-files)
 
+# Every name a file was ever stored under, not only the names it was added at. With rename
+# detection on, which is git's default, a file moved to a new name is a rename and never an
+# addition, and a merge shows no names at all, so both used to go past this unread. Renames are
+# switched off and every merge is read against each of its parents.
 while read -r path; do
   [ -z "$path" ] && continue
   if ! printf '%s' "$path" | grep -Eq "$allowed"; then
-    report "'$path' was added somewhere in the history and is not one of the things this repository holds"
+    report "'$path' is in the history and is not one of the things this repository holds"
   fi
-done < <(git log --all --diff-filter=A --name-only --format='' | sort -u)
+done < <(git -c core.quotePath=false log --all --no-renames -m --root --name-only --format='' | sort -u)
 
 if [ "$fail" -ne 0 ]; then
   exit 1
