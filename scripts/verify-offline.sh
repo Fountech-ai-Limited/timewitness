@@ -91,23 +91,31 @@ with_code=$?
 
 # Inside the namespace, in order: list the interfaces it has, try to reach a public address and stop
 # with 97 should it answer, then hand over to the verifier.
+#
+# What the namespace says about itself goes to a file named as the first argument rather than to
+# standard error, because the verifier writes a refusal to standard error and both runs have to capture
+# the verifier the same way. A file rather than a spare descriptor, because sudo closes every
+# descriptor above the first three.
+notes="$root/target/verify-offline.namespace.txt"
+mkdir -p "$root/target"
+rm -f "$notes"
 without_network="$("${isolate[@]}" bash -c '
+  notes="$1"
+  shift
   interfaces="$(awk -F: "NR > 2 { gsub(/ /, \"\", \$1); printf \"%s \", \$1 }" /proc/net/dev)"
-  echo "interfaces in the namespace: ${interfaces:-none}" >&2
+  echo "interfaces in the namespace: ${interfaces:-none}" >>"$notes"
   if timeout 5 bash -c "exec 3<>/dev/tcp/1.1.1.1/443" 2>/dev/null; then
-    echo "a connection to 1.1.1.1:443 opened from inside the namespace" >&2
+    echo "a connection to 1.1.1.1:443 opened from inside the namespace" >>"$notes"
     exit 97
   fi
-  echo "a connection to 1.1.1.1:443 was refused from inside the namespace" >&2
-  exec "$@"
-' _ "${verify[@]}" 2>"$root/target/verify-offline.namespace.txt")"
+  echo "a connection to 1.1.1.1:443 was refused from inside the namespace" >>"$notes"
+  exec "$@" 2>&1
+' _ "$notes" "${verify[@]}" 2>&1)"
 without_code=$?
 set -e
 
-namespace_said="$(cat "$root/target/verify-offline.namespace.txt" 2>/dev/null || true)"
-rm -f "$root/target/verify-offline.namespace.txt"
-printf '%s\n' "$namespace_said" | grep -v '^interfaces\|^a connection' >&2 || true
-printf '%s\n' "$namespace_said" | grep '^interfaces\|^a connection' || true
+cat "$notes" 2>/dev/null || echo "the namespace wrote nothing about itself"
+rm -f "$notes" 2>/dev/null || sudo -n rm -f "$notes" 2>/dev/null || true
 
 if [ "$without_code" -eq 97 ]; then
   fail "the namespace could still reach the internet, so running the verifier in it would prove nothing"
