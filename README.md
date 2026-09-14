@@ -32,8 +32,8 @@ This repository is early and it says so rather than describing a finished produc
 | Order within a chain | not built. A receipt carries a sequence number and a link to the one before it, both signed, and nothing here compares two receipts |
 | A public log of agent keys | not built. A receipt proves whoever signed it held that key and nothing about who that was |
 
-Nothing here is released. Both halves are built from source in this repository, so today a stranger
-compiles the verifier rather than downloading it.
+`v0` is tagged and released as source, with no binary. Both halves are built from source in this
+repository, so today a stranger compiles the verifier rather than downloading it.
 
 ## The two numbers, which are not the same number
 
