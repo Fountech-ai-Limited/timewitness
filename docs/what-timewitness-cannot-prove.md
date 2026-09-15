@@ -549,8 +549,8 @@ format can express a bound resting on outside signatures and nothing issues a re
 **The resident agent refuses any interval wider than 250 ms, and the one-shot command, which the
 GitHub Action runs, refuses one wider than 2 s.** Read on 2026-09-15 off `max_bound_width` in
 `Policy::default`, in `crates/clock/src/policy.rs`, off `CI_MAX_BOUND_WIDTH` in
-`crates/cli/src/stamp_cmd.rs`, and off the `max-width` input in `action.yml`. Only the agent signs
-under 250 ms. The one-shot path needs a ceiling of its own, because the widest receipt a build
+`crates/cli/src/stamp_cmd.rs`, and off the `max-width` input in `action.yml`. Only the agent holds
+itself to 250 ms. The one-shot path needs a ceiling of its own, because the widest receipt a build
 runner has given us, 287.147 ms on 2026-09-14 at sixteen rounds, is already past the agent's. Two
 seconds is the narrowest interval a Roughtime corridor can state, a radius of one second either side,
 so a bound wider than that says less than one signed corridor already tells a stranger. It is about
