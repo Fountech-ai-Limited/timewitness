@@ -206,6 +206,15 @@ pub fn randomness_of(signature: &[u8]) -> [u8; 32] {
     out
 }
 
+/// The chain the stored round says it is from.
+///
+/// Read before any key is chosen, so a reader can see whether they hold this chain at all. A round
+/// from a chain the reader does not hold cannot be checked by them, and until 2026-09-15 that was
+/// reported as the receipt contradicting itself rather than as the reader holding no key for it.
+pub fn named_chain(blob: &[u8]) -> Result<[u8; 32], EvidenceError> {
+    Ok(unpack_blob(blob)?.chain_hash)
+}
+
 /// Check a stored drand round against a chain's group key.
 ///
 /// The pairing is the whole check. Everything else here is bookkeeping that stops the pairing being

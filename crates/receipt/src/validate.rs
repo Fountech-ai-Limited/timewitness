@@ -21,7 +21,7 @@
 //! malformed and none has a bad signature; each is a false claim in a well-formed file, which is the
 //! only kind this format is really up against.
 
-use crate::anchors::TrustAnchors;
+use crate::anchors::{RoughtimeServerKey, TrustAnchors};
 use crate::error::ReceiptError;
 use crate::report::{EntryReport, Outcome, Verified};
 use crate::schema::{AgentClaim, Evidence, Payload, Receipt, Role, FORMAT_VERSION};
@@ -661,7 +661,33 @@ fn printed_nonce_is_the_checked_one(
     }
 }
 
-/// A corridor entry, checked against every Roughtime key the verifier holds.
+/// The first sixteen hex digits of a key hash, which is how a reader will look it up in a list.
+fn short_hex(bytes: &[u8]) -> String {
+    bytes.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+/// The anchors an attestation names, out of the ones the reader holds.
+///
+/// Who signed an attestation is written in it before any key is chosen: a request names its server
+/// by the hash of the server's long-term key, a round names its chain, a token carries the
+/// certificates it was signed under. Where that can be read, the anchors it names are the only
+/// ones tried, and a reader holding none of them has not checked the entry. Until 2026-09-15 every
+/// anchor held was tried in turn and an attestation fitting none of them was read as the receipt
+/// contradicting itself, so a reader holding two of the three published Roughtime keys was told an
+/// intact receipt was a lie, and the only way past it was to hold every key the shipped set holds,
+/// which is taking our word for which keys are which.
+///
+/// Where the signer cannot be read, which is a blob of the right outer shape whose inside does not
+/// parse, every anchor held is tried as before. That keeps two answers exactly as they were: a
+/// reader holding nothing sees the entry as not checked, and a reader holding keys sees the refusal
+/// they always got, because in neither case is the reader's choice of keys what is being judged.
+fn named_among<A>(held: &[A], names: Option<impl Fn(&A) -> bool>) -> Vec<&A> {
+    held.iter()
+        .filter(|anchor| names.as_ref().map_or(true, |names| names(anchor)))
+        .collect()
+}
+
+/// A corridor entry, checked against the Roughtime key the reader holds for the server it names.
 ///
 /// Two things beyond the signature. The instant and radius the receipt printed have to be the ones
 /// the response actually carries, because a reader looks at the printed numbers, and a verifier that
@@ -678,13 +704,29 @@ fn examine_corridor(
             .map(|_| ())
             .map_err(|e| e.to_string())
     })?;
-    if anchors.roughtime_servers.is_empty() {
-        return Ok(Outcome::NotChecked(
-            "this verifier holds no Roughtime server key".to_string(),
-        ));
+    let named = roughtime::requested_key_hash(&entry.blob).ok();
+    let holders = named_among(
+        &anchors.roughtime_servers,
+        named.map(|hash| {
+            move |server: &RoughtimeServerKey| {
+                roughtime::server_key_hash(&server.long_term_public_key) == hash
+            }
+        }),
+    );
+    if holders.is_empty() {
+        return Ok(Outcome::NotChecked(match named {
+            Some(hash) => format!(
+                "the request names a server whose long-term key hashes to {}, and this reader \
+                 holds no Roughtime key with that hash; it holds {}, so nothing here can check \
+                 the response",
+                short_hex(&hash),
+                anchors.roughtime_servers.len()
+            ),
+            None => "this verifier holds no Roughtime server key".to_string(),
+        }));
     }
-    let mut last = String::new();
-    for server in &anchors.roughtime_servers {
+    let mut last = (String::new(), String::new());
+    for server in holders {
         match roughtime::check(&entry.blob, &server.long_term_public_key, &server.name) {
             Ok(checked) => {
                 if checked.midpoint() != entry.at {
@@ -716,32 +758,46 @@ fn examine_corridor(
                 }
                 return Ok(into_outcome(checked));
             }
-            Err(e) => last = e.to_string(),
+            Err(e) => last = (server.name.clone(), e.to_string()),
         }
     }
-    // Every key was tried and none fits. A response that verifies under no key the verifier holds
-    // is not evidence to that verifier, and the receipt put it forward as though it were.
+    // The reader holds the key the request names and the response does not verify under it. That
+    // is not a fact about the reader: the receipt put forward a signature that does not check out.
     Err(refused(
         "roughtime",
-        "any server key this verifier holds",
-        &last,
+        &match named {
+            Some(_) => format!("the key this reader holds for {}", last.0),
+            None => "any server key this verifier holds".to_string(),
+        },
+        &last.1,
     ))
 }
 
-/// A beacon entry, checked against every drand chain the verifier holds.
+/// A beacon entry, checked against the drand chain the reader holds for the chain it names.
 fn examine_beacon(entry: &Evidence, anchors: &TrustAnchors) -> Result<Outcome, ReceiptError> {
     well_formed("drand", &entry.blob, |blob| {
         drand::unpack_blob(blob)
             .map(|_| ())
             .map_err(|e| e.to_string())
     })?;
-    if anchors.drand_chains.is_empty() {
-        return Ok(Outcome::NotChecked(
-            "this verifier holds no drand chain".to_string(),
-        ));
+    let named = drand::named_chain(&entry.blob).ok();
+    let holders = named_among(
+        &anchors.drand_chains,
+        named.map(|hash| move |chain: &drand::Chain| chain.hash == hash),
+    );
+    if holders.is_empty() {
+        return Ok(Outcome::NotChecked(match named {
+            Some(hash) => format!(
+                "the round names a chain whose hash begins {}, and this reader holds no drand \
+                 chain with that hash; it holds {}, so nothing here can check the round",
+                short_hex(&hash),
+                anchors.drand_chains.len()
+            ),
+            None => "this verifier holds no drand chain".to_string(),
+        }));
     }
-    let mut last = String::new();
-    for chain in &anchors.drand_chains {
+    let mut last = (String::new(), String::new());
+    for chain in holders {
         match drand::check(&entry.blob, chain) {
             Ok(checked) => {
                 if checked.earliest() != entry.at {
@@ -756,16 +812,25 @@ fn examine_beacon(entry: &Evidence, anchors: &TrustAnchors) -> Result<Outcome, R
                 printed_nonce_is_the_checked_one("drand", chain.name, entry, &checked)?;
                 return Ok(into_outcome(checked));
             }
-            Err(e) => last = e.to_string(),
+            Err(e) => last = (chain.name.to_string(), e.to_string()),
         }
     }
-    Err(refused("drand", "any chain this verifier holds", &last))
+    Err(refused(
+        "drand",
+        &match named {
+            Some(_) => format!("the group key this reader holds for {}", last.0),
+            None => "any chain this verifier holds".to_string(),
+        },
+        &last.1,
+    ))
 }
 
-/// A witness entry, checked against every timestamp authority the verifier holds.
+/// A witness entry, checked against the timestamp authority whose certificate the reader pinned.
 ///
-/// The token has to be about this receipt's payload. A token about anything else is a real
-/// signature by a real authority and is evidence for a different document.
+/// The token carries the certificates it was signed under and a pin names one of them by digest,
+/// so an authority is tried only where one of its pins is in the token. The token also has to be
+/// about this receipt's payload: a token about anything else is a real signature by a real
+/// authority and is evidence for a different document.
 fn examine_witness(
     entry: &Evidence,
     payload: &Payload,
@@ -776,13 +841,38 @@ fn examine_witness(
             .map(|_| ())
             .map_err(|e| e.to_string())
     })?;
-    if anchors.timestamp_authorities.is_empty() {
-        return Ok(Outcome::NotChecked(
-            "this verifier holds no timestamp authority certificate".to_string(),
-        ));
+    let carried = rfc3161::certificate_digests(&entry.blob).ok();
+    let holders = named_among(
+        &anchors.timestamp_authorities,
+        carried.as_ref().map(|carried| {
+            move |authority: &rfc3161::Authority| {
+                authority
+                    .accepted_certificates
+                    .iter()
+                    .any(|pin| carried.contains(pin))
+            }
+        }),
+    );
+    if holders.is_empty() {
+        return Ok(Outcome::NotChecked(match &carried {
+            Some(carried) => {
+                let pinned: usize = anchors
+                    .timestamp_authorities
+                    .iter()
+                    .map(|authority| authority.accepted_certificates.len())
+                    .sum();
+                format!(
+                    "the token carries {} certificate{} and this reader holds no pin naming any \
+                     of them; it holds {pinned}, so nothing here can check the token",
+                    carried.len(),
+                    if carried.len() == 1 { "" } else { "s" }
+                )
+            }
+            None => "this verifier holds no timestamp authority certificate".to_string(),
+        }));
     }
-    let mut last = String::new();
-    for authority in &anchors.timestamp_authorities {
+    let mut last = (String::new(), String::new());
+    for authority in holders {
         match rfc3161::check(&entry.blob, authority, &payload.hash) {
             Ok(checked) => {
                 if checked.latest() != entry.at {
@@ -797,13 +887,16 @@ fn examine_witness(
                 printed_nonce_is_the_checked_one("rfc3161", &authority.name, entry, &checked)?;
                 return Ok(into_outcome(checked));
             }
-            Err(e) => last = e.to_string(),
+            Err(e) => last = (authority.name.clone(), e.to_string()),
         }
     }
     Err(refused(
         "rfc3161",
-        "any authority this verifier holds",
-        &last,
+        &match carried {
+            Some(_) => format!("the certificate this reader pinned for {}", last.0),
+            None => "any authority this verifier holds".to_string(),
+        },
+        &last.1,
     ))
 }
 

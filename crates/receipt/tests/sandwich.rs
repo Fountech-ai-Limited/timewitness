@@ -62,27 +62,31 @@ fn unhex(text: &str) -> Vec<u8> {
     digits.chunks(2).map(|c| (c[0] << 4) | c[1]).collect()
 }
 
+/// The published long-term key of roughtime.se, the server the corridor capture asked.
+const ROUGHTIME_SE_KEY: [u8; 32] = [
+    0x4b, 0x70, 0x33, 0x7d, 0x92, 0x79, 0x0a, 0x34, 0x9d, 0x90, 0x9d, 0xb5, 0x64, 0x91, 0x9b, 0xc6,
+    0xa7, 0x58, 0x3f, 0xf4, 0xa8, 0x13, 0xc7, 0xd7, 0x29, 0x8d, 0x3e, 0x6a, 0x27, 0x2c, 0x7a, 0x12,
+];
+
+/// The authority that signed the witness capture, pinned by the certificate it answered with.
+fn digicert() -> Authority {
+    Authority {
+        name: "DigiCert".to_string(),
+        url: "http://timestamp.digicert.com".to_string(),
+        accepted_certificates: vec![[
+            0x2d, 0xa0, 0x9d, 0xa7, 0xf4, 0x13, 0x1f, 0x9f, 0xe7, 0x2d, 0xb6, 0xc5, 0xe6, 0xe9,
+            0xc9, 0x65, 0x67, 0x55, 0xaf, 0x04, 0x3f, 0x1e, 0xa7, 0x42, 0xcc, 0x0d, 0x21, 0x20,
+            0xe1, 0x41, 0xeb, 0xfc,
+        ]],
+    }
+}
+
 /// The three things a verifier decided to trust before reading anything.
 fn anchors() -> TrustAnchors {
     TrustAnchors::none()
-        .with_roughtime(
-            "roughtime.se",
-            [
-                0x4b, 0x70, 0x33, 0x7d, 0x92, 0x79, 0x0a, 0x34, 0x9d, 0x90, 0x9d, 0xb5, 0x64, 0x91,
-                0x9b, 0xc6, 0xa7, 0x58, 0x3f, 0xf4, 0xa8, 0x13, 0xc7, 0xd7, 0x29, 0x8d, 0x3e, 0x6a,
-                0x27, 0x2c, 0x7a, 0x12,
-            ],
-        )
+        .with_roughtime("roughtime.se", ROUGHTIME_SE_KEY)
         .with_drand(Chain::quicknet())
-        .with_authority(Authority {
-            name: "DigiCert".to_string(),
-            url: "http://timestamp.digicert.com".to_string(),
-            accepted_certificates: vec![[
-                0x2d, 0xa0, 0x9d, 0xa7, 0xf4, 0x13, 0x1f, 0x9f, 0xe7, 0x2d, 0xb6, 0xc5, 0xe6, 0xe9,
-                0xc9, 0x65, 0x67, 0x55, 0xaf, 0x04, 0x3f, 0x1e, 0xa7, 0x42, 0xcc, 0x0d, 0x21, 0x20,
-                0xe1, 0x41, 0xeb, 0xfc,
-            ]],
-        })
+        .with_authority(digicert())
 }
 
 fn corridor() -> Evidence {
@@ -467,6 +471,117 @@ fn a_real_attestation_nobody_holds_a_key_for_is_still_only_not_checked() {
 ",
     );
     assert!(lines.contains("not checked"), "{lines}");
+}
+
+/// A reader who holds keys, and not the key of the party that signed this entry.
+///
+/// Until 2026-09-15 each of the three arms tried every key the reader held and, where none fitted,
+/// refused the receipt as contradicting itself. So a reader who took up the documented offer to
+/// supply their own trust material was told an intact receipt was a lie whenever their list lacked
+/// one signer, and the only way past it was to hold every key the shipped set holds, which is taking
+/// our word for which keys are which. Which party signed an attestation is written in the
+/// attestation itself, before any cryptography: the request names the server's long-term key, the
+/// round names its chain, the token carries its certificates. A reader holding no key for that
+/// party has not checked the entry, and the report says so. Watched failing on all three schemes
+/// before the fix.
+#[test]
+fn an_attestation_by_a_party_the_reader_holds_no_key_for_is_not_checked_and_not_refused() {
+    // The published key of time.txryan.com: a real server, and not the one this capture asked.
+    let another_server = unhex("881563c60ff58fbcb5fa44144c161d4da6f10a9a5eb14ff4ec3e0f303264d960");
+    let mut another_server_key = [0u8; 32];
+    another_server_key.copy_from_slice(&another_server);
+    let another_chain = Chain {
+        name: "another chain",
+        hash: [0x8c; 32],
+        ..Chain::quicknet()
+    };
+    let another_authority = Authority {
+        name: "somebody-else".to_string(),
+        url: "http://timestamp.example".to_string(),
+        accepted_certificates: vec![[0x11; 32]],
+    };
+
+    let cases: [(usize, &str, TrustAnchors, &str); 3] = [
+        (
+            0,
+            "roughtime",
+            TrustAnchors::none()
+                .with_roughtime("time.txryan.com", another_server_key)
+                .with_drand(Chain::quicknet())
+                .with_authority(digicert()),
+            "long-term key",
+        ),
+        (
+            1,
+            "drand",
+            TrustAnchors::none()
+                .with_roughtime("roughtime.se", ROUGHTIME_SE_KEY)
+                .with_drand(another_chain)
+                .with_authority(digicert()),
+            "chain",
+        ),
+        (
+            2,
+            "rfc3161",
+            TrustAnchors::none()
+                .with_roughtime("roughtime.se", ROUGHTIME_SE_KEY)
+                .with_drand(Chain::quicknet())
+                .with_authority(another_authority),
+            "certificate",
+        ),
+    ];
+
+    for (index, name, anchors, names_what) in cases {
+        let plain = receipt(EpsilonBasis::LocalModelOnly, all_three());
+        let verified = validate_with(&plain, &anchors).unwrap_or_else(|e| {
+            panic!("a reader holding no key for the {name} signer refused an intact receipt: {e}")
+        });
+        assert_eq!(
+            verified.checked(),
+            2,
+            "{name}: the other two are still checked"
+        );
+        match &verified.entries[index].outcome {
+            Outcome::NotChecked(why) => {
+                assert!(why.contains(names_what), "{name}: {why}");
+                assert!(why.contains("holds no"), "{name}: {why}");
+            }
+            other => panic!("{name}: expected not checked, got {other:?}"),
+        }
+
+        // The same receipt claiming a sandwich is still refused, because a basis that cannot be
+        // checked is not granted. What changes is the reason: the reader is told which role they
+        // could not check, and not that the receipt contradicts itself.
+        let claiming = receipt(EpsilonBasis::ThirdPartySandwich, all_three());
+        let err = validate_with(&claiming, &anchors)
+            .unwrap_err_or_else_message(&format!("{name}: a sandwich nobody checked was granted"));
+        assert!(
+            err.contains("cannot be checked is not granted"),
+            "{name}: {err}"
+        );
+        assert!(!err.contains("contradicts itself"), "{name}: {err}");
+    }
+}
+
+/// And the refusal is kept for the case it was always for: the reader holds the key the attestation
+/// names, and the bytes do not verify under it.
+///
+/// One byte is changed in the signed part of each capture. The reader holds the right key for each,
+/// so this is not a fact about the reader; it is a signature that does not check out, and a receipt
+/// carrying one is wrong.
+#[test]
+fn an_attestation_that_fails_under_a_key_the_reader_holds_for_its_signer_is_still_refused() {
+    for (index, name) in [(0usize, "roughtime"), (1, "drand"), (2, "rfc3161")] {
+        let mut evidence = all_three();
+        let last = evidence[index].blob.len() - 1;
+        evidence[index].blob[last] ^= 0x01;
+        let receipt = receipt(EpsilonBasis::LocalModelOnly, evidence);
+        let err = validate_with(&receipt, &anchors()).unwrap_err_or_else_message(&format!(
+            "a {name} attestation with a byte changed was accepted under the key it names"
+        ));
+        assert!(err.contains(name), "{err}");
+        assert!(err.contains("does not check out against"), "{err}");
+    }
 }
 
 /// A small helper so the tests above read as sentences rather than as unwrapping.

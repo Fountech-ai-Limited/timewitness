@@ -208,6 +208,28 @@ struct Token<'a> {
     serial: Vec<u8>,
 }
 
+/// The SHA-256 of every certificate the stored reply carries, in the order it carries them.
+///
+/// A pin is matched against these, so a reader whose pins name none of them holds nothing this
+/// token can be checked against. That is read here, before any signature is looked at, so the
+/// validator can say so rather than trying every authority it holds and reading a token that fits
+/// none of them as a fault in the receipt, which is what it did until 2026-09-15. A reply carrying
+/// no certificate at all comes back as an empty list for the same reason: there is nothing in it a
+/// pin could name.
+pub fn certificate_digests(blob: &[u8]) -> Result<Vec<[u8; 32]>, EvidenceError> {
+    let stored = unpack_blob(blob)?;
+    let reply = read_reply(stored.reply)?;
+    Ok(reply
+        .certificates
+        .iter()
+        .map(|c| {
+            let mut digest = [0u8; 32];
+            digest.copy_from_slice(&Sha256::digest(c));
+            digest
+        })
+        .collect())
+}
+
 /// Check a stored timestamp token against a pinned certificate and the hash it should be about.
 ///
 /// `subject_hash` is what the caller believes the token is about. It is compared against the imprint

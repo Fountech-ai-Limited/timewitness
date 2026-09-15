@@ -139,6 +139,17 @@ the reader meant to trust and would go on believing they had.
 claim the receipt makes about itself is still checked, and every attestation is reported as unchecked
 rather than glossed over, which is what that reader actually knows.
 
+A file holding some keys and not others gets the same answer entry by entry. Who signed an
+attestation is written in the attestation before any key is chosen: a Roughtime request names its
+server by the hash of the server's long-term key, a drand round names its chain, and a timestamp
+token carries the certificates it was signed under. An entry naming a party the file holds nothing
+for is reported as not checked, saying what it names and that the file holds no key for it, and the
+receipt is not refused for the reader's choice of keys. An entry naming a party the file does hold a
+key for, whose bytes do not verify under that key, refuses the whole receipt, because a signature
+that does not check out is a fault in the receipt and not a fact about the reader. Until 2026-09-15
+a file lacking one signer's key refused an intact receipt as contradicting itself, and the only way
+past it was to hold every key the shipped set holds.
+
 ## What is deliberately not a boolean
 
 The answer to "is this receipt good" is a list. Three evidence roles do three different jobs, and a

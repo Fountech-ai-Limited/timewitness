@@ -448,6 +448,26 @@ fn signature(bytes: &[u8], whose: &str) -> Result<Signature, EvidenceError> {
     Ok(Signature::from_bytes(&b))
 }
 
+/// The hash of the long-term key the stored request asked its answer to be signed under.
+///
+/// This is the one fact about who signed a corridor that needs no key to read, and a reader
+/// compares their own list against it before checking anything. A request names its server by
+/// this hash, so a reader holding no key that hashes to it has nothing to check the response
+/// against, which is a fact about the reader. Until 2026-09-15 the validator had no way to ask
+/// this: it tried every key it held and read a response that fitted none of them as a receipt
+/// contradicting itself, so a reader holding two of the three published keys was told an intact
+/// receipt was a lie.
+pub fn requested_key_hash(blob: &[u8]) -> Result<[u8; 32], EvidenceError> {
+    let stored = unpack_blob(blob)?;
+    let request = Message::parse(unframe(stored.request)?)?;
+    if request.need_u32(TAG_TYPE)? != TYPE_REQUEST {
+        return Err(malformed(
+            "a stored request that is not marked as a request",
+        ));
+    }
+    request.need_fixed::<32>(TAG_SRV)
+}
+
 /// Check a stored Roughtime blob against the server's published long-term key.
 ///
 /// This is every check the draft's own validity section lists, and two more that belong to us
