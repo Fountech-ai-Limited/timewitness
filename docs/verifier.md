@@ -38,7 +38,10 @@ Neither needs an account, a key from us, or a route to anything of ours.
    rather than skipped. The receipt proves that whoever signed it held that key. A reader who
    recognises the key can compare it and a reader who does not learns that one key signed this.
 
-   A reader handed a key log can pass it with `--key-log <file>`. The head of the log is checked
+   A reader handed a key log can pass it with `--key-log <file>`. The log we serve is at
+   `https://timewitness.dev/key-log.txt`, a `timewitness-key-log v1` file, and the `v0` release
+   refuses that format by name, so until a later release a reader checks it with a verifier built
+   from `main`. The head of the log is checked
    first, under the key this reader holds for us: one ships in the trust material below and
    `--anchors` or `--key-log-signer` replaces it. A head signed by any other key answers nothing,
    and the step says whose it was not, because whatever that list says, it is not us saying it. A

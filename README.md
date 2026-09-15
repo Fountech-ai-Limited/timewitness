@@ -215,7 +215,8 @@ signed, and no code anywhere compares two receipts, so nothing that exists today
 in order. There is no refusal receipt. A refusal is a return value inside the agent. Nothing signed
 and nothing portable is produced, so there is no artefact a third party could be shown. There is no
 release, so a stranger compiles the verifier rather than downloading it. Nothing links an agent's key
-to anybody, because there is no public key log. There is no first-run figure from anybody outside.
+to anybody: the key log served at `timewitness.dev/key-log.txt` names the keys of our two
+Roughtime servers and no agent key. There is no first-run figure from anybody outside.
 One freshness beacon works rather than the two the design asks for. One kind of final witness works;
 there is no OpenTimestamps anchor. Roughtime is an Internet-Draft that expires on 18 September 2026.
 A sleep is detected and has never been watched happening: the agent reads the two counters an
