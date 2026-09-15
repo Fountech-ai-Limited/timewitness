@@ -86,8 +86,9 @@ fn sources(error: Nanos) -> Vec<Path> {
     ]
 }
 
-/// The one thing that ships: the Action's own ceiling, thirty seconds, because a seconds-wide bound
-/// is refused outright at the 250 ms default and there would be no receipt to look at.
+/// A ceiling wide enough to see a seconds-wide fit at all, thirty seconds, which is what the Action
+/// shipped until 2026-09-15. The shipped ceilings, 250 ms and 2 s, refuse every round here outright
+/// and there would be no receipt to look at.
 fn shipping_policy() -> Policy {
     Policy {
         max_bound_width: 30 * NANOS_PER_SEC,

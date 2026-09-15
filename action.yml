@@ -45,7 +45,8 @@ inputs:
     description: >-
       A 32 byte agent key. One is generated on the runner where this file does not exist, which is
       what keeps the install to one line. A generated key proves that one agent signed this receipt
-      and nothing about who that agent was, and there is no public key log to check it against yet.
+      and nothing about who that agent was. The log of our keys served at
+      timewitness.dev/key-log.txt names no agent key, so there is nothing yet to check it against.
       Supply your own, from a secret, where you want a key that persists across runs.
     required: false
     default: timewitness-agent.key
@@ -54,19 +55,21 @@ inputs:
       How many times to poll the time sources before reading, and a longer wait. Below three the
       model cannot fit a line, so the scatter of its own measurements is never measured and never
       enters the width: the third round widens the bound and it narrows again from there. Measured
-      on 2026-09-08 against the three public Roughtime servers, two passes each: 6.2 s of width at
-      one round, 17.4 s at three, 16.4 s at four, 12.0 s at sixteen and 10.4 s at thirty-two.
+      on 2026-09-08 against the three public Roughtime servers, two passes each, before the operator
+      floor that now refuses a round of those three alone: 6.2 s of width at one round, 17.4 s at
+      three, 16.4 s at four, 12.0 s at sixteen and 10.4 s at thirty-two.
       Sixteen is the default because it takes about six seconds and each further second after it
       buys less than a quarter of a second of width.
     required: false
     default: "16"
   max-width:
     description: >-
-      The widest interval this agent will sign for, in nanoseconds. The default is thirty seconds,
-      which is what a runner with only public Roughtime servers can honestly reach. Past it the
-      Action fails rather than issuing a receipt whose bound says nothing.
+      The widest interval this agent will sign for, in nanoseconds. The default is two seconds, the
+      narrowest interval a Roughtime corridor can state, so a wider bound says less than one signed
+      corridor already does. The widest a GitHub runner has reached is 287.147 ms, on 2026-09-14 at
+      sixteen rounds. Past it the Action fails rather than issuing a receipt whose bound says nothing.
     required: false
-    default: "30000000000"
+    default: "2000000000"
   previous:
     description: >-
       The receipt from the step before this one, where you are stamping several events in one
