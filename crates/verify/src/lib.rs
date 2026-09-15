@@ -190,6 +190,51 @@ impl Assessment {
         self.steps.iter().find(|s| s.state.is_failure())
     }
 
+    /// The one line a reader stops at, and it carries how many attestations were checked.
+    ///
+    /// Until 2026-09-15 this read "This receipt holds up as far as it was checked." for a receipt
+    /// with three attestations checked and, word for word, for one with none: a forger who renamed
+    /// every signer got the same sentence a genuine receipt gets, and a reader who stops at the
+    /// first line, which is most readers, could not tell the two apart. Not-checked is never a
+    /// pass, and this is where that rule has to hold, because it is the line every route prints.
+    ///
+    /// The count is on the line rather than under it, so the page and the command line say the
+    /// same thing and a reader has the number before the sentence they would otherwise take for a
+    /// pass. A refusal is one word and the step that refused it follows.
+    #[must_use]
+    pub fn verdict(&self) -> String {
+        if !self.accepted() {
+            return "REFUSED.".to_string();
+        }
+        let Some(evidence) = &self.evidence else {
+            return "This receipt holds up as far as it was checked.".to_string();
+        };
+        let carried = evidence.entries.len();
+        let checked = evidence.checked();
+        let unchecked = carried - checked;
+        match (carried, unchecked) {
+            (0, _) => "This receipt holds up as far as it was checked, and it carries no \
+                       third-party attestation."
+                .to_string(),
+            (_, 0) => format!(
+                "This receipt holds up as far as it was checked, and all {carried} of its \
+                 attestations were checked."
+            ),
+            (_, n) if n == carried => format!(
+                "This receipt holds up as far as it was checked, and none of its {carried} \
+                 attestations was checked."
+            ),
+            (_, 1) => format!(
+                "This receipt holds up as far as it was checked, and 1 of its {carried} \
+                 attestations was not checked."
+            ),
+            (_, n) => format!(
+                "This receipt holds up as far as it was checked, and {n} of its {carried} \
+                 attestations were not checked."
+            ),
+        }
+    }
+
     /// How many checks were made against material chosen in advance.
     #[must_use]
     pub fn checked_entries(&self) -> usize {

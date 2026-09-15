@@ -14,7 +14,6 @@
 //! Every one of these was built, signed correctly, and watched being accepted by `open()` before
 //! the check that now refuses it went in.
 
-use timewitness_core::evidence::roughtime;
 use timewitness_core::{
     Bound, BoundBreakdown, EpsilonBasis, FusionRule, Generations, LeapIndicator, MonotonicNanos,
     Operator, Reading, SmearPolicy, SourceId, SourceKind, SourceState, Stamp, Timescale, UnixNanos,
@@ -523,23 +522,45 @@ fn a_corridor_that_does_not_say_how_wide_it_is_is_refused() {
 #[test]
 fn a_corridor_that_overlaps_the_interval_is_accepted() {
     // The honest case, so the checks above are refusing something specific rather than everything.
+    //
+    // A real corridor, captured from roughtime.se on 2026-09-07 about a subject of thirty-two 0x5a
+    // bytes, and the receipt moved to sit inside it. Until 2026-09-15 this was a blob of the right
+    // outer shape with rubbish inside, which reported as not checked under no key; from that date a
+    // stored response that is not a Roughtime exchange is refused whatever the reader holds, and so
+    // is a printed moment the response does not state. The reader here still holds no key, so the
+    // entry still reports as not checked, and what this test is about is still the interval
+    // arithmetic around it rather than the signature.
+    let corridor_at = 1_788_806_207 * 1_000 * MS;
     let mut r = receipt();
+    r.payload.hash = vec![0x5a; 32];
+    r.utc_estimate = UnixNanos(corridor_at - 4 * MS);
+    r.claim.earliest = UnixNanos(corridor_at - 10 * MS);
+    r.claim.latest = UnixNanos(corridor_at + 2 * MS);
     r.evidence = vec![Evidence {
         role: Role::AuthenticatedUtcCorridor,
         scheme: Scheme::new("roughtime"),
-        at: UnixNanos(NOW - 4 * MS),
-        radius: Some(10 * MS),
-        // Packed the way the scheme stores a response, because from 2026-09-08 a blob that is not
-        // even that shape is refused with no key held. What is inside it still verifies under
-        // nothing, which is the point: this test is about the interval arithmetic and not about
-        // cryptography, and the entry reports as not checked.
-        blob: roughtime::pack_blob(&[], &[], &[0xa1; 96]),
-        nonce: Some(vec![0x5a; 32]),
+        at: UnixNanos(corridor_at),
+        radius: Some(1_000 * MS),
+        blob: unhex(include_str!("data/sandwich/roughtime.hex")),
+        nonce: Some(unhex(include_str!("data/sandwich/roughtime-nonce.hex"))),
         detail: None,
     }];
 
     let back = sign_and_open(&r).expect("an honest corridor entry is evidence");
-    assert_eq!(back.evidence[0].radius, Some(10 * MS));
+    assert_eq!(back.evidence[0].radius, Some(1_000 * MS));
+}
+
+fn unhex(text: &str) -> Vec<u8> {
+    let digits: Vec<u8> = text
+        .bytes()
+        .filter(|b| b.is_ascii_hexdigit())
+        .map(|b| match b {
+            b'0'..=b'9' => b - b'0',
+            b'a'..=b'f' => b - b'a' + 10,
+            _ => b - b'A' + 10,
+        })
+        .collect();
+    digits.chunks(2).map(|c| (c[0] << 4) | c[1]).collect()
 }
 
 #[test]

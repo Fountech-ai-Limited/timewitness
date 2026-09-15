@@ -27,7 +27,7 @@ use crate::report::{EntryReport, Outcome, Verified};
 use crate::schema::{AgentClaim, Evidence, Payload, Receipt, Role, FORMAT_VERSION};
 use crate::value::Value;
 use timewitness_core::evidence::{drand, rfc3161, roughtime, Checked};
-use timewitness_core::time::{Nanos, NANOS_PER_SEC};
+use timewitness_core::time::{Nanos, UnixNanos, NANOS_PER_SEC};
 use timewitness_core::EpsilonBasis;
 
 /// The widest a third-party sandwich may be before it stops supporting anything.
@@ -522,9 +522,31 @@ fn examine(receipt: &Receipt, anchors: &TrustAnchors) -> Result<Vec<EntryReport>
     Ok(reports)
 }
 
+/// A refusal under a key the reader holds for the party the entry names.
 fn refused(scheme: &str, signer: &str, why: &str) -> ReceiptError {
     ReceiptError::Inconsistent(format!(
         "the {scheme} entry offered as evidence does not check out against {signer}: {why}"
+    ))
+}
+
+/// A refusal anybody can make from the receipt alone, whatever keys they hold.
+///
+/// Added 2026-09-08 for the outer blob and widened on 2026-09-15 to everything inside it. Each of
+/// the three arms below returned `NotChecked` the moment the reader held no anchor for the party
+/// an entry named, before it had looked at the bytes past the outer blob, so a receipt whose blob
+/// was four bytes of `deadbeef` was refused by the default verifier and accepted under
+/// `--no-anchors`, and then, once the signer's name was read off the attestation first, a reply of
+/// zeros behind a renamed server was accepted by the default verifier as well, exit 0, on every
+/// route. The name sits in bytes whoever wrote the receipt controls.
+///
+/// So the rule is that the set of checks that run never depends on anything the receipt says. Every
+/// check whose inputs are all inside the receipt runs on every entry, and what the reader holds
+/// decides one thing only: whether the signature is checked. A well-formed attestation nobody holds
+/// a key for is `not checked`, which is a fact about the reader and not a fault in the receipt. An
+/// attestation that fails on its own bytes is a failure at every setting.
+fn on_its_own(scheme: &str, why: &str) -> ReceiptError {
+    ReceiptError::Inconsistent(format!(
+        "the {scheme} entry offered as evidence fails a check that needs no key to see: {why}"
     ))
 }
 
@@ -538,32 +560,7 @@ fn into_outcome(checked: Checked) -> Outcome {
     }
 }
 
-/// A fault anybody can see, whatever keys they hold.
-///
-/// Added 2026-09-08. Each of the three checks below returned `NotChecked` the moment the verifier
-/// held no anchor for the scheme, before it had looked at the bytes at all, so a receipt whose blob
-/// was four bytes of `deadbeef` was refused by the default verifier and accepted under
-/// `--no-anchors` with `accepted = true` and exit 0. That is a guard failing open on the field
-/// every shell in this repository reads.
-///
-/// The distinction the flag exists for is kept and it is the point of this function. A well-formed
-/// attestation nobody holds a key for is `not checked`, which is a fact about the reader and not a
-/// fault in the receipt. A blob that is not the shape the scheme stores needs no key to see, so it is
-/// a failure at every setting of the flag. Unpacking is the whole of the test: it reads a magic
-/// string and two lengths and touches no cryptography.
-fn well_formed(
-    scheme: &str,
-    blob: &[u8],
-    unpack: impl FnOnce(&[u8]) -> Result<(), String>,
-) -> Result<(), ReceiptError> {
-    unpack(blob).map_err(|why| {
-        ReceiptError::Inconsistent(format!(
-            "the {scheme} entry offered as evidence is not a stored {scheme} attestation at all,              which needs no key to see: {why}"
-        ))
-    })
-}
-
-/// The interval the receipt prints beside an entry, against the one the signature supports.
+/// The interval the receipt prints beside an entry, against the one the attestation supports.
 ///
 /// Added 2026-09-08, when the verifier shipped. `examine_corridor` compared the printed instant and
 /// the printed radius against the response, and the other two arms compared the instant alone and
@@ -575,22 +572,22 @@ fn well_formed(
 /// reaching outside the one the signed content supports. Printing a narrower one is allowed and is
 /// the ordinary case, a beacon and a token each printing the single instant their scheme states,
 /// because a narrower claim is a weaker one.
+///
+/// Returns the reason rather than the error, because whether it needed a key depends on the
+/// scheme: a token states its own moment and a round's moment is arithmetic on the chain.
 fn printed_interval_is_supported(
-    scheme: &str,
-    signer: &str,
     entry: &Evidence,
-    checked: &Checked,
-) -> Result<(), ReceiptError> {
+    earliest: UnixNanos,
+    latest: UnixNanos,
+) -> Result<(), &'static str> {
     let radius = entry.radius.unwrap_or(0).max(0);
-    let earliest = entry.at.as_nanos() - radius;
-    let latest = entry.at.as_nanos() + radius;
-    if earliest < checked.earliest().as_nanos() || latest > checked.latest().as_nanos() {
-        return Err(refused(
-            scheme,
-            signer,
+    if entry.at.as_nanos() - radius < earliest.as_nanos()
+        || entry.at.as_nanos() + radius > latest.as_nanos()
+    {
+        return Err(
             "the receipt prints an interval beside this entry that reaches outside the one the \
              signature supports",
-        ));
+        );
     }
     Ok(())
 }
@@ -611,7 +608,7 @@ fn nonce_value(bytes: &[u8]) -> &[u8] {
     value
 }
 
-/// The nonce the receipt prints beside an entry, against the one the signature was actually over.
+/// The nonce the receipt prints beside an entry, against the one the attestation was made over.
 ///
 /// The other half of the same rule as the interval above, and it was the half left open. A nonce is
 /// the field that answers "could this response have been fetched in advance", a reader looks at it,
@@ -624,39 +621,26 @@ fn nonce_value(bytes: &[u8]) -> &[u8] {
 /// nonce was derived from nor the payload hash inside that binding. An RFC 3161 token reports the
 /// nonce inside the signed token. A drand round reports none, because a public beacon has nothing
 /// of ours in it, so a receipt printing a nonce beside one is printing a value that rests on
-/// nothing.
-fn printed_nonce_is_the_checked_one(
-    scheme: &str,
-    signer: &str,
-    entry: &Evidence,
-    checked: &Checked,
-) -> Result<(), ReceiptError> {
+/// nothing. All three are read off the stored bytes, so this needs no key for any of them.
+fn printed_nonce_is_the_signed_one(entry: &Evidence, signed: Option<&[u8]>) -> Result<(), String> {
     let printed = match &entry.nonce {
         // A receipt that prints no nonce claims nothing about one. Quieter than the evidence is
         // allowed; louder is what this refuses.
         None => return Ok(()),
         Some(printed) => printed,
     };
-    match &checked.nonce {
+    match signed {
         Some(signed) if nonce_value(printed) == nonce_value(signed) => Ok(()),
-        Some(signed) => Err(refused(
-            scheme,
-            signer,
-            &format!(
-                "the receipt prints a {} byte nonce beside this entry and the response was made \
-                 over a different {} byte one",
-                printed.len(),
-                signed.len()
-            ),
+        Some(signed) => Err(format!(
+            "the receipt prints a {} byte nonce beside this entry and the response was made over \
+             a different {} byte one",
+            printed.len(),
+            signed.len()
         )),
-        None => Err(refused(
-            scheme,
-            signer,
-            &format!(
-                "the receipt prints a {} byte nonce beside this entry and this scheme signs over \
-                 no nonce at all, so the printed value rests on nothing",
-                printed.len()
-            ),
+        None => Err(format!(
+            "the receipt prints a {} byte nonce beside this entry and this scheme signs over no \
+             nonce at all, so the printed value rests on nothing",
+            printed.len()
         )),
     }
 }
@@ -666,98 +650,94 @@ fn short_hex(bytes: &[u8]) -> String {
     bytes.iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
-/// The anchors an attestation names, out of the ones the reader holds.
+/// What to say about a label the receipt prints beside an entry the reader could not check.
 ///
-/// Who signed an attestation is written in it before any key is chosen: a request names its server
-/// by the hash of the server's long-term key, a round names its chain, a token carries the
-/// certificates it was signed under. Where that can be read, the anchors it names are the only
-/// ones tried, and a reader holding none of them has not checked the entry. Until 2026-09-15 every
-/// anchor held was tried in turn and an attestation fitting none of them was read as the receipt
-/// contradicting itself, so a reader holding two of the three published Roughtime keys was told an
-/// intact receipt was a lie, and the only way past it was to hold every key the shipped set holds,
-/// which is taking our word for which keys are which.
-///
-/// Where the signer cannot be read, which is a blob of the right outer shape whose inside does not
-/// parse, every anchor held is tried as before. That keeps two answers exactly as they were: a
-/// reader holding nothing sees the entry as not checked, and a reader holding keys sees the refusal
-/// they always got, because in neither case is the reader's choice of keys what is being judged.
-fn named_among<A>(held: &[A], names: Option<impl Fn(&A) -> bool>) -> Vec<&A> {
-    held.iter()
-        .filter(|anchor| names.as_ref().map_or(true, |names| names(anchor)))
-        .collect()
+/// The label is the receipt's own word for who signed, and the report prints it beside the
+/// outcome. Where the reader holds a key under that very name and the attestation names some other
+/// key, saying only "this reader holds no key with that hash" leaves the label doing the work of an
+/// identity: a reader holding the shipped keys was shown "from roughtime.int08h.com: not checked"
+/// beside a request that named nobody int08h. So the sentence says whose word the label is.
+fn about_the_label(entry: &Evidence, held_under_that_name: bool) -> String {
+    match (&entry.detail, held_under_that_name) {
+        (Some(label), true) => format!(
+            ". The receipt labels this entry {label:?}, and the key this reader holds under that \
+             name is not the one the attestation names, so the label is the receipt's word and not \
+             this reader's"
+        ),
+        _ => String::new(),
+    }
 }
 
-/// A corridor entry, checked against the Roughtime key the reader holds for the server it names.
+/// A corridor entry: everything the bytes can be held to, then the key the reader holds for the
+/// server the request names.
 ///
-/// Two things beyond the signature. The instant and radius the receipt printed have to be the ones
-/// the response actually carries, because a reader looks at the printed numbers, and a verifier that
-/// checks a signature and then believes a different number beside it has checked nothing useful.
-/// And where the nonce was derived from a subject, that subject has to be this receipt's payload,
-/// or the response is a genuine signature about somebody else's document.
+/// The instant and radius the receipt printed have to be the ones the response actually carries,
+/// because a reader looks at the printed numbers, and a verifier that checks a signature and then
+/// believes a different number beside it has checked nothing useful. Where the nonce was derived
+/// from a subject, that subject has to be this receipt's payload, or the response is a genuine
+/// signature about somebody else's document. Both are read off the stored bytes, so both run
+/// whatever the reader holds.
+///
+/// Who signed the corridor is written in the request as the hash of the server's long-term key,
+/// and the keys the reader holds under that hash are the only ones tried. A reader holding none has
+/// not checked the entry, and the report says so. Until 2026-09-15 every key held was tried in turn
+/// and a response fitting none of them was read as the receipt contradicting itself, so a reader
+/// holding two of the three published keys was told an intact receipt was a lie.
 fn examine_corridor(
     entry: &Evidence,
     payload: &Payload,
     anchors: &TrustAnchors,
 ) -> Result<Outcome, ReceiptError> {
-    well_formed("roughtime", &entry.blob, |blob| {
-        roughtime::unpack_blob(blob)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    })?;
-    let named = roughtime::requested_key_hash(&entry.blob).ok();
-    let holders = named_among(
-        &anchors.roughtime_servers,
-        named.map(|hash| {
-            move |server: &RoughtimeServerKey| {
-                roughtime::server_key_hash(&server.long_term_public_key) == hash
-            }
-        }),
-    );
+    let inspected =
+        roughtime::inspect(&entry.blob).map_err(|e| on_its_own("roughtime", &e.to_string()))?;
+    if inspected.midpoint() != entry.at {
+        return Err(on_its_own(
+            "roughtime",
+            "the response states a different moment from the one the receipt prints beside it",
+        ));
+    }
+    if entry.radius != Some(inspected.radius()) {
+        return Err(on_its_own(
+            "roughtime",
+            "the response states a different radius from the one the receipt prints beside it",
+        ));
+    }
+    printed_nonce_is_the_signed_one(entry, Some(inspected.nonce()))
+        .map_err(|why| on_its_own("roughtime", &why))?;
+    if !inspected.binding().is_empty() && !inspected.binding().starts_with(&payload.hash) {
+        return Err(on_its_own(
+            "roughtime",
+            "the nonce was bound to a subject, and that subject is not what this receipt is \
+             stamping",
+        ));
+    }
+
+    let named = inspected.requested_key_hash();
+    let holders: Vec<&RoughtimeServerKey> = anchors
+        .roughtime_servers
+        .iter()
+        .filter(|server| roughtime::server_key_hash(&server.long_term_public_key) == named)
+        .collect();
     if holders.is_empty() {
-        return Ok(Outcome::NotChecked(match named {
-            Some(hash) => format!(
-                "the request names a server whose long-term key hashes to {}, and this reader \
-                 holds no Roughtime key with that hash; it holds {}, so nothing here can check \
-                 the response",
-                short_hex(&hash),
-                anchors.roughtime_servers.len()
-            ),
-            None => "this verifier holds no Roughtime server key".to_string(),
-        }));
+        let label_held = entry.detail.as_deref().is_some_and(|label| {
+            anchors
+                .roughtime_servers
+                .iter()
+                .any(|server| server.name == label)
+        });
+        return Ok(Outcome::NotChecked(format!(
+            "the request names a server whose long-term key hashes to {}, and this reader holds \
+             no Roughtime key with that hash; it holds {}, so nothing here can check the \
+             signature{}",
+            short_hex(&named),
+            anchors.roughtime_servers.len(),
+            about_the_label(entry, label_held)
+        )));
     }
     let mut last = (String::new(), String::new());
     for server in holders {
-        match roughtime::check(&entry.blob, &server.long_term_public_key, &server.name) {
-            Ok(checked) => {
-                if checked.midpoint() != entry.at {
-                    return Err(refused(
-                        "roughtime",
-                        &server.name,
-                        "the response states a different moment from the one the receipt prints \
-                         beside it",
-                    ));
-                }
-                if entry.radius != Some(checked.radius()) {
-                    return Err(refused(
-                        "roughtime",
-                        &server.name,
-                        "the response states a different radius from the one the receipt prints \
-                         beside it",
-                    ));
-                }
-                printed_nonce_is_the_checked_one("roughtime", &server.name, entry, &checked)?;
-                let stored = roughtime::unpack_blob(&entry.blob)
-                    .map_err(|e| refused("roughtime", &server.name, &e.to_string()))?;
-                if !stored.binding.is_empty() && !stored.binding.starts_with(&payload.hash) {
-                    return Err(refused(
-                        "roughtime",
-                        &server.name,
-                        "the nonce was bound to a subject, and that subject is not what this \
-                         receipt is stamping",
-                    ));
-                }
-                return Ok(into_outcome(checked));
-            }
+        match inspected.under(&server.long_term_public_key, &server.name) {
+            Ok(checked) => return Ok(into_outcome(checked)),
             Err(e) => last = (server.name.clone(), e.to_string()),
         }
     }
@@ -765,40 +745,42 @@ fn examine_corridor(
     // is not a fact about the reader: the receipt put forward a signature that does not check out.
     Err(refused(
         "roughtime",
-        &match named {
-            Some(_) => format!("the key this reader holds for {}", last.0),
-            None => "any server key this verifier holds".to_string(),
-        },
+        &format!("the key this reader holds for {}", last.0),
         &last.1,
     ))
 }
 
-/// A beacon entry, checked against the drand chain the reader holds for the chain it names.
+/// A beacon entry: the shape of the round, then the chain the reader holds for the one it names.
+///
+/// A round signs over no nonce, so one printed beside it rests on nothing whatever chain it names.
+/// Which moment the round falls at is arithmetic on the chain's schedule, which is part of the
+/// anchor, so the printed moment is held to the round only where the reader holds the chain.
 fn examine_beacon(entry: &Evidence, anchors: &TrustAnchors) -> Result<Outcome, ReceiptError> {
-    well_formed("drand", &entry.blob, |blob| {
-        drand::unpack_blob(blob)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    })?;
-    let named = drand::named_chain(&entry.blob).ok();
-    let holders = named_among(
-        &anchors.drand_chains,
-        named.map(|hash| move |chain: &drand::Chain| chain.hash == hash),
-    );
+    let inspected = drand::inspect(&entry.blob).map_err(|e| on_its_own("drand", &e.to_string()))?;
+    printed_nonce_is_the_signed_one(entry, None).map_err(|why| on_its_own("drand", &why))?;
+
+    let named = inspected.named_chain();
+    let holders: Vec<&drand::Chain> = anchors
+        .drand_chains
+        .iter()
+        .filter(|chain| chain.hash == named)
+        .collect();
     if holders.is_empty() {
-        return Ok(Outcome::NotChecked(match named {
-            Some(hash) => format!(
-                "the round names a chain whose hash begins {}, and this reader holds no drand \
-                 chain with that hash; it holds {}, so nothing here can check the round",
-                short_hex(&hash),
-                anchors.drand_chains.len()
-            ),
-            None => "this verifier holds no drand chain".to_string(),
-        }));
+        let label_held = entry
+            .detail
+            .as_deref()
+            .is_some_and(|label| anchors.drand_chains.iter().any(|chain| chain.name == label));
+        return Ok(Outcome::NotChecked(format!(
+            "the round names a chain whose hash begins {}, and this reader holds no drand chain \
+             with that hash; it holds {}, so nothing here can check the signature{}",
+            short_hex(&named),
+            anchors.drand_chains.len(),
+            about_the_label(entry, label_held)
+        )));
     }
     let mut last = (String::new(), String::new());
     for chain in holders {
-        match drand::check(&entry.blob, chain) {
+        match inspected.under(chain) {
             Ok(checked) => {
                 if checked.earliest() != entry.at {
                     return Err(refused(
@@ -808,8 +790,8 @@ fn examine_beacon(entry: &Evidence, anchors: &TrustAnchors) -> Result<Outcome, R
                          beside it",
                     ));
                 }
-                printed_interval_is_supported("drand", chain.name, entry, &checked)?;
-                printed_nonce_is_the_checked_one("drand", chain.name, entry, &checked)?;
+                printed_interval_is_supported(entry, checked.earliest(), checked.latest())
+                    .map_err(|why| refused("drand", chain.name, why))?;
                 return Ok(into_outcome(checked));
             }
             Err(e) => last = (chain.name.to_string(), e.to_string()),
@@ -817,85 +799,79 @@ fn examine_beacon(entry: &Evidence, anchors: &TrustAnchors) -> Result<Outcome, R
     }
     Err(refused(
         "drand",
-        &match named {
-            Some(_) => format!("the group key this reader holds for {}", last.0),
-            None => "any chain this verifier holds".to_string(),
-        },
+        &format!("the group key this reader holds for {}", last.0),
         &last.1,
     ))
 }
 
-/// A witness entry, checked against the timestamp authority whose certificate the reader pinned.
+/// A witness entry: everything the token can be held to, then the authority whose certificate the
+/// reader pinned.
 ///
-/// The token carries the certificates it was signed under and a pin names one of them by digest,
-/// so an authority is tried only where one of its pins is in the token. The token also has to be
-/// about this receipt's payload: a token about anything else is a real signature by a real
-/// authority and is evidence for a different document.
+/// The token has to be about this receipt's payload, a token about anything else being a real
+/// signature by a real authority and evidence for a different document, and the moment, interval
+/// and nonce the receipt prints beside it have to be the ones the token states. All of that is in
+/// the token, so all of it runs whatever the reader holds. The token also carries the certificates
+/// it was signed under and a pin names one of them by digest, so an authority is tried only where
+/// one of its pins is in the token.
 fn examine_witness(
     entry: &Evidence,
     payload: &Payload,
     anchors: &TrustAnchors,
 ) -> Result<Outcome, ReceiptError> {
-    well_formed("rfc3161", &entry.blob, |blob| {
-        rfc3161::unpack_blob(blob)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    })?;
-    let carried = rfc3161::certificate_digests(&entry.blob).ok();
-    let holders = named_among(
-        &anchors.timestamp_authorities,
-        carried.as_ref().map(|carried| {
-            move |authority: &rfc3161::Authority| {
-                authority
-                    .accepted_certificates
-                    .iter()
-                    .any(|pin| carried.contains(pin))
-            }
-        }),
-    );
+    let inspected = rfc3161::inspect(&entry.blob, &payload.hash)
+        .map_err(|e| on_its_own("rfc3161", &e.to_string()))?;
+    if inspected.latest() != entry.at {
+        return Err(on_its_own(
+            "rfc3161",
+            "the token states a different moment from the one the receipt prints beside it",
+        ));
+    }
+    printed_interval_is_supported(entry, inspected.earliest(), inspected.latest())
+        .map_err(|why| on_its_own("rfc3161", why))?;
+    printed_nonce_is_the_signed_one(entry, inspected.nonce())
+        .map_err(|why| on_its_own("rfc3161", &why))?;
+
+    let carried = inspected.certificate_digests();
+    let holders: Vec<&rfc3161::Authority> = anchors
+        .timestamp_authorities
+        .iter()
+        .filter(|authority| {
+            authority
+                .accepted_certificates
+                .iter()
+                .any(|pin| carried.contains(pin))
+        })
+        .collect();
     if holders.is_empty() {
-        return Ok(Outcome::NotChecked(match &carried {
-            Some(carried) => {
-                let pinned: usize = anchors
-                    .timestamp_authorities
-                    .iter()
-                    .map(|authority| authority.accepted_certificates.len())
-                    .sum();
-                format!(
-                    "the token carries {} certificate{} and this reader holds no pin naming any \
-                     of them; it holds {pinned}, so nothing here can check the token",
-                    carried.len(),
-                    if carried.len() == 1 { "" } else { "s" }
-                )
-            }
-            None => "this verifier holds no timestamp authority certificate".to_string(),
-        }));
+        let pinned: usize = anchors
+            .timestamp_authorities
+            .iter()
+            .map(|authority| authority.accepted_certificates.len())
+            .sum();
+        let label_held = entry.detail.as_deref().is_some_and(|label| {
+            anchors
+                .timestamp_authorities
+                .iter()
+                .any(|authority| authority.name == label)
+        });
+        return Ok(Outcome::NotChecked(format!(
+            "the token carries {} certificate{} and this reader holds no pin naming any of them; \
+             it holds {pinned}, so nothing here can check the signature{}",
+            carried.len(),
+            if carried.len() == 1 { "" } else { "s" },
+            about_the_label(entry, label_held)
+        )));
     }
     let mut last = (String::new(), String::new());
     for authority in holders {
-        match rfc3161::check(&entry.blob, authority, &payload.hash) {
-            Ok(checked) => {
-                if checked.latest() != entry.at {
-                    return Err(refused(
-                        "rfc3161",
-                        &authority.name,
-                        "the token states a different moment from the one the receipt prints \
-                         beside it",
-                    ));
-                }
-                printed_interval_is_supported("rfc3161", &authority.name, entry, &checked)?;
-                printed_nonce_is_the_checked_one("rfc3161", &authority.name, entry, &checked)?;
-                return Ok(into_outcome(checked));
-            }
+        match inspected.under(authority) {
+            Ok(checked) => return Ok(into_outcome(checked)),
             Err(e) => last = (authority.name.clone(), e.to_string()),
         }
     }
     Err(refused(
         "rfc3161",
-        &match carried {
-            Some(_) => format!("the certificate this reader pinned for {}", last.0),
-            None => "any authority this verifier holds".to_string(),
-        },
+        &format!("the certificate this reader pinned for {}", last.0),
         &last.1,
     ))
 }

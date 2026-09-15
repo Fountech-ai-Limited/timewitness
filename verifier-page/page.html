@@ -229,9 +229,12 @@ function renderResult(result) {
   }
   const verdict = document.getElementById("verdict");
   const detail = document.getElementById("verdict-detail");
+  // The sentence comes from the checking code and is printed as given, so it is the same sentence
+  // the command line prints, count of attestations checked included. This page composing its own
+  // is how the two would drift.
   if (result.accepted) {
     verdict.className = "verdict held";
-    verdict.textContent = "This receipt holds up as far as it was checked.";
+    verdict.textContent = result.verdict;
     detail.textContent =
       "Read the list below rather than the line above it. A check nobody could run is not a check " +
       "that passed, and this page says which is which.";

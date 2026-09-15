@@ -153,6 +153,25 @@ that does not check out is a fault in the receipt and not a fact about the reade
 a file lacking one signer's key refused an intact receipt as contradicting itself, and the only way
 past it was to hold every key the shipped set holds.
 
+**What a key decides, and what it does not.** The name an attestation gives for its signer sits in
+bytes whoever wrote the receipt controls, so it decides one thing only: whether the signature is
+checked. Every check whose inputs are all inside the receipt runs on every entry whatever the reader
+holds, and an entry failing one is refused at every setting, `--no-anchors` included, with a
+sentence saying the fault needs no key to see. For a corridor that is the framing, the encoding, the
+nonce and its binding to this receipt's subject, the delegation window, the signed part of the
+response under the key the delegation names, the version, the radius, the Merkle path from the
+stored request to the signed root, and the moment, radius and nonce the receipt prints beside it.
+For a token it is the reply parsing as a granted timestamp response, the request and the token both
+being about this receipt's subject, the two carrying the same nonce, the signed attributes carrying
+the digest of the token, and the moment, interval and nonce printed beside it. For a round it is the
+shape alone, that the signature is 48 bytes and a point on the curve: which moment a round falls at
+is arithmetic on the chain's schedule, which is part of the anchor, so a round from a chain the reader
+does not hold has its printed moment held to the receipt's interval and to nothing else. Until
+2026-09-15 the name was read first and nothing after it ran, so a reply of zeros behind a renamed
+server was reported not checked, exit 0. A renamed Roughtime server is refused on its own now
+whatever else is done to the response: the request is the Merkle leaf, so a request that names a
+different key no longer hashes into the root the server signed.
+
 ## What is deliberately not a boolean
 
 The answer to "is this receipt good" is a list. Three evidence roles do three different jobs, and a

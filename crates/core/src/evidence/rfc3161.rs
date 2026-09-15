@@ -191,6 +191,7 @@ pub fn build_request(hash_oid_sha256: &[u8; 32], nonce: &[u8; 16]) -> Vec<u8> {
 }
 
 /// What one token said, once it has been checked.
+#[derive(Clone, Debug)]
 struct Token<'a> {
     hashed_message: &'a [u8],
     hash: HashFunction,
@@ -219,59 +220,103 @@ struct Token<'a> {
 pub fn certificate_digests(blob: &[u8]) -> Result<Vec<[u8; 32]>, EvidenceError> {
     let stored = unpack_blob(blob)?;
     let reply = read_reply(stored.reply)?;
-    Ok(reply
-        .certificates
+    Ok(digests_of(&reply.certificates))
+}
+
+/// The SHA-256 of each certificate, in the order they are carried.
+fn digests_of(certificates: &[&[u8]]) -> Vec<[u8; 32]> {
+    certificates
         .iter()
         .map(|c| {
             let mut digest = [0u8; 32];
             digest.copy_from_slice(&Sha256::digest(c));
             digest
         })
-        .collect())
+        .collect()
 }
 
-/// Check a stored timestamp token against a pinned certificate and the hash it should be about.
+/// A stored token, read and held to itself and to the subject with no pin at all.
 ///
-/// `subject_hash` is what the caller believes the token is about. It is compared against the imprint
-/// the token itself carries, because a token about somebody else's document is perfectly valid and
-/// perfectly useless as evidence for this one.
-pub fn check(
-    blob: &[u8],
-    authority: &Authority,
-    subject_hash: &[u8],
-) -> Result<Checked, EvidenceError> {
-    let mut checks: Vec<String> = Vec::new();
-    let stored = unpack_blob(blob)?;
+/// Nearly the whole of a token can be checked by somebody holding no certificate: that the reply is
+/// a granted timestamp response, that the token is about the hash it was asked about and that hash
+/// is this receipt's subject, that the request and the token carry the same nonce, that the signed
+/// attributes carry the digest of the token they are attached to, and what moment the token states
+/// and how finely. What the pin decides is which of the carried certificates the signature is
+/// checked under, and that check is the one thing left for [`Inspected::under`].
+///
+/// A token for another document behind a renamed certificate was accepted, exit 0, until
+/// 2026-09-15, because the validator matched pins first and read nothing where none matched.
+#[derive(Clone, Debug)]
+pub struct Inspected<'a> {
+    reply: Reply<'a>,
+    token: Token<'a>,
+}
 
-    // What we asked, so that what came back can be held to it.
-    let asked = read_request(stored.request)?;
-    if asked.0 != subject_hash {
-        return Err(EvidenceError::Inconsistent(
-            "the stored request asked about a different hash from the one this check was given"
-                .to_string(),
+impl Inspected<'_> {
+    /// The SHA-256 of every certificate the reply carries, which is what a pin is matched against.
+    #[must_use]
+    pub fn certificate_digests(&self) -> Vec<[u8; 32]> {
+        digests_of(&self.reply.certificates)
+    }
+
+    /// The earliest instant the token supports.
+    ///
+    /// Two widths, added rather than one taken for the other. The accuracy is what the authority
+    /// says about its own error, and an authority that states none is refusing to put a number on
+    /// it, which is answered with zero. The resolution is how finely the token wrote the time at
+    /// all: a token written to whole seconds names a second and not an instant, and nothing in it
+    /// says whether the authority truncated or rounded, so the moment it names is somewhere inside
+    /// that second either way.
+    ///
+    /// **This was a live fault rather than a tidying.** Both edges were taken as though the stated
+    /// time were exact. While the agent's own bound was seconds wide that was invisible, because a
+    /// second of truncation sat well inside it. On 2026-09-09 the bound came down to about 240 ms
+    /// on a build runner, and the same free authority, writing whole seconds as it always had,
+    /// produced a token dated 437.345 ms before the earliest time the receipt claimed. The Action
+    /// refused its own receipt on a real repository. Neither the token nor the receipt was wrong;
+    /// the comparison was.
+    ///
+    /// Adding the resolution only ever moves the not-later-than edge later, which weakens what the
+    /// token proves. That is the direction the rules on evidence require, because an edge computed
+    /// from a time nobody wrote is the tightening direction.
+    #[must_use]
+    pub fn earliest(&self) -> UnixNanos {
+        UnixNanos(self.token.generated_at.as_nanos() - self.stated_width())
+    }
+
+    /// The latest instant the token supports, which is the not-later-than edge.
+    #[must_use]
+    pub fn latest(&self) -> UnixNanos {
+        UnixNanos(self.token.generated_at.as_nanos() + self.stated_width())
+    }
+
+    /// The nonce inside the signed token, as a value.
+    #[must_use]
+    pub fn nonce(&self) -> Option<&[u8]> {
+        self.token.nonce.as_deref()
+    }
+
+    fn stated_width(&self) -> Nanos {
+        self.token.accuracy + self.token.resolution
+    }
+
+    /// Check the token's signature under the certificate the reader pinned for an authority.
+    ///
+    /// The certificate is found by the pin rather than by anything the token says about itself.
+    /// Everything else about the token was established by [`inspect`], and the list of checks
+    /// this returns names all of it in the order a reader would want to follow.
+    pub fn under(&self, authority: &Authority) -> Result<Checked, EvidenceError> {
+        let mut checks: Vec<String> = Vec::new();
+        let token = &self.token;
+        let signer = &self.reply.signer;
+
+        checks.push(format!(
+            "the token's own imprint is the {} byte hash this check was given, byte for byte, and \
+             the {} the token names produces a hash of that length",
+            token.hashed_message.len(),
+            token.hash.name()
         ));
-    }
-
-    let reply = read_reply(stored.reply)?;
-    let (token_bytes, certificates, signer) = (reply.token, reply.certificates, reply.signer);
-    let token = read_token(token_bytes)?;
-
-    if token.hashed_message != subject_hash {
-        return Err(EvidenceError::Inconsistent(format!(
-            "the token is about a {} byte hash that is not the one asked about, so it is evidence \
-             for a different document",
-            token.hashed_message.len()
-        )));
-    }
-    checks.push(format!(
-        "the token's own imprint is the {} byte hash this check was given, byte for byte, and the \
-         {} the token names produces a hash of that length",
-        token.hashed_message.len(),
-        token.hash.name()
-    ));
-
-    match (&token.nonce, &asked.1) {
-        (Some(returned), Some(sent)) if returned == sent => {
+        if let Some(returned) = &token.nonce {
             // What this holds and what it does not. The token's nonce is inside the signature, so
             // the authority did answer a request carrying it. The stored request is signed by
             // nobody, so a holder writes both sides of this comparison and it cannot show that the
@@ -284,6 +329,119 @@ pub fn check(
                 returned.len()
             ));
         }
+
+        let certificate = self
+            .reply
+            .certificates
+            .iter()
+            .find(|c| {
+                let digest = Sha256::digest(c);
+                authority
+                    .accepted_certificates
+                    .iter()
+                    .any(|pin| pin == digest.as_slice())
+            })
+            .ok_or_else(|| {
+                EvidenceError::BadSignature(format!(
+                    "none of the {} certificates in this token is one of the {} pinned for {}",
+                    self.reply.certificates.len(),
+                    authority.accepted_certificates.len(),
+                    authority.name
+                ))
+            })?;
+        checks.push(format!(
+            "the token carries a certificate pinned for {}, matched by its SHA-256",
+            authority.name
+        ));
+        checks.push(format!(
+            "the digest inside the signed attributes is the {} hash of the token itself",
+            signer.digest.name()
+        ));
+
+        verify_with(certificate, signer).map_err(|_| {
+            EvidenceError::BadSignature(format!(
+                "the token's signature does not check against the key in the certificate pinned \
+                 for {}",
+                authority.name
+            ))
+        })?;
+        checks.push(format!(
+            "the signature over those attributes checks against that certificate's key, {} with \
+             RSA",
+            signer.signature_hash.name()
+        ));
+
+        checks.push(format!(
+            "{} states it saw this hash at {} s, to a stated accuracy of {} ns and written to the \
+             nearest {} ns, so the document existed no later than that",
+            authority.name,
+            token.generated_at.as_nanos() / NANOS_PER_SEC,
+            token.accuracy,
+            token.resolution
+        ));
+
+        // The ordering flag, which this product has more reason to read than most. The claim here
+        // is unbroken order, and the flag is an authority speaking to exactly that. Neither line
+        // below is worth more than it says: the strong one is the authority's own account of its
+        // own practice, it covers only tokens this same authority issued, and no verifier can test
+        // it. The weak one is the ordinary case and is not a fault.
+        if token.ordering {
+            checks.push(format!(
+                "{} states that its own tokens are ordered by the times they state, whatever \
+                 accuracy each one states. That is the authority's account of its own practice, \
+                 it holds only between tokens {} issued, and nothing here can check it",
+                authority.name, authority.name
+            ));
+        } else {
+            checks.push(format!(
+                "the token makes no claim that the time it states is enough to order it, so two \
+                 tokens from {} are in a known order only where their stated times differ by \
+                 more than the two stated accuracies added together",
+                authority.name
+            ));
+        }
+
+        Checked::over(
+            SCHEME,
+            format!("{} serial {}", authority.name, hex(&token.serial)),
+            self.earliest(),
+            self.latest(),
+            token.nonce.clone(),
+            checks,
+        )
+    }
+}
+
+/// Read a stored token and hold it to itself and to the subject, with no pin.
+///
+/// `subject_hash` is what the caller believes the token is about. It is compared against the
+/// imprint the token itself carries, because a token about somebody else's document is perfectly
+/// valid and perfectly useless as evidence for this one.
+pub fn inspect<'a>(blob: &'a [u8], subject_hash: &[u8]) -> Result<Inspected<'a>, EvidenceError> {
+    let stored = unpack_blob(blob)?;
+
+    // What we asked, so that what came back can be held to it.
+    let (asked_hash, sent_nonce) = read_request(stored.request)?;
+    if asked_hash != subject_hash {
+        return Err(EvidenceError::Inconsistent(
+            "the stored request asked about a different hash from the one this check was given"
+                .to_string(),
+        ));
+    }
+
+    let reply = read_reply(stored.reply)?;
+    let token = read_token(reply.token)?;
+
+    if token.hashed_message != subject_hash {
+        return Err(EvidenceError::Inconsistent(format!(
+            "the token is about a {} byte hash that is not the one asked about, so it is evidence \
+             for a different document",
+            token.hashed_message.len()
+        )));
+    }
+
+    match (&token.nonce, &sent_nonce) {
+        (Some(returned), Some(sent)) if returned == sent => {}
         (Some(_), Some(_)) => {
             return Err(EvidenceError::WrongNonce(
                 "the token carries a different nonce from the one the request sent, so it was not \
@@ -300,118 +458,33 @@ pub fn check(
         }
     }
 
-    // The certificate, found by the pin rather than by anything the token says about itself.
-    let certificate = certificates
-        .iter()
-        .find(|c| {
-            let digest = Sha256::digest(c);
-            authority
-                .accepted_certificates
-                .iter()
-                .any(|pin| pin == digest.as_slice())
-        })
-        .ok_or_else(|| {
-            EvidenceError::BadSignature(format!(
-                "none of the {} certificates in this token is one of the {} pinned for {}",
-                certificates.len(),
-                authority.accepted_certificates.len(),
-                authority.name
-            ))
-        })?;
-    checks.push(format!(
-        "the token carries a certificate pinned for {}, matched by its SHA-256",
-        authority.name
-    ));
-
-    let expected_digest = signer.digest.digest(token_bytes);
-    if signer.message_digest != expected_digest {
+    let expected_digest = reply.signer.digest.digest(reply.token);
+    if reply.signer.message_digest != expected_digest {
         return Err(EvidenceError::Inconsistent(
             "the signed attributes carry a digest that is not the digest of the token they are \
              attached to"
                 .to_string(),
         ));
     }
-    checks.push(format!(
-        "the digest inside the signed attributes is the {} hash of the token itself",
-        signer.digest.name()
-    ));
-
-    if signer.content_type != OID_TST_INFO {
+    if reply.signer.content_type != OID_TST_INFO {
         return Err(EvidenceError::Inconsistent(
             "the signed attributes say this is not a timestamp token".to_string(),
         ));
     }
 
-    verify_with(certificate, &signer).map_err(|_| {
-        EvidenceError::BadSignature(format!(
-            "the token's signature does not check against the key in the certificate pinned for {}",
-            authority.name
-        ))
-    })?;
-    checks.push(format!(
-        "the signature over those attributes checks against that certificate's key, {} with RSA",
-        signer.signature_hash.name()
-    ));
+    Ok(Inspected { reply, token })
+}
 
-    // Two widths, added rather than one taken for the other. The accuracy is what the authority
-    // says about its own error, and an authority that states none is refusing to put a number on
-    // it, which is answered with zero. The resolution is how finely the token wrote the time at
-    // all: a token written to whole seconds names a second and not an instant, and nothing in it
-    // says whether the authority truncated or rounded, so the moment it names is somewhere inside
-    // that second either way.
-    //
-    // **This was a live fault rather than a tidying.** Both edges were taken as though the stated
-    // time were exact. While the agent's own bound was seconds wide that was invisible, because a
-    // second of truncation sat well inside it. On 2026-09-09 the bound came down to about 240 ms
-    // on a build runner, and the same free authority, writing whole seconds as it always had,
-    // produced a token dated 437.345 ms before the earliest time the receipt claimed. The Action
-    // refused its own receipt on a real repository. Neither the token nor the receipt was wrong;
-    // the comparison was.
-    //
-    // Adding the resolution only ever moves the not-later-than edge later, which weakens what the
-    // token proves. That is the direction the rules on evidence require, because an edge computed
-    // from a time nobody wrote is the tightening direction.
-    let stated_width = token.accuracy + token.resolution;
-    let earliest = UnixNanos(token.generated_at.as_nanos() - stated_width);
-    let latest = UnixNanos(token.generated_at.as_nanos() + stated_width);
-    checks.push(format!(
-        "{} states it saw this hash at {} s, to a stated accuracy of {} ns and written to the \
-         nearest {} ns, so the document existed no later than that",
-        authority.name,
-        token.generated_at.as_nanos() / NANOS_PER_SEC,
-        token.accuracy,
-        token.resolution
-    ));
-
-    // The ordering flag, which this product has more reason to read than most. The claim here is
-    // unbroken order, and the flag is an authority speaking to exactly that. Neither line below is
-    // worth more than it says: the strong one is the authority's own account of its own practice,
-    // it covers only tokens this same authority issued, and no verifier can test it. The weak one
-    // is the ordinary case and is not a fault.
-    if token.ordering {
-        checks.push(format!(
-            "{} states that its own tokens are ordered by the times they state, whatever accuracy \
-             each one states. That is the authority's account of its own practice, it holds only \
-             between tokens {} issued, and nothing here can check it",
-            authority.name, authority.name
-        ));
-    } else {
-        checks.push(format!(
-            "the token makes no claim that the time it states is enough to order it, so two \
-             tokens from {} are in a known order only where their stated times differ by more \
-             than the two stated accuracies added together",
-            authority.name
-        ));
-    }
-
-    Checked::over(
-        SCHEME,
-        format!("{} serial {}", authority.name, hex(&token.serial)),
-        earliest,
-        latest,
-        token.nonce,
-        checks,
-    )
+/// Check a stored timestamp token against a pinned certificate and the hash it should be about.
+///
+/// [`inspect`] followed by [`Inspected::under`], and nothing else, so a validator that runs the two
+/// apart runs exactly what the agent runs together.
+pub fn check(
+    blob: &[u8],
+    authority: &Authority,
+    subject_hash: &[u8],
+) -> Result<Checked, EvidenceError> {
+    inspect(blob, subject_hash)?.under(authority)
 }
 
 /// Check one signature against one certificate's key.
@@ -513,6 +586,7 @@ fn read_request(bytes: &[u8]) -> Result<(Vec<u8>, Option<Vec<u8>>), EvidenceErro
 const TAG_REQUEST_EXTENSIONS: u8 = 0xa0;
 
 /// A reply, split into the three parts a check needs from it.
+#[derive(Clone, Debug)]
 struct Reply<'a> {
     /// The signed content, which is the token's own information.
     token: &'a [u8],
@@ -523,6 +597,7 @@ struct Reply<'a> {
 }
 
 /// What a signer info says, once read.
+#[derive(Clone, Debug)]
 struct Signer<'a> {
     signed_attributes: &'a [u8],
     message_digest: Vec<u8>,

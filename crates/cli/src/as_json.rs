@@ -20,6 +20,9 @@ pub fn render(a: &Assessment) -> String {
 fn value(a: &Assessment) -> Value {
     let mut top: Vec<(&'static str, Value)> = vec![
         ("accepted", Value::Bool(a.accepted())),
+        // The one line a person reads, carried here so the page prints the same sentence as the
+        // command line and the two can be held to each other.
+        ("verdict", Value::text(a.verdict())),
         (
             "steps",
             Value::Array(

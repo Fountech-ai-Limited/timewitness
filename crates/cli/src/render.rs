@@ -201,13 +201,10 @@ pub fn version() -> String {
 pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
     let mut out = String::new();
 
-    if a.accepted() {
-        out.push_str("This receipt holds up as far as it was checked.\n");
-    } else {
-        out.push_str("REFUSED.\n");
-        if let Some(step) = a.refusal() {
-            out.push_str(&format!("  {}\n  {}\n", step.question, step.state.detail()));
-        }
+    out.push_str(&a.verdict());
+    out.push('\n');
+    if let Some(step) = a.refusal() {
+        out.push_str(&format!("  {}\n  {}\n", step.question, step.state.detail()));
     }
 
     if quiet {

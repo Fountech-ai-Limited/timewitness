@@ -123,8 +123,14 @@ for (const { what, file } of subjects) {
   ran += 1;
 
   agree(`${what}, the verdict`, fromPage.accepted, fromCommandLine.accepted);
-  agree(`${what}, the interval`, fromPage.claim.width_ns, fromCommandLine.claim.width_ns);
-  agree(`${what}, the reading`, fromPage.claim.reading_ns, fromCommandLine.claim.reading_ns);
+  // The sentence as well as the boolean, because the sentence now carries how many attestations
+  // were checked and a page saying "all 3" beside a command line saying "none" is the drift this
+  // script exists to catch.
+  agree(`${what}, the verdict line`, fromPage.verdict, fromCommandLine.verdict);
+  // A receipt refused before it was read carries no claim on either side, and the case most likely
+  // to disagree is a refused one, so the two are compared as absent rather than thrown on.
+  agree(`${what}, the interval`, fromPage.claim?.width_ns, fromCommandLine.claim?.width_ns);
+  agree(`${what}, the reading`, fromPage.claim?.reading_ns, fromCommandLine.claim?.reading_ns);
   agree(`${what}, the receipt digest`, fromPage.receipt_sha256, fromCommandLine.receipt_sha256);
   // Every step in full, sentence included. The sentence is where the digest of what the reader
   // supplied is printed, so comparing only the state is what let the two shells disagree about the
@@ -132,8 +138,8 @@ for (const { what, file } of subjects) {
   agree(`${what}, what was checked`, fromPage.steps, fromCommandLine.steps);
   agree(
     `${what}, the evidence`,
-    fromPage.evidence.map((e) => [e.role, e.checked]),
-    fromCommandLine.evidence.map((e) => [e.role, e.checked]),
+    (fromPage.evidence || []).map((e) => [e.role, e.checked]),
+    (fromCommandLine.evidence || []).map((e) => [e.role, e.checked]),
   );
 }
 

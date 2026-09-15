@@ -566,22 +566,384 @@ fn an_attestation_by_a_party_the_reader_holds_no_key_for_is_not_checked_and_not_
 /// And the refusal is kept for the case it was always for: the reader holds the key the attestation
 /// names, and the bytes do not verify under it.
 ///
-/// One byte is changed in the signed part of each capture. The reader holds the right key for each,
-/// so this is not a fact about the reader; it is a signature that does not check out, and a receipt
-/// carrying one is wrong.
+/// Each capture is changed in the one place only the key can see. The reader holds the right key for
+/// each, so this is not a fact about the reader; it is a signature that does not check out, and a
+/// receipt carrying one is wrong. Until 2026-09-15 this flipped the last byte of each blob, which
+/// for the corridor is the Merkle index and for the round is a byte of the point, and both of those
+/// are faults that need no key to see and are refused before any key is chosen. What only a key
+/// catches is the long-term key's signature over the delegation, the group's signature over the
+/// round number, and the authority's signature over the token.
 #[test]
 fn an_attestation_that_fails_under_a_key_the_reader_holds_for_its_signer_is_still_refused() {
-    for (index, name) in [(0usize, "roughtime"), (1, "drand"), (2, "rfc3161")] {
+    for (name, spoil) in [
+        (
+            "roughtime",
+            spoil_the_delegation_signature as fn(&mut Evidence),
+        ),
+        ("drand", spoil_the_round_number),
+        ("rfc3161", spoil_the_last_byte),
+    ] {
         let mut evidence = all_three();
-        let last = evidence[index].blob.len() - 1;
-        evidence[index].blob[last] ^= 0x01;
+        let index = evidence
+            .iter()
+            .position(|e| e.scheme.as_str() == name)
+            .expect("one entry per scheme");
+        spoil(&mut evidence[index]);
         let receipt = receipt(EpsilonBasis::LocalModelOnly, evidence);
         let err = validate_with(&receipt, &anchors()).unwrap_err_or_else_message(&format!(
-            "a {name} attestation with a byte changed was accepted under the key it names"
+            "a {name} attestation with its signature spoiled was accepted under the key it names"
         ));
         assert!(err.contains(name), "{err}");
         assert!(err.contains("does not check out against"), "{err}");
     }
+}
+
+/// The corridor's delegation signature, found by the header of the certificate message it sits in.
+///
+/// A Roughtime certificate is a message of two pairs, the signature at offset nought and the
+/// delegation after its 64 bytes, so its header is fixed: a count of two, one offset of 64, and the
+/// two tags in ascending order. The signature is the 64 bytes after that header, and it is the one
+/// part of a response that only the server's published long-term key can check.
+fn spoil_the_delegation_signature(entry: &mut Evidence) {
+    let mut header = Vec::new();
+    header.extend_from_slice(&2u32.to_le_bytes());
+    header.extend_from_slice(&64u32.to_le_bytes());
+    header.extend_from_slice(b"SIG\0");
+    header.extend_from_slice(b"DELE");
+    let at = entry
+        .blob
+        .windows(header.len())
+        .position(|w| w == header)
+        .expect("the capture carries a certificate");
+    entry.blob[at + header.len()] ^= 0x01;
+}
+
+/// The round number a drand signature was made over, which is the whole of its message.
+///
+/// The signature stays a real point on the curve, so nothing short of the pairing against the
+/// group key can tell that it is a signature over some other round.
+fn spoil_the_round_number(entry: &mut Evidence) {
+    entry.blob[8] ^= 0x01;
+}
+
+/// The last byte of a token, which is the end of the authority's RSA signature.
+fn spoil_the_last_byte(entry: &mut Evidence) {
+    let last = entry.blob.len() - 1;
+    entry.blob[last] ^= 0x01;
+}
+
+// ---------------------------------------------------------------------------------------------
+// A renamed signer skips nothing that needs no key.
+// ---------------------------------------------------------------------------------------------
+
+/// The key of roughtime.se as the corridor's request names it, which is the hash of the key and
+/// not the key itself.
+fn corridor_server_hash() -> [u8; 32] {
+    timewitness_core::evidence::roughtime::server_key_hash(&ROUGHTIME_SE_KEY)
+}
+
+/// Rewrite who the corridor's request says it asked, leaving everything else as captured.
+fn rename_the_corridor_signer(entry: &mut Evidence) {
+    let hash = corridor_server_hash();
+    let at = entry
+        .blob
+        .windows(32)
+        .position(|w| w == hash)
+        .expect("the request names the server by its key hash");
+    entry.blob[at] ^= 0xff;
+}
+
+/// Rewrite which chain the round says it is from.
+fn rename_the_round_chain(entry: &mut Evidence) {
+    entry.blob[16..48].copy_from_slice(&[0x8c; 32]);
+}
+
+/// Change one byte inside the certificate the token carries, so no pin names it any more.
+///
+/// The certificate is found the way a reader finds it: a DER sequence in the reply whose SHA-256
+/// is one of the digests the token reports carrying. The signature over the token is not touched.
+fn rename_the_token_signer(entry: &mut Evidence) {
+    use timewitness_core::evidence::rfc3161::certificate_digests;
+    let digests = certificate_digests(&entry.blob).expect("the capture carries certificates");
+    let blob = entry.blob.clone();
+    for at in 0..blob.len().saturating_sub(4) {
+        if blob[at] == 0x30 && blob[at + 1] == 0x82 {
+            let len = (usize::from(blob[at + 2]) << 8) | usize::from(blob[at + 3]);
+            let end = at + 4 + len;
+            if end <= blob.len() {
+                let digest = timewitness_core::hash::HashFunction::Sha256.digest(&blob[at..end]);
+                if digests.iter().any(|d| d[..] == digest[..]) {
+                    entry.blob[end - 1] ^= 0x01;
+                    return;
+                }
+            }
+        }
+    }
+    panic!("no certificate the token reports was found in its bytes");
+}
+
+/// The corridor with its reply replaced by zeros of the same length.
+fn zero_the_corridor_reply(entry: &mut Evidence) {
+    use timewitness_core::evidence::roughtime::{pack_blob, unpack_blob};
+    let stored = unpack_blob(&entry.blob).expect("the capture unpacks");
+    let zeros = vec![0u8; stored.reply.len()];
+    entry.blob = pack_blob(stored.binding, stored.request, &zeros);
+}
+
+/// The corridor with a reply that frames correctly and carries four bytes of junk.
+fn junk_the_corridor_reply(entry: &mut Evidence) {
+    use timewitness_core::evidence::roughtime::{pack_blob, unpack_blob};
+    let stored = unpack_blob(&entry.blob).expect("the capture unpacks");
+    let mut junk = b"ROUGHTIM".to_vec();
+    junk.extend_from_slice(&4u32.to_le_bytes());
+    junk.extend_from_slice(b"junk");
+    entry.blob = pack_blob(stored.binding, stored.request, &junk);
+}
+
+/// The round with its signature cut to five bytes, which no key is needed to see is not a point.
+fn cut_the_round_signature(entry: &mut Evidence) {
+    use timewitness_core::evidence::drand::{pack_blob, unpack_blob};
+    let stored = unpack_blob(&entry.blob).expect("the capture unpacks");
+    entry.blob = pack_blob(&stored.chain_hash, stored.round, &[1, 2, 3, 4, 5]);
+}
+
+/// The two settings a stranger reads a receipt under: the shipped kind of anchors, and none.
+fn both_settings() -> [(&'static str, TrustAnchors); 2] {
+    [
+        ("holding keys", anchors()),
+        ("holding nothing", TrustAnchors::none()),
+    ]
+}
+
+/// A receipt whose signer has been renamed to a party nobody holds, with something behind the name
+/// that needs no key to see is wrong, is refused whatever the reader holds.
+///
+/// The 2026-09-15 change read who signed an attestation off the attestation and returned not checked for a party
+/// the reader holds no key for before reading anything past the outer blob. The name sits in bytes
+/// the receipt's writer controls, so renaming it moved a zeroed reply, four bytes of junk and a
+/// five byte signature past every check, exit 0, on the command line, the page and the Action's
+/// self-check, where the only release refused them. Watched failing on every case below on
+/// `2b3e092` before the fix, 2026-09-15.
+#[test]
+fn a_renamed_signer_skips_nothing_that_needs_no_key() {
+    type Step = fn(&mut Evidence);
+    let cases: [(&str, usize, Vec<Step>); 5] = [
+        (
+            "roughtime",
+            0,
+            vec![rename_the_corridor_signer, zero_the_corridor_reply],
+        ),
+        (
+            "roughtime",
+            0,
+            vec![rename_the_corridor_signer, junk_the_corridor_reply],
+        ),
+        (
+            "drand",
+            1,
+            vec![rename_the_round_chain, cut_the_round_signature],
+        ),
+        // The reply is intact and the request no longer hashes into the root the reply signs,
+        // because renaming the server changed the request bytes and the leaf is over all of them.
+        ("roughtime", 0, vec![rename_the_corridor_signer]),
+        // Not renamed at all, and the one byte changed is the Merkle index. Under `--no-anchors`
+        // this was accepted on every build, the only release included.
+        ("roughtime", 0, vec![spoil_the_last_byte]),
+    ];
+    for (name, index, steps) in cases {
+        for (setting, anchors) in both_settings() {
+            let mut evidence = all_three();
+            for step in &steps {
+                step(&mut evidence[index]);
+            }
+            let receipt = receipt(EpsilonBasis::LocalModelOnly, evidence);
+            let err = validate_with(&receipt, &anchors).unwrap_err_or_else_message(&format!(
+                "a {name} attestation broken behind a renamed signer was accepted by a reader \
+                 {setting}"
+            ));
+            assert!(err.contains(name), "{setting}: {err}");
+            assert!(err.contains("needs no key to see"), "{setting}: {err}");
+        }
+    }
+}
+
+/// A token for another document behind a renamed signer, and a corridor bound to another document
+/// behind one, are refused whatever the reader holds.
+///
+/// The binding a corridor's nonce was derived from, and the imprint a token was issued over, are
+/// both inside the receipt, so whether either is about this receipt's subject needs no key.
+#[test]
+fn an_attestation_about_another_document_behind_a_renamed_signer_is_refused() {
+    for (name, entry, rename) in [
+        (
+            "roughtime",
+            corridor(),
+            rename_the_corridor_signer as fn(&mut Evidence),
+        ),
+        ("rfc3161", witness(), rename_the_token_signer),
+    ] {
+        for (setting, anchors) in both_settings() {
+            let mut entry = entry.clone();
+            rename(&mut entry);
+            let mut receipt = receipt(EpsilonBasis::LocalModelOnly, vec![entry]);
+            receipt.payload.hash = vec![0x5b; 32];
+            let err = validate_with(&receipt, &anchors).unwrap_err_or_else_message(&format!(
+                "a {name} attestation about another document was accepted behind a renamed \
+                 signer by a reader {setting}"
+            ));
+            assert!(err.contains(name), "{setting}: {err}");
+            assert!(err.contains("needs no key to see"), "{setting}: {err}");
+        }
+    }
+}
+
+/// The numbers a receipt prints beside an entry are held to the attestation whether or not the
+/// reader holds a key for its signer.
+///
+/// A moment, a radius and a nonce are all read off the stored bytes, so a receipt printing
+/// different ones beside an entry nobody holds a key for is contradicting its own attestation and
+/// no key is needed to see it. The token's signer is renamed in the receipt. The corridor's cannot
+/// be, because the request is the Merkle leaf and renaming the server inside it is itself refused
+/// with no key, so the corridor is read by a reader holding no Roughtime key instead, which is the
+/// same state from the reader's side. A round is the one exception and it is stated: which moment
+/// a round falls at is arithmetic on the chain's schedule, which is part of the anchor, so a
+/// renamed round with a moved moment stays not checked rather than refused.
+#[test]
+fn what_is_printed_beside_an_unheld_signer_is_still_held_to_the_attestation() {
+    let mut no_roughtime_key = anchors();
+    no_roughtime_key.roughtime_servers.clear();
+    let corridor_settings = [
+        ("holding no Roughtime key", no_roughtime_key),
+        ("holding nothing", TrustAnchors::none()),
+    ];
+
+    for (setting, anchors) in &corridor_settings {
+        let mut evidence = all_three();
+        evidence[0].at = UnixNanos(evidence[0].at.as_nanos() + 30 * NANOS_PER_MILLI);
+        let moved = receipt(EpsilonBasis::LocalModelOnly, evidence);
+        let err = validate_with(&moved, anchors).unwrap_err_or_else_message(&format!(
+            "a corridor printing a moved moment was accepted by a reader {setting}"
+        ));
+        assert!(err.contains("roughtime"), "{setting}: {err}");
+        assert!(err.contains("needs no key to see"), "{setting}: {err}");
+
+        let mut evidence = all_three();
+        evidence[0].radius = Some(CORRIDOR_RADIUS * 60);
+        let widened = receipt(EpsilonBasis::LocalModelOnly, evidence);
+        let err = validate_with(&widened, anchors)
+            .unwrap_err_or_else_message(&format!("a widened corridor was accepted {setting}"));
+        assert!(err.contains("radius"), "{setting}: {err}");
+        assert!(err.contains("needs no key to see"), "{setting}: {err}");
+
+        let mut evidence = all_three();
+        evidence[0].nonce = Some(vec![0u8; 32]);
+        let planted = receipt(EpsilonBasis::LocalModelOnly, evidence);
+        let err = validate_with(&planted, anchors)
+            .unwrap_err_or_else_message(&format!("a planted nonce was accepted {setting}"));
+        assert!(err.contains("made over a different"), "{setting}: {err}");
+        assert!(err.contains("needs no key to see"), "{setting}: {err}");
+    }
+
+    for (setting, anchors) in both_settings() {
+        let mut evidence = all_three();
+        rename_the_token_signer(&mut evidence[2]);
+        evidence[2].at = UnixNanos(evidence[2].at.as_nanos() + 30 * NANOS_PER_MILLI);
+        let moved = receipt(EpsilonBasis::LocalModelOnly, evidence);
+        let err = validate_with(&moved, &anchors).unwrap_err_or_else_message(&format!(
+            "a token printing a moved moment beside a renamed signer was accepted by a reader \
+             {setting}"
+        ));
+        assert!(err.contains("rfc3161"), "{setting}: {err}");
+        assert!(err.contains("needs no key to see"), "{setting}: {err}");
+
+        let mut evidence = all_three();
+        rename_the_token_signer(&mut evidence[2]);
+        evidence[2].nonce = Some(vec![0u8; 16]);
+        let planted = receipt(EpsilonBasis::LocalModelOnly, evidence);
+        let err = validate_with(&planted, &anchors)
+            .unwrap_err_or_else_message(&format!("a planted token nonce was accepted {setting}"));
+        assert!(err.contains("made over a different"), "{setting}: {err}");
+
+        // A beacon signs over no nonce, so one printed beside a renamed round rests on nothing.
+        let mut evidence = all_three();
+        rename_the_round_chain(&mut evidence[1]);
+        evidence[1].nonce = Some(vec![9u8; 32]);
+        let planted = receipt(EpsilonBasis::LocalModelOnly, evidence);
+        let err = validate_with(&planted, &anchors)
+            .unwrap_err_or_else_message(&format!("a nonce beside a round was accepted {setting}"));
+        assert!(err.contains("rests on nothing"), "{setting}: {err}");
+    }
+}
+
+/// Every signer unheld at once, which is the receipt a forger who has read the validator writes.
+///
+/// With the insides intact it is accepted with nothing checked, which is the unheld-party case and is
+/// right: three genuine attestations by parties this reader holds no key for. The round and the
+/// token get there by renaming inside the receipt; the corridor cannot, because the request is the
+/// Merkle leaf and a renamed server inside it no longer hashes into the signed root, so that rename
+/// is refused with no key and the corridor is unheld from the reader's side instead. With any
+/// inside broken the receipt is refused. And a sandwich claimed over the intact one is still
+/// refused, because a basis nobody checked is not granted.
+#[test]
+fn every_signer_unheld_at_once_is_not_checked_when_intact_and_refused_when_not() {
+    let renamed = || {
+        let mut evidence = all_three();
+        rename_the_round_chain(&mut evidence[1]);
+        rename_the_token_signer(&mut evidence[2]);
+        evidence
+    };
+    let mut no_roughtime_key = anchors();
+    no_roughtime_key.roughtime_servers.clear();
+    let settings = [
+        ("holding no key any entry names", no_roughtime_key),
+        ("holding nothing", TrustAnchors::none()),
+    ];
+
+    for (setting, anchors) in &settings {
+        let intact = receipt(EpsilonBasis::LocalModelOnly, renamed());
+        let verified = validate_with(&intact, anchors).unwrap_or_else(|e| {
+            panic!("three intact attestations by unheld parties were refused {setting}: {e}")
+        });
+        assert_eq!(verified.checked(), 0, "{setting}");
+        assert!(verified.entries.iter().all(|e| !e.outcome.is_checked()));
+
+        let claiming = receipt(EpsilonBasis::ThirdPartySandwich, renamed());
+        let err = validate_with(&claiming, anchors).unwrap_err_or_else_message(&format!(
+            "a sandwich nobody checked was granted {setting}"
+        ));
+        assert!(
+            err.contains("cannot be checked is not granted"),
+            "{setting}: {err}"
+        );
+
+        for (name, index, spoil) in [
+            // The corridor's rename alone, which breaks the path from the request to the root.
+            (
+                "roughtime",
+                0usize,
+                rename_the_corridor_signer as fn(&mut Evidence),
+            ),
+            ("roughtime", 0, zero_the_corridor_reply),
+            ("drand", 1, cut_the_round_signature),
+            ("rfc3161", 2, junk_the_token_reply),
+        ] {
+            let mut evidence = renamed();
+            spoil(&mut evidence[index]);
+            let receipt = receipt(EpsilonBasis::LocalModelOnly, evidence);
+            let err = validate_with(&receipt, anchors).unwrap_err_or_else_message(&format!(
+                "{name} broken behind three unheld signers was accepted {setting}"
+            ));
+            assert!(err.contains(name), "{setting}: {err}");
+            assert!(err.contains("needs no key to see"), "{setting}: {err}");
+        }
+    }
+}
+
+/// The token with a reply that is not a timestamp response at all, behind an intact request.
+fn junk_the_token_reply(entry: &mut Evidence) {
+    use timewitness_core::evidence::rfc3161::{pack_blob, unpack_blob};
+    let stored = unpack_blob(&entry.blob).expect("the capture unpacks");
+    entry.blob = pack_blob(stored.request, b"not a timestamp response");
 }
 
 /// A small helper so the tests above read as sentences rather than as unwrapping.

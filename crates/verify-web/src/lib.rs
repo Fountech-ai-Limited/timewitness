@@ -195,6 +195,9 @@ fn answer(text: &str) -> usize {
 fn as_json(a: &timewitness_verify::Assessment) -> String {
     let mut top: Vec<(&'static str, Value)> = vec![
         ("accepted", Value::Bool(a.accepted())),
+        // The one line a person reads. The page prints it as given rather than composing its own,
+        // so a reader of the page and a reader of the command line are told the same thing.
+        ("verdict", Value::text(a.verdict())),
         (
             "steps",
             Value::Array(

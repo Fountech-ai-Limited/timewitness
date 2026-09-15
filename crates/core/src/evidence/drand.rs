@@ -212,25 +212,109 @@ pub fn randomness_of(signature: &[u8]) -> [u8; 32] {
 /// from a chain the reader does not hold cannot be checked by them, and until 2026-09-15 that was
 /// reported as the receipt contradicting itself rather than as the reader holding no key for it.
 pub fn named_chain(blob: &[u8]) -> Result<[u8; 32], EvidenceError> {
-    Ok(unpack_blob(blob)?.chain_hash)
+    Ok(inspect(blob)?.named_chain())
 }
 
-/// Check a stored drand round against a chain's group key.
+/// A stored drand round, read and held to itself with no chain at all.
 ///
-/// The pairing is the whole check. Everything else here is bookkeeping that stops the pairing being
-/// done against the wrong thing.
-pub fn check(blob: &[u8], chain: &Chain) -> Result<Checked, EvidenceError> {
-    let stored = unpack_blob(blob)?;
+/// Less than the other two schemes can establish without a key, and it is worth saying why. A
+/// round is a number and a signature over it, and the signature is checked by a pairing against the
+/// group key, so with no chain there is no message to hash against and no moment to place the round
+/// at: the schedule is part of the chain definition. What is left is the shape of the thing, that
+/// the signature is 48 bytes and that those bytes are a point on the curve, and both of those are
+/// refused here before any chain is chosen. A five byte signature behind a renamed chain was
+/// accepted, exit 0, until 2026-09-15, because the name was read first and nothing after it ran.
+#[derive(Clone, Debug)]
+pub struct Inspected<'a> {
+    stored: Stored<'a>,
+    signature: G1Affine,
+}
 
-    if stored.chain_hash != chain.hash {
-        return Err(EvidenceError::Inconsistent(format!(
-            "the stored round names a chain this check was not given, so it would have been \
-             verified against the wrong group key. Wanted {}, found {}",
-            hex(&chain.hash),
-            hex(&stored.chain_hash)
-        )));
+impl Inspected<'_> {
+    /// The chain the round says it is from.
+    #[must_use]
+    pub const fn named_chain(&self) -> [u8; 32] {
+        self.stored.chain_hash
     }
 
+    /// Check the round against a chain's group key.
+    ///
+    /// The pairing is the whole check. Everything else here is bookkeeping that stops the pairing
+    /// being done against the wrong thing.
+    pub fn under(&self, chain: &Chain) -> Result<Checked, EvidenceError> {
+        let stored = &self.stored;
+        if stored.chain_hash != chain.hash {
+            return Err(EvidenceError::Inconsistent(format!(
+                "the stored round names a chain this check was not given, so it would have been \
+                 verified against the wrong group key. Wanted {}, found {}",
+                hex(&chain.hash),
+                hex(&stored.chain_hash)
+            )));
+        }
+
+        let group_key = Option::<G2Affine>::from(G2Affine::from_compressed(&chain.public_key))
+            .ok_or_else(|| {
+                EvidenceError::BadSignature(
+                    "the chain's group key is not a point on the curve at all".to_string(),
+                )
+            })?;
+
+        let point =
+            <G1Projective as HashToCurve<ExpandMsgXmd<sha2_for_bls::Sha256>>>::hash_to_curve(
+                message_for(stored.round),
+                QUICKNET_DST,
+            );
+        let hashed_message = G1Affine::from(point);
+
+        // A signature is the group's secret applied to the hashed message, and the group key is
+        // the same secret applied to the generator. Pairing both ways round therefore gives the
+        // same value when, and only when, the same secret made both.
+        if pairing(&hashed_message, &group_key) != pairing(&self.signature, &G2Affine::generator())
+        {
+            return Err(EvidenceError::BadSignature(format!(
+                "round {} does not check against the group key of {}",
+                stored.round, chain.name
+            )));
+        }
+
+        let seconds = chain.time_of(stored.round).ok_or_else(|| {
+            EvidenceError::Inconsistent(format!(
+                "round {} is not on this chain's schedule at all",
+                stored.round
+            ))
+        })?;
+        let at = UnixNanos(i128::from(seconds) * NANOS_PER_SEC);
+
+        // A round is an instant and not an interval. It pins a lower edge and asserts nothing
+        // about an upper one, which is what a not-earlier-than entry is for.
+        Ok(Checked::at_instant(
+            SCHEME,
+            chain.name.to_string(),
+            at,
+            None,
+            vec![
+                format!(
+                    "round {} carries a signature from the group key of {}, checked by pairing",
+                    stored.round, chain.name
+                ),
+                format!(
+                    "the message that signature covers is the round number and nothing else, so \
+                     the value could not have been published before round {}",
+                    stored.round
+                ),
+                format!(
+                    "round {} falls at {seconds} on the schedule this chain publishes, which is \
+                     arithmetic on its genesis and period rather than anything signed",
+                    stored.round
+                ),
+            ],
+        ))
+    }
+}
+
+/// Read a stored drand round and hold it to itself, with no chain.
+pub fn inspect(blob: &[u8]) -> Result<Inspected<'_>, EvidenceError> {
+    let stored = unpack_blob(blob)?;
     let signature_bytes: [u8; 48] = stored.signature.try_into().map_err(|_| {
         malformed(format!(
             "a signature of {} bytes, and a compressed point in this group is 48",
@@ -243,61 +327,15 @@ pub fn check(blob: &[u8], chain: &Chain) -> Result<Checked, EvidenceError> {
                 "the signature is not a point on the curve at all".to_string(),
             )
         })?;
-    let group_key = Option::<G2Affine>::from(G2Affine::from_compressed(&chain.public_key))
-        .ok_or_else(|| {
-            EvidenceError::BadSignature(
-                "the chain's group key is not a point on the curve at all".to_string(),
-            )
-        })?;
+    Ok(Inspected { stored, signature })
+}
 
-    let point = <G1Projective as HashToCurve<ExpandMsgXmd<sha2_for_bls::Sha256>>>::hash_to_curve(
-        message_for(stored.round),
-        QUICKNET_DST,
-    );
-    let hashed_message = G1Affine::from(point);
-
-    // A signature is the group's secret applied to the hashed message, and the group key is the
-    // same secret applied to the generator. Pairing both ways round therefore gives the same value
-    // when, and only when, the same secret made both.
-    if pairing(&hashed_message, &group_key) != pairing(&signature, &G2Affine::generator()) {
-        return Err(EvidenceError::BadSignature(format!(
-            "round {} does not check against the group key of {}",
-            stored.round, chain.name
-        )));
-    }
-
-    let seconds = chain.time_of(stored.round).ok_or_else(|| {
-        EvidenceError::Inconsistent(format!(
-            "round {} is not on this chain's schedule at all",
-            stored.round
-        ))
-    })?;
-    let at = UnixNanos(i128::from(seconds) * NANOS_PER_SEC);
-
-    // A round is an instant and not an interval. It pins a lower edge and asserts nothing about an
-    // upper one, which is what a not-earlier-than entry is for.
-    Ok(Checked::at_instant(
-        SCHEME,
-        chain.name.to_string(),
-        at,
-        None,
-        vec![
-            format!(
-                "round {} carries a signature from the group key of {}, checked by pairing",
-                stored.round, chain.name
-            ),
-            format!(
-                "the message that signature covers is the round number and nothing else, so the \
-                 value could not have been published before round {}",
-                stored.round
-            ),
-            format!(
-                "round {} falls at {seconds} on the schedule this chain publishes, which is \
-                 arithmetic on its genesis and period rather than anything signed",
-                stored.round
-            ),
-        ],
-    ))
+/// Check a stored drand round against a chain's group key.
+///
+/// [`inspect`] followed by [`Inspected::under`], and nothing else, so a validator that runs the two
+/// apart runs exactly what the agent runs together.
+pub fn check(blob: &[u8], chain: &Chain) -> Result<Checked, EvidenceError> {
+    inspect(blob)?.under(chain)
 }
 
 fn hex(bytes: &[u8]) -> String {
