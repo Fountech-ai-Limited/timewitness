@@ -47,7 +47,14 @@ pub const CORRIDOR_RADIUS: Nanos = NANOS_PER_SEC;
 pub const WITNESS_AT: Nanos = 1_788_806_208 * NANOS_PER_SEC + NANOS_PER_SEC;
 
 /// Half the width of the interval the receipt claims.
-pub const HALF: Nanos = 50 * NANOS_PER_MILLI;
+///
+/// Two seconds, so the claim runs from the beacon's instant to the end of the witness's second and
+/// covers the whole of what the two outside signatures enclose. That is what a receipt resting on
+/// a sandwich has to claim, from 2026-09-15: the signatures put the moment inside the bracket and
+/// say nothing about where, so a narrower claim rests on the signer. It was fifty milliseconds
+/// until then, which is what the agent's own model reaches, and the verifier granted the sandwich
+/// over it because nothing compared the two.
+pub const HALF: Nanos = 2 * NANOS_PER_SEC;
 
 /// The seed the agent key in these tests is built from.
 pub const SEED: [u8; 32] = [0x11u8; 32];
@@ -135,16 +142,18 @@ pub fn key() -> AgentKey {
 }
 
 /// A receipt carrying all three roles, whose reading sits inside the corridor and whose interval is
-/// a hundred milliseconds wide, which is what an ordinary machine on the public internet manages.
+/// the bracket the two outside signatures enclose, four seconds edge to edge, which is the least a
+/// receipt resting on them may claim.
 #[must_use]
 pub fn receipt() -> Receipt {
+    // The network figure sits inside the intersection term and is not added again.
     let breakdown = BreakdownRecord {
-        intersection_half: 30 * NANOS_PER_MILLI,
-        network_half: 12 * NANOS_PER_MILLI,
-        scheduling: 5 * NANOS_PER_MILLI,
-        oscillator_holdover: 5 * NANOS_PER_MILLI,
-        model_residual: 5 * NANOS_PER_MILLI,
-        safety_margin: 5 * NANOS_PER_MILLI,
+        intersection_half: 1_900 * NANOS_PER_MILLI,
+        network_half: 400 * NANOS_PER_MILLI,
+        scheduling: 50 * NANOS_PER_MILLI,
+        oscillator_holdover: 20 * NANOS_PER_MILLI,
+        model_residual: 20 * NANOS_PER_MILLI,
+        safety_margin: 10 * NANOS_PER_MILLI,
     };
     assert_eq!(breakdown.half_width(), HALF);
 
@@ -183,7 +192,7 @@ pub fn receipt() -> Receipt {
                 })
                 .collect(),
             policy: PolicyRecord {
-                max_bound_width: NANOS_PER_SEC,
+                max_bound_width: 5 * NANOS_PER_SEC,
                 min_sources: 3,
                 min_operators: Some(3),
                 max_holdover: Some(3_600 * NANOS_PER_SEC),
@@ -219,5 +228,36 @@ pub fn receipt_local_only() -> Receipt {
 pub fn signed_local_only() -> Vec<u8> {
     key()
         .sign(&receipt_local_only())
+        .expect("the agent signs its own receipt")
+}
+
+/// The sandwich receipt with the interval the agent's own model reaches, a hundred milliseconds
+/// round the reading, still claiming that its bound rests on the three signatures.
+///
+/// This is the receipt the verifier granted until 2026-09-15. The signatures enclose four seconds
+/// and the claim picks a hundred milliseconds out of them on nothing but the signer's word.
+#[must_use]
+pub fn receipt_narrower_than_its_bracket() -> Receipt {
+    let half = 50 * NANOS_PER_MILLI;
+    let mut receipt = receipt();
+    receipt.claim.earliest = UnixNanos(CORRIDOR_AT - half);
+    receipt.claim.latest = UnixNanos(CORRIDOR_AT + half);
+    receipt.claim.breakdown = BreakdownRecord {
+        intersection_half: 30 * NANOS_PER_MILLI,
+        network_half: 12 * NANOS_PER_MILLI,
+        scheduling: 5 * NANOS_PER_MILLI,
+        oscillator_holdover: 5 * NANOS_PER_MILLI,
+        model_residual: 5 * NANOS_PER_MILLI,
+        safety_margin: 5 * NANOS_PER_MILLI,
+    };
+    assert_eq!(receipt.claim.breakdown.half_width(), half);
+    receipt
+}
+
+/// That receipt, signed.
+#[must_use]
+pub fn signed_narrower_than_its_bracket() -> Vec<u8> {
+    key()
+        .sign(&receipt_narrower_than_its_bracket())
         .expect("the agent signs its own receipt")
 }

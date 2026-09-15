@@ -198,14 +198,18 @@ fn the_reading_cannot_be_moved_by_one_byte() {
 
 #[test]
 fn neither_edge_of_the_bound_can_be_moved_by_one_byte() {
+    // Found by changing the field rather than by searching for its value. Since 2026-09-15 the
+    // sandwich receipt's edges are the bracket's edges, so each value also sits inside the
+    // beacon's or the witness's own entry, and a search would find it twice.
     let signed = common::signed();
-    for (name, at) in [
-        ("the earliest edge", common::CORRIDOR_AT - common::HALF),
-        ("the latest edge", common::CORRIDOR_AT + common::HALF),
-    ] {
-        let encoded = cbor::encode(&timewitness_receipt::Value::Int(at));
-        watched(name, byte_of(&signed, &encoded, encoded.len() - 1));
-    }
+    let earliest = byte_that_carries(&signed, |r| {
+        r.claim.earliest = timewitness_core::UnixNanos(common::CORRIDOR_AT - common::HALF + 1);
+    });
+    watched("the earliest edge", earliest);
+    let latest = byte_that_carries(&signed, |r| {
+        r.claim.latest = timewitness_core::UnixNanos(common::CORRIDOR_AT + common::HALF + 1);
+    });
+    watched("the latest edge", latest);
 }
 
 #[test]

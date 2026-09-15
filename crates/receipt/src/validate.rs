@@ -885,7 +885,7 @@ fn examine_witness(
 /// "not a token", correctly signed by the agent, were accepted with the strongest claim the format
 /// can make.
 ///
-/// What replaced that refusal is a precondition with four parts, and all four have to hold.
+/// What replaced that refusal is a precondition with five parts, and all five have to hold.
 ///
 /// 1. One entry in each of the three roles.
 /// 2. Every one of those three verified by this code against a key chosen in advance. An entry
@@ -894,6 +894,12 @@ fn examine_witness(
 /// 4. The sandwich narrow enough to be about this reading. A genuine beacon from the morning and a
 ///    genuine token from the evening are both real and both signed, and between them they say
 ///    nothing about a stamp taken at noon that a calendar would not.
+/// 5. The interval the receipt claims covers the whole of what the two signatures enclose. They say
+///    the moment was inside the bracket and nothing about where inside it, so a claim narrower than
+///    the bracket, or one hanging over either edge of it, rests on the signer's own model whatever
+///    the receipt calls it. Until 2026-09-15 this was not asked, and the committed receipt with its
+///    basis rewritten was granted a sandwich on a 153.875 ms width inside a 2 s bracket, then told
+///    the reader the width rested on outside signatures.
 fn decide_basis(
     receipt: &Receipt,
     entries: &[EntryReport],
@@ -920,7 +926,9 @@ fn decide_basis(
     // and the figure a reader is shown are one number: the latest checked beacon against the
     // earliest checked witness, rather than whichever of each the receipt happened to list first.
     let bracket = Bracket::of(entries);
-    let (Some(width), true) = (bracket.width(), corridor.is_some()) else {
+    let (Some(not_earlier), Some(not_later), true) =
+        (bracket.not_earlier, bracket.not_later, corridor.is_some())
+    else {
         return refuse_or_report(format!(
             "of the three roles a sandwich is made of, this verifier checked corridor: {}, \
              not-earlier-than: {}, not-later-than: {}. A basis that cannot be checked is not \
@@ -930,6 +938,7 @@ fn decide_basis(
             witness.is_some()
         ));
     };
+    let width = not_later - not_earlier;
 
     if width < 0 {
         return refuse_or_report(format!(
@@ -947,6 +956,24 @@ fn decide_basis(
         ));
     }
 
+    // The claim has to cover the bracket, edge to edge. The signatures put the moment somewhere
+    // inside it and say nothing about where, so any part of the bracket the claim leaves out is a
+    // part the signer ruled out on its own model, and any part of the claim outside the bracket
+    // is one the signatures never spoke to. The width itself is not compared, because a claim as
+    // wide as the bracket and shifted off it would pass a width test and still rest on the signer.
+    let claim = &receipt.claim;
+    let covers = claim.earliest <= not_earlier && claim.latest >= not_later;
+    if claims_a_sandwich && !covers {
+        return Err(ReceiptError::OurClaimAsEvidence(format!(
+            "the two outside signatures enclose {width} ns and the interval this receipt claims \
+             is {} ns wide and does not cover them, so they say the moment was inside those \
+             {width} ns and nothing about which {} ns of them; the width rests on the signer's own \
+             model and this receipt puts it where outside evidence goes",
+            receipt.width(),
+            receipt.width()
+        )));
+    }
+
     // Two different things can be true here and the report has to say which. The receipt may claim a
     // sandwich, in which case the claim is granted. Or it may claim its bound rests on the agent's
     // own model, in which case the sandwich holds up but the receipt is not resting on it, and a
@@ -956,8 +983,8 @@ fn decide_basis(
         return Ok((
             true,
             format!(
-                "all three roles were checked against keys chosen in advance, and the two outside \
-                 signatures enclose {} s",
+                "all three roles were checked against keys chosen in advance, the two outside \
+                 signatures enclose {} s, and the interval this receipt claims covers them",
                 width / NANOS_PER_SEC
             ),
         ));
@@ -967,9 +994,13 @@ fn decide_basis(
         format!(
             "this receipt says its bound rests on the agent's own model, and it is judged on that. \
              All three roles were checked anyway, against keys chosen in advance, and the two \
-             outside signatures enclose {} s, so the moment is pinned from outside even though the \
-             width is not",
-            width / NANOS_PER_SEC
+             outside signatures enclose {} s, so the moment is pinned from outside {}",
+            width / NANOS_PER_SEC,
+            if covers {
+                "and the interval it claims covers them, which it did not rest on"
+            } else {
+                "even though the width is not"
+            }
         ),
     ))
 }

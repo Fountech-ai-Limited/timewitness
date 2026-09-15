@@ -8,10 +8,16 @@
 //! three signatures captured from three unrelated parties within four seconds of each other, and
 //! then takes it apart one way at a time.
 //!
+//! The precondition has five parts and the fifth is the one about the width. Two signatures four
+//! seconds apart say the moment was inside those four seconds and nothing about where, so a receipt
+//! resting on them claims the whole four seconds. The tests at the foot of this file hold that: a
+//! narrower claim, and a claim as wide as the bracket and shifted off it, are both our own model
+//! placed where evidence goes.
+//!
 //! Everything here runs offline. Every signature in it was made by somebody who has never heard of
 //! this product.
 
-use timewitness_core::evidence::drand::Chain;
+use timewitness_core::evidence::drand::{self, Chain};
 use timewitness_core::evidence::rfc3161::Authority;
 use timewitness_core::time::{Nanos, NANOS_PER_MILLI, NANOS_PER_SEC};
 use timewitness_core::{EpsilonBasis, UnixNanos};
@@ -126,7 +132,9 @@ fn witness() -> Evidence {
 }
 
 /// A receipt whose reading sits inside the corridor and whose interval is a hundred milliseconds
-/// wide, which is what an ordinary machine on the public internet actually manages.
+/// wide, which is what an ordinary machine on the public internet actually manages. That is the
+/// agent's own model, so a receipt built here claims a sandwich only in the tests about the fifth
+/// condition, where a hundred milliseconds inside a four second bracket is the thing refused.
 fn receipt(basis: EpsilonBasis, evidence: Vec<Evidence>) -> Receipt {
     let half = 50 * NANOS_PER_MILLI;
     let breakdown = BreakdownRecord {
@@ -189,8 +197,60 @@ fn receipt(basis: EpsilonBasis, evidence: Vec<Evidence>) -> Receipt {
     }
 }
 
+/// The same receipt claiming that its bound rests on the three signatures, with the interval that
+/// claim needs: from the beacon's instant to the end of the witness's second, four seconds edge to
+/// edge.
+///
+/// A sandwich says the moment was somewhere inside what the two outside signatures enclose and
+/// nothing about where, so a receipt resting on one claims the whole of that and no less. The
+/// hundred milliseconds above is what the agent's own model reaches, and a receipt claiming that
+/// width on a sandwich basis is claiming a precision the signatures never gave it.
+fn resting_on(evidence: Vec<Evidence>) -> Receipt {
+    let half = 2 * NANOS_PER_SEC;
+    let mut receipt = receipt(EpsilonBasis::ThirdPartySandwich, evidence);
+    receipt.claim.earliest = UnixNanos(CORRIDOR_AT - half);
+    receipt.claim.latest = UnixNanos(CORRIDOR_AT + half);
+    // The network figure sits inside the intersection term and is not added again.
+    receipt.claim.breakdown = BreakdownRecord {
+        intersection_half: 1_900 * NANOS_PER_MILLI,
+        network_half: 400 * NANOS_PER_MILLI,
+        scheduling: 50 * NANOS_PER_MILLI,
+        oscillator_holdover: 20 * NANOS_PER_MILLI,
+        model_residual: 20 * NANOS_PER_MILLI,
+        safety_margin: 10 * NANOS_PER_MILLI,
+    };
+    assert_eq!(receipt.claim.breakdown.half_width(), half);
+    receipt.claim.policy.max_bound_width = 5 * NANOS_PER_SEC;
+    assert_eq!(receipt.claim.earliest, UnixNanos(BEACON_AT));
+    assert_eq!(receipt.claim.latest, UnixNanos(WITNESS_AT));
+    receipt
+}
+
 fn all_three() -> Vec<Evidence> {
     vec![corridor(), beacon(), witness()]
+}
+
+/// A genuine round of quicknet from 2023, beside the fresh one.
+///
+/// Round 1000000, with the signature the chain published for it. It is real, it is checked, and
+/// it is about nothing this receipt stamps, which is what makes it useful: a bracket is sized on
+/// the freshest checked beacon, so an older one beside it changes nothing about what the claim has
+/// to cover.
+fn old_beacon() -> Evidence {
+    let chain = Chain::quicknet();
+    let round = 1_000_000;
+    let signature = unhex(
+        "83ad29e4c409f9470fc2ef02f90214df49e02b441a1a241a82d622d9f608ef98fd8b11a029f1bee9d9e83b45088abe72",
+    );
+    Evidence {
+        role: Role::NotEarlierThan,
+        scheme: Scheme::new("drand"),
+        at: UnixNanos(i128::from(chain.time_of(round).expect("a past round")) * NANOS_PER_SEC),
+        radius: None,
+        blob: drand::pack_blob(&chain.hash, round, &signature),
+        nonce: None,
+        detail: Some("drand quicknet round 1000000".to_string()),
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -199,11 +259,16 @@ fn all_three() -> Vec<Evidence> {
 
 #[test]
 fn a_bound_resting_on_three_real_signatures_is_granted() {
-    let receipt = receipt(EpsilonBasis::ThirdPartySandwich, all_three());
+    let receipt = resting_on(all_three());
     let verified = validate_with(&receipt, &anchors())
         .expect("a receipt whose evidence was all captured and all checks out");
 
     assert!(verified.basis_granted, "{}", verified.basis_reason);
+    assert!(
+        verified.basis_reason.contains("covers them"),
+        "{}",
+        verified.basis_reason
+    );
     assert_eq!(verified.checked(), 3, "all three roles verified");
     assert_eq!(verified.anchors_held, 3);
 
@@ -240,14 +305,14 @@ fn a_verifier_holding_nothing_grants_nothing() {
     // The same receipt, read by somebody who has decided to trust no keys at all. Every arithmetic
     // check still runs and the strongest claim is refused, because there was nothing to check it
     // against. This is the state the product shipped in before the evidence clients existed.
-    let receipt = receipt(EpsilonBasis::ThirdPartySandwich, all_three());
+    let receipt = resting_on(all_three());
     let err = validate(&receipt).expect_err("a sandwich granted with no anchors at all");
     assert!(matches!(err, ReceiptError::OurClaimAsEvidence(_)), "{err}");
 }
 
 #[test]
 fn a_verifier_holding_two_of_the_three_grants_nothing() {
-    let receipt = receipt(EpsilonBasis::ThirdPartySandwich, all_three());
+    let receipt = resting_on(all_three());
     let mut partial = anchors();
     partial.timestamp_authorities.clear();
     let err = validate_with(&receipt, &partial)
@@ -272,7 +337,7 @@ fn a_corridor_whose_stored_response_does_not_verify_refuses_the_whole_receipt() 
     let mut evidence = all_three();
     let last = evidence[0].blob.len() - 1;
     evidence[0].blob[last] ^= 0x01;
-    let receipt = receipt(EpsilonBasis::ThirdPartySandwich, evidence);
+    let receipt = resting_on(evidence);
     let err = validate_with(&receipt, &anchors()).expect_err("a spoiled corridor response");
     assert!(matches!(err, ReceiptError::Inconsistent(_)), "{err}");
     assert!(err.to_string().contains("roughtime"), "{err}");
@@ -283,7 +348,7 @@ fn a_beacon_round_that_does_not_verify_refuses_the_whole_receipt() {
     let mut evidence = all_three();
     let last = evidence[1].blob.len() - 1;
     evidence[1].blob[last] ^= 0x01;
-    let receipt = receipt(EpsilonBasis::ThirdPartySandwich, evidence);
+    let receipt = resting_on(evidence);
     let err = validate_with(&receipt, &anchors()).expect_err("a spoiled drand round");
     assert!(err.to_string().contains("drand"), "{err}");
 }
@@ -293,7 +358,7 @@ fn a_token_that_does_not_verify_refuses_the_whole_receipt() {
     let mut evidence = all_three();
     let last = evidence[2].blob.len() - 1;
     evidence[2].blob[last] ^= 0x01;
-    let receipt = receipt(EpsilonBasis::ThirdPartySandwich, evidence);
+    let receipt = resting_on(evidence);
     let err = validate_with(&receipt, &anchors()).expect_err("a spoiled token");
     assert!(err.to_string().contains("rfc3161"), "{err}");
 }
@@ -306,7 +371,7 @@ fn a_receipt_that_prints_a_different_moment_beside_a_real_signature_is_refused()
     for (index, name) in [(0usize, "roughtime"), (1, "drand"), (2, "rfc3161")] {
         let mut evidence = all_three();
         evidence[index].at = UnixNanos(evidence[index].at.as_nanos() + 30 * NANOS_PER_MILLI);
-        let receipt = receipt(EpsilonBasis::ThirdPartySandwich, evidence);
+        let receipt = resting_on(evidence);
         let err = validate_with(&receipt, &anchors())
             .unwrap_err_or_else_message(&format!("{name} moved by 30 ms was accepted"));
         assert!(err.contains(name), "{err}");
@@ -319,7 +384,7 @@ fn a_corridor_whose_radius_has_been_widened_is_refused() {
     // itself says what the radius is, so this is checkable rather than a matter of opinion.
     let mut evidence = all_three();
     evidence[0].radius = Some(CORRIDOR_RADIUS * 60);
-    let receipt = receipt(EpsilonBasis::ThirdPartySandwich, evidence);
+    let receipt = resting_on(evidence);
     let err = validate_with(&receipt, &anchors()).expect_err("a widened corridor");
     assert!(err.to_string().contains("radius"), "{err}");
 }
@@ -329,7 +394,7 @@ fn a_corridor_bound_to_somebody_elses_subject_is_refused() {
     // The nonce in this response was derived from the subject of the capture. A receipt stamping
     // something else, and offering that response as its corridor, is offering a genuine signature
     // about a different document.
-    let mut receipt = receipt(EpsilonBasis::ThirdPartySandwich, all_three());
+    let mut receipt = resting_on(all_three());
     receipt.payload.hash = vec![0x5b; 32];
     let err = validate_with(&receipt, &anchors()).expect_err("a corridor about another subject");
     assert!(err.to_string().contains("roughtime"), "{err}");
@@ -368,7 +433,7 @@ fn an_entry_may_not_print_an_interval_wider_than_its_signature_supports() {
     for (index, name) in [(1usize, "drand"), (2, "rfc3161")] {
         let mut evidence = all_three();
         evidence[index].radius = Some(365 * 24 * 3_600 * NANOS_PER_SEC);
-        let receipt = receipt(EpsilonBasis::ThirdPartySandwich, evidence);
+        let receipt = resting_on(evidence);
         let err = validate_with(&receipt, &anchors()).unwrap_err_or_else_message(&format!(
             "a {name} entry printing a year of radius beside a real signature was accepted"
         ));
@@ -400,7 +465,7 @@ fn an_entry_may_not_print_a_nonce_the_signature_was_not_made_over() {
             .expect("both of these print one")
             .len();
         evidence[index].nonce = Some(vec![0u8; length]);
-        let receipt = receipt(EpsilonBasis::ThirdPartySandwich, evidence);
+        let receipt = resting_on(evidence);
         let err = validate_with(&receipt, &anchors()).unwrap_err_or_else_message(&format!(
             "a {name} entry printing a nonce nothing signed was accepted"
         ));
@@ -411,7 +476,7 @@ fn an_entry_may_not_print_a_nonce_the_signature_was_not_made_over() {
     // And a beacon, which signs over no nonce at all, so any nonce printed beside one is decoration.
     let mut evidence = all_three();
     evidence[1].nonce = Some(vec![9u8; 32]);
-    let planted = receipt(EpsilonBasis::ThirdPartySandwich, evidence);
+    let planted = resting_on(evidence);
     let err = validate_with(&planted, &anchors())
         .unwrap_err_or_else_message("a drand entry printing a nonce was accepted");
     assert!(err.contains("drand"), "{err}");
@@ -421,7 +486,7 @@ fn an_entry_may_not_print_a_nonce_the_signature_was_not_made_over() {
     // the evidence is allowed; louder is what the rule refuses.
     let mut evidence = all_three();
     evidence[2].nonce = None;
-    let quieter = receipt(EpsilonBasis::ThirdPartySandwich, evidence);
+    let quieter = resting_on(evidence);
     validate_with(&quieter, &anchors()).expect("an entry printing no nonce is not a fault");
 }
 
@@ -552,7 +617,7 @@ fn an_attestation_by_a_party_the_reader_holds_no_key_for_is_not_checked_and_not_
         // The same receipt claiming a sandwich is still refused, because a basis that cannot be
         // checked is not granted. What changes is the reason: the reader is told which role they
         // could not check, and not that the receipt contradicts itself.
-        let claiming = receipt(EpsilonBasis::ThirdPartySandwich, all_three());
+        let claiming = resting_on(all_three());
         let err = validate_with(&claiming, &anchors)
             .unwrap_err_or_else_message(&format!("{name}: a sandwich nobody checked was granted"));
         assert!(
@@ -907,7 +972,7 @@ fn every_signer_unheld_at_once_is_not_checked_when_intact_and_refused_when_not()
         assert_eq!(verified.checked(), 0, "{setting}");
         assert!(verified.entries.iter().all(|e| !e.outcome.is_checked()));
 
-        let claiming = receipt(EpsilonBasis::ThirdPartySandwich, renamed());
+        let claiming = resting_on(renamed());
         let err = validate_with(&claiming, anchors).unwrap_err_or_else_message(&format!(
             "a sandwich nobody checked was granted {setting}"
         ));
@@ -937,6 +1002,140 @@ fn every_signer_unheld_at_once_is_not_checked_when_intact_and_refused_when_not()
             assert!(err.contains("needs no key to see"), "{setting}: {err}");
         }
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The fifth condition: the claim covers the bracket.
+// ---------------------------------------------------------------------------------------------
+
+/// A width inside the bracket, claimed as resting on it, is refused.
+///
+/// Added 2026-09-15. Until then the four conditions above were the whole test and none of them
+/// read the interval the receipt claimed. The committed receipt with its basis rewritten and
+/// re-signed under a fresh key was granted a sandwich on 153.875 ms inside a 2 s bracket, and the
+/// verifier told the reader on its second line that the width rested on outside signatures. It
+/// rested on the signer. Watched granted on `2e683e6` before the condition went in, on the command
+/// line, the page and the Action's summary alike.
+#[test]
+fn a_width_narrower_than_the_bracket_claimed_as_resting_on_it_is_refused() {
+    let receipt = receipt(EpsilonBasis::ThirdPartySandwich, all_three());
+    let err = validate_with(&receipt, &anchors())
+        .unwrap_err_or_else_message("a 100 ms width inside a 4 s bracket was granted a sandwich");
+    assert!(err.contains("does not cover"), "{err}");
+    assert!(err.contains("rests on the signer's own model"), "{err}");
+    assert!(
+        err.contains("where outside evidence goes"),
+        "the refusal names the rule it is applying: {err}"
+    );
+}
+
+/// Edge to edge is enough, and one nanosecond inside either edge is not.
+///
+/// The bracket is the latest checked beacon to the earliest checked witness, and the claim has to
+/// reach both. A claim reaching one and stopping a nanosecond short of the other has ruled that
+/// nanosecond out on its own model, which is the same thing as ruling out the other 3.9 seconds.
+#[test]
+fn a_claim_stopping_a_nanosecond_inside_either_edge_of_the_bracket_is_refused() {
+    let exact = resting_on(all_three());
+    validate_with(&exact, &anchors()).expect("a claim that is the bracket, edge to edge");
+
+    let mut short_at_the_start = resting_on(all_three());
+    short_at_the_start.claim.earliest = UnixNanos(BEACON_AT + 1);
+    let err = validate_with(&short_at_the_start, &anchors())
+        .unwrap_err_or_else_message("a claim a nanosecond inside the beacon's edge was granted");
+    assert!(err.contains("does not cover"), "{err}");
+
+    let mut short_at_the_end = resting_on(all_three());
+    short_at_the_end.claim.latest = UnixNanos(WITNESS_AT - 1);
+    let err = validate_with(&short_at_the_end, &anchors())
+        .unwrap_err_or_else_message("a claim a nanosecond inside the witness's edge was granted");
+    assert!(err.contains("does not cover"), "{err}");
+}
+
+/// A claim as wide as the bracket and shifted off it is refused, which is why the condition is on
+/// the edges and not on the width.
+///
+/// Half a second later at both ends, the claim is still four seconds wide, still overlaps every
+/// signature, and still passes every arithmetic check the receipt is put to on its own. What it
+/// does not do is cover the bracket: half a second at its start is outside what the signatures
+/// enclose, and half a second at the bracket's start is outside what the claim allows.
+#[test]
+fn a_claim_as_wide_as_the_bracket_but_shifted_off_it_is_refused() {
+    let mut shifted = resting_on(all_three());
+    let by = 500 * NANOS_PER_MILLI;
+    shifted.claim.earliest = UnixNanos(shifted.claim.earliest.as_nanos() + by);
+    shifted.claim.latest = UnixNanos(shifted.claim.latest.as_nanos() + by);
+    shifted.utc_estimate = UnixNanos(shifted.utc_estimate.as_nanos() + by);
+    assert_eq!(shifted.width(), exact_width(), "the width has not changed");
+    let err = validate_with(&shifted, &anchors()).unwrap_err_or_else_message(
+        "a claim as wide as the bracket and shifted off it was granted",
+    );
+    assert!(err.contains("does not cover"), "{err}");
+}
+
+fn exact_width() -> Nanos {
+    resting_on(all_three()).width()
+}
+
+/// A second genuine beacon, older, beside the fresh one: the bracket the claim has to cover is
+/// sized on the fresh one and the old one widens nothing.
+///
+/// This is a case first built on 2026-09-15: a 2023 round of quicknet beside the round the stamp
+/// fetched, on the committed receipt, claiming a sandwich over 153.875 ms. The bracket is sized on
+/// the tightest checked pair, so the old round does not loosen it, and the narrow claim is refused
+/// on the same condition as without it. Covering the bracket the fresh beacon sets is still
+/// enough, with all four attestations checked.
+#[test]
+fn an_older_genuine_beacon_beside_the_fresh_one_widens_nothing_the_claim_must_cover() {
+    let with_old = || {
+        let mut evidence = all_three();
+        evidence.insert(1, old_beacon());
+        evidence
+    };
+
+    let narrow = receipt(EpsilonBasis::ThirdPartySandwich, with_old());
+    let err = validate_with(&narrow, &anchors())
+        .unwrap_err_or_else_message("a narrow claim was granted a sandwich beside an old round");
+    assert!(err.contains("does not cover"), "{err}");
+
+    let covering = resting_on(with_old());
+    let verified =
+        validate_with(&covering, &anchors()).expect("a covering claim beside an old round");
+    assert!(verified.basis_granted, "{}", verified.basis_reason);
+    assert_eq!(
+        verified.checked(),
+        4,
+        "the old round is real and is checked"
+    );
+}
+
+/// The honest reading of the same interval: a receipt whose claim covers the bracket and rests on
+/// its own model is not granted a sandwich, and the report says it could have rested on the
+/// signatures and did not.
+#[test]
+fn a_covering_claim_resting_on_its_own_model_is_told_what_it_did_not_rest_on() {
+    let mut honest = resting_on(all_three());
+    honest.claim.basis = EpsilonBasis::LocalModelOnly;
+    let verified = validate_with(&honest, &anchors()).expect("an honestly labelled receipt");
+    assert!(!verified.basis_granted);
+    assert!(
+        verified
+            .basis_reason
+            .contains("covers them, which it did not rest on"),
+        "{}",
+        verified.basis_reason
+    );
+
+    let narrow = receipt(EpsilonBasis::LocalModelOnly, all_three());
+    let verified = validate_with(&narrow, &anchors()).expect("an honestly labelled receipt");
+    assert!(!verified.basis_granted);
+    assert!(
+        verified
+            .basis_reason
+            .contains("even though the width is not"),
+        "{}",
+        verified.basis_reason
+    );
 }
 
 /// The token with a reply that is not a timestamp response at all, behind an intact request.

@@ -233,8 +233,8 @@ changed on 2026-09-07 when the evidence clients arrived. Until then no reader of
 verify a signed response of any kind, so the basis was refused outright: three entries carrying the
 right words were being read as proof of cryptography, and a basis nothing can test is not granted.
 
-It is now a precondition with four parts, and all four have to hold before a receipt may say its
-bound rests on outside signatures.
+It is now a precondition with five parts, and all five have to hold before a receipt may say its
+bound rests on outside signatures. The fifth went in on 2026-09-15.
 
 1. One entry in each of the three roles.
 2. Every one of those three verified, by the reader, against a key it chose in advance. An entry
@@ -246,6 +246,17 @@ bound rests on outside signatures.
    stamps, so a real sandwich is seconds wide. A genuine beacon from the morning and a genuine token
    from the evening are both real and both signed, and between them they say nothing about a stamp
    taken at noon that a calendar would not.
+5. The interval the receipt claims covers the whole of what the two signatures enclose: its
+   earliest edge at or before the not-earlier-than value, its latest edge at or after the
+   not-later-than edge. The signatures say the moment was inside the bracket and nothing about
+   where inside it, so a claim narrower than the bracket has picked its width on the signer's own
+   model, and a claim as wide as the bracket and shifted off it has done the same. Either one is our
+   own claim placed where outside evidence goes, and it is refused the way a sandwich over an
+   unchecked leg is. A receipt resting on a sandwich is therefore never narrower than its bracket,
+   which on the receipt committed in this repository would be 2 s, and the line the verifier prints
+   under its verdict for a granted sandwich names a width no narrower than the bracket beside it.
+   Until 2026-09-15 this was not asked, and that receipt with its basis rewritten was granted a
+   sandwich on a 153.875 ms width inside 2 s.
 
 An entry that has a matching key and fails against it refuses the whole receipt, rather than
 downgrading it. A receipt carrying a signature that does not check out is not a receipt with a

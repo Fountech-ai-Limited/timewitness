@@ -89,6 +89,49 @@ fn a_receipt_claiming_a_sandwich_to_a_reader_who_cannot_check_one_is_refused() {
 }
 
 #[test]
+fn a_sandwich_claimed_over_a_width_narrower_than_its_bracket_is_refused_and_says_why() {
+    // The receipt the verifier granted until 2026-09-15: three genuine signatures enclosing four
+    // seconds, and a claim of a hundred milliseconds inside them that says it rests on the three.
+    // The line under the verdict then read "rests on outside signatures" over a width no outside
+    // signature supported. Watched granted on `2e683e6` first.
+    let assessment = verify(
+        &common::signed_narrower_than_its_bracket(),
+        Subject::Digest(&common::SUBJECT),
+        &anchor_file::published(),
+        &Floor::default(),
+    );
+    assert!(
+        !assessment.accepted(),
+        "a 100 ms width inside a 4 s bracket was granted a sandwich"
+    );
+    let refusal = assessment.refusal().expect("refused");
+    assert_eq!(refusal.question, "is every claim in the right place");
+    assert!(
+        refusal.state.detail().contains("does not cover"),
+        "{}",
+        refusal.state.detail()
+    );
+    assert!(
+        assessment.bracket().is_none(),
+        "a refused receipt has no line under its verdict"
+    );
+
+    // And the receipt that covers its bracket is granted, with the line under the verdict naming a
+    // width no narrower than the bracket, because from now on it cannot be.
+    let assessment = verify(
+        &common::signed(),
+        Subject::Digest(&common::SUBJECT),
+        &anchor_file::published(),
+        &Floor::default(),
+    );
+    assert!(assessment.accepted(), "refused: {:?}", assessment.refusal());
+    assert_eq!(
+        assessment.bracket().as_deref(),
+        Some("Its 4.000 s width rests on outside signatures, and the checked ones bracket the moment to 4 s.")
+    );
+}
+
+#[test]
 fn a_stranger_holding_their_own_list_gets_the_same_answer_on_the_key_they_hold() {
     let text = "\
 roughtime roughtime.se 4b70337d92790a349d909db564919bc6a7583ff4a813c7d7298d3e6a272c7a12

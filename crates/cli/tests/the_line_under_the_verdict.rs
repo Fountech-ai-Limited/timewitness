@@ -121,6 +121,97 @@ fn a_reader_holding_nothing_is_told_nothing_outside_brackets_the_moment() {
     );
 }
 
+/// The committed receipt with its basis rewritten to a sandwich and re-signed under a key of this
+/// test's own, which is what a stranger with no key log takes as the agent.
+///
+/// With `widen` false it is the deep-test case `s0` of 2026-09-15: 153.875 ms claimed as resting
+/// on outside signatures that enclose 2 s. With it true the claim is widened to the bracket, edge
+/// to edge, and the parts of the width moved to match, which is the least a receipt resting on a
+/// sandwich may claim.
+fn claiming_a_sandwich(widen: bool) -> PathBuf {
+    use timewitness_core::EpsilonBasis;
+    use timewitness_receipt::schema::{BreakdownRecord, Role};
+    use timewitness_receipt::{open, AgentKey};
+
+    let bytes = std::fs::read(real()).expect("the committed receipt");
+    let mut receipt = open(&bytes).expect("the committed receipt opens");
+    receipt.claim.basis = EpsilonBasis::ThirdPartySandwich;
+    if widen {
+        let edge = |role: Role| {
+            receipt
+                .evidence
+                .iter()
+                .find(|e| e.role == role)
+                .expect("the committed receipt carries every role")
+                .at
+        };
+        let earliest = edge(Role::NotEarlierThan);
+        let latest = edge(Role::NotLaterThan);
+        receipt.claim.earliest = earliest;
+        receipt.claim.latest = latest;
+        // The parts have to add to the width, to within the two nanoseconds the format allows.
+        let half = ((latest - earliest) + 1) / 2;
+        receipt.claim.breakdown = BreakdownRecord {
+            intersection_half: half,
+            network_half: 0,
+            scheduling: 0,
+            oscillator_holdover: 0,
+            model_residual: 0,
+            safety_margin: 0,
+        };
+        assert!(
+            receipt.utc_estimate >= earliest && receipt.utc_estimate <= latest,
+            "the reading sits inside the bracket, or the evidence would have been refused"
+        );
+    }
+    let key = AgentKey::from_seed(&[0x42u8; 32]);
+    receipt.agent_public_key = key.public_key_bytes();
+    let signed = key.sign(&receipt).expect("a receipt of any shape signs");
+    let path = std::env::temp_dir().join(format!(
+        "timewitness-sandwich-{}-{}.cbor",
+        if widen { "covering" } else { "narrow" },
+        std::process::id()
+    ));
+    std::fs::write(&path, signed).expect("the receipt is written out");
+    path
+}
+
+/// A sandwich claimed over a width narrower than its bracket is refused on the command line, and
+/// one covering its bracket is granted with the width and the bracket in the same line.
+///
+/// Added 2026-09-15. On `2e683e6` the narrow one exited 0 and its second line read "Its
+/// 153.875 ms width rests on outside signatures, and the checked ones bracket the moment to 2 s.",
+/// which is our own width presented as third-party evidence by the verifier itself, on the command
+/// line, the page and the Action's summary alike. The summary quotes these two lines, so holding
+/// them here holds it.
+#[test]
+fn a_sandwich_narrower_than_its_bracket_is_refused_and_one_covering_it_is_granted() {
+    let narrow = claiming_a_sandwich(false);
+    let (code, first, second) = first_two(&narrow, &[]);
+    assert_eq!(code, 1, "{first}\n{second}");
+    assert_eq!(first, "REFUSED.");
+    assert!(
+        second.contains("is every claim in the right place"),
+        "{second}"
+    );
+    assert!(!second.contains("rests on outside signatures"), "{second}");
+    let _ = std::fs::remove_file(&narrow);
+
+    let covering = claiming_a_sandwich(true);
+    let (code, first, second) = first_two(&covering, &[]);
+    assert_eq!(code, 0, "{first}\n{second}");
+    assert!(
+        first.contains("all 3 of its attestations were checked"),
+        "{first}"
+    );
+    assert_eq!(
+        second,
+        "Its 2.000 s width rests on outside signatures, and the checked ones bracket the moment \
+         to 2 s."
+    );
+    let _ = std::fs::remove_file(&covering);
+}
+
 #[test]
 fn a_refused_receipt_has_no_bracket_line_and_keeps_its_refusal_under_the_verdict() {
     let mut bytes = std::fs::read(real()).expect("the committed receipt");
