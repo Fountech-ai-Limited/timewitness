@@ -38,7 +38,8 @@ pub const CLAIM_KIND: &str = "agent-bound";
 /// Three roles, and they do different jobs. Nothing in this format lets one stand in for another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Role {
-    /// An authenticated corridor of UTC, which is what gives the bound its outside support.
+    /// An authenticated corridor of UTC. It pins the moment from outside and never narrows the
+    /// bound, which is the signer's own claim whatever the corridor says.
     AuthenticatedUtcCorridor,
     /// Proof the receipt cannot have been made before some public moment.
     NotEarlierThan,

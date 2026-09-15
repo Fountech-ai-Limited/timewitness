@@ -239,7 +239,11 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
             "  The reading is {} ns since the Unix epoch, at nanosecond resolution because it is a\n",
             receipt.utc_estimate.as_nanos()
         ));
-        out.push_str("  local counter read with no network in it.\n");
+        out.push_str(
+            "  local counter read. Through the resident agent no network call is in the read; \
+             through the\n  one-shot command the polling that produced it is part of the same few \
+             seconds.\n",
+        );
         out.push_str(&format!(
             "  UTC was somewhere in an interval {} wide, from {} ns to {} ns. That width is the\n",
             width_in_words(receipt.width()),
