@@ -36,6 +36,7 @@ use timewitness_core::keylog::{check_consistency, consistency_proof, KeyEntry, S
 use timewitness_core::time::{Nanos, NANOS_PER_MICRO, NANOS_PER_MILLI, NANOS_PER_SEC};
 use timewitness_receipt::anchors::TrustAnchors;
 use timewitness_receipt::report::Verified;
+use timewitness_receipt::schema::Role;
 use timewitness_receipt::{chain_link, open_with, sha256_payload, Receipt, ReceiptError};
 
 pub use floor::Floor;
@@ -233,6 +234,84 @@ impl Assessment {
                  attestations were not checked."
             ),
         }
+    }
+
+    /// The line under the verdict: how wide the checked outside evidence brackets the moment, and
+    /// whose the width is.
+    ///
+    /// Added 2026-09-15. The verdict line counts the attestations that were checked, and a reader
+    /// who stops there takes the width beside it for something the attestations vouched for. They
+    /// vouch for less. On the receipt committed in this repository they bracket the moment to 2 s
+    /// round a width of 153.875 ms, and a receipt backdated three years on genuine evidence passed
+    /// every check with the same first line and a bracket of 2.95 years that nothing printed. So the
+    /// bracket goes directly under the verdict on every route that prints one, and on a receipt
+    /// resting on its own model the width is named as the signer's claim in the same breath.
+    ///
+    /// None where the receipt was refused, because a refusal's second line is the step that
+    /// refused it.
+    #[must_use]
+    pub fn bracket(&self) -> Option<String> {
+        if !self.accepted() {
+            return None;
+        }
+        let (Some(receipt), Some(evidence)) = (&self.receipt, &self.evidence) else {
+            return None;
+        };
+        let width = width_in_words(receipt.width());
+        let bracket = evidence.bracket();
+
+        if evidence.basis_granted {
+            return Some(match bracket.width() {
+                Some(span) => format!(
+                    "Its {width} width rests on outside signatures, and the checked ones bracket \
+                     the moment to {}.",
+                    span_in_words(span)
+                ),
+                None => format!("Its {width} width rests on outside signatures."),
+            });
+        }
+
+        let ours = format!("The {width} width is the signer's own claim.");
+        let corridors: Vec<bool> = evidence
+            .entries
+            .iter()
+            .filter(|e| e.role == Role::AuthenticatedUtcCorridor)
+            .map(|e| e.outcome.is_checked())
+            .collect();
+        let corridor = if corridors.is_empty() {
+            " It carries no Roughtime corridor."
+        } else if !corridors.iter().any(|checked| *checked) {
+            " Its Roughtime corridor was not checked."
+        } else {
+            ""
+        };
+
+        let first = if evidence.entries.is_empty() {
+            "It carries no outside signature, so nothing outside brackets the moment.".to_string()
+        } else {
+            match (bracket.not_earlier, bracket.not_later, bracket.width()) {
+                (_, _, Some(span)) if span < 0 => format!(
+                    "The checked outside signatures contradict each other: the latest \
+                     not-earlier-than is {} after the earliest not-later-than, so they bracket \
+                     nothing.",
+                    span_in_words(-span)
+                ),
+                (_, _, Some(span)) => format!(
+                    "The checked outside signatures bracket the moment to {}.",
+                    span_in_words(span)
+                ),
+                (Some(_), None, None) => "Only a not-earlier-than signature was checked, so \
+                                          nothing outside bounds the moment from above."
+                    .to_string(),
+                (None, Some(_), None) => "Only a not-later-than signature was checked, so \
+                                          nothing outside bounds the moment from below."
+                    .to_string(),
+                _ => "No outside signature that bounds the moment was checked, so nothing \
+                      outside brackets it."
+                    .to_string(),
+            }
+        };
+        Some(format!("{first} {ours}{corridor}"))
     }
 
     /// How many checks were made against material chosen in advance.
@@ -923,6 +1002,37 @@ fn short_hex(bytes: &[u8]) -> String {
     } else {
         shown
     }
+}
+
+/// How far apart two outside signatures are, in words a person holds.
+///
+/// Whole seconds where the span is whole seconds, which is what a beacon's schedule and a token's
+/// stated second give, and the figure a reader can check against the evidence lines below it. Past a
+/// day the seconds stay and a rougher unit follows, because 93175915 s means nothing to anybody and
+/// "about 2.95 years" is the whole point of printing it.
+#[must_use]
+pub fn span_in_words(ns: Nanos) -> String {
+    if ns < NANOS_PER_SEC {
+        return width_in_words(ns);
+    }
+    let seconds = if ns % NANOS_PER_SEC == 0 {
+        format!("{} s", ns / NANOS_PER_SEC)
+    } else {
+        format!("{:.3} s", ns as f64 / NANOS_PER_SEC as f64)
+    };
+    let secs = ns as f64 / NANOS_PER_SEC as f64;
+    let rough = if secs >= 365.25 * 86_400.0 {
+        format!(", about {:.2} years", secs / (365.25 * 86_400.0))
+    } else if secs >= 86_400.0 {
+        format!(", about {:.1} days", secs / 86_400.0)
+    } else if secs >= 3_600.0 {
+        format!(", about {:.1} hours", secs / 3_600.0)
+    } else if secs >= 120.0 {
+        format!(", about {:.1} minutes", secs / 60.0)
+    } else {
+        String::new()
+    };
+    format!("{seconds}{rough}")
 }
 
 /// Nanoseconds rendered as a figure a person can read, in the unit that fits the size of it.

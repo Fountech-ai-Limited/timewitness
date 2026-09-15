@@ -23,7 +23,7 @@
 
 use crate::anchors::{RoughtimeServerKey, TrustAnchors};
 use crate::error::ReceiptError;
-use crate::report::{EntryReport, Outcome, Verified};
+use crate::report::{Bracket, EntryReport, Outcome, Verified};
 use crate::schema::{AgentClaim, Evidence, Payload, Receipt, Role, FORMAT_VERSION};
 use crate::value::Value;
 use timewitness_core::evidence::{drand, rfc3161, roughtime, Checked};
@@ -916,7 +916,11 @@ fn decide_basis(
     let beacon = find(Role::NotEarlierThan);
     let witness = find(Role::NotLaterThan);
 
-    let (Some(beacon), Some(witness), true) = (beacon, witness, corridor.is_some()) else {
+    // The same bracket the verifier prints under its verdict, so the figure a sandwich is judged on
+    // and the figure a reader is shown are one number: the latest checked beacon against the
+    // earliest checked witness, rather than whichever of each the receipt happened to list first.
+    let bracket = Bracket::of(entries);
+    let (Some(width), true) = (bracket.width(), corridor.is_some()) else {
         return refuse_or_report(format!(
             "of the three roles a sandwich is made of, this verifier checked corridor: {}, \
              not-earlier-than: {}, not-later-than: {}. A basis that cannot be checked is not \
@@ -927,13 +931,6 @@ fn decide_basis(
         ));
     };
 
-    let (Outcome::Checked { earliest, .. }, Outcome::Checked { latest, .. }) =
-        (&beacon.outcome, &witness.outcome)
-    else {
-        unreachable!("both were found by is_checked");
-    };
-
-    let width = latest.as_nanos() - earliest.as_nanos();
     if width < 0 {
         return refuse_or_report(format!(
             "the not-later-than attestation is dated {} ns before the not-earlier-than value, so \

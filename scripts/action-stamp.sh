@@ -64,6 +64,12 @@ subject_digest=$(sed -n 's/^payload_hash=//p' "$report")
 checked=$(sed -n 's/^attestations_checked=//p' "$report")
 carried=$(sed -n 's/^attestations_carried=//p' "$report")
 
+# The verifier's own first two lines, quoted rather than composed here: the verdict, and under it how
+# wide the checked outside evidence brackets the moment and whose the width is. A summary writing its
+# own version of either is how it would come to say something the verifier does not.
+said="$("$binary" verify "$output" --subject "$subject" --quiet)"
+said="$(printf '%s\n' "$said" | sed -n '1,2p')"
+
 receipt_base64=$(base64 -w 0 < "$output" 2>/dev/null || base64 < "$output" | tr -d '\n')
 
 # 1. The outputs, for the workflow to use.
@@ -107,6 +113,10 @@ summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
     echo
     echo "UTC was somewhere in an interval **$width_words** wide."
     echo "That width is the claim. It is not an accuracy and there is no tighter number in here."
+    echo
+    echo "What the verifier says about it, word for word:"
+    echo
+    printf '%s\n' "$said" | sed 's/^/> /'
     echo
     echo "| | |"
     echo "|---|---|"

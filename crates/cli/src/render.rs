@@ -203,6 +203,13 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
 
     out.push_str(&a.verdict());
     out.push('\n');
+    // Directly under the verdict, and under `--quiet` too, because this is the line that stops the
+    // one above being read as outside parties vouching for the width. One line, unwrapped like the
+    // verdict, so a script taking the first two lines takes both whole.
+    if let Some(bracket) = a.bracket() {
+        out.push_str(&bracket);
+        out.push('\n');
+    }
     if let Some(step) = a.refusal() {
         out.push_str(&format!("  {}\n  {}\n", step.question, step.state.detail()));
     }
@@ -288,9 +295,10 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
     if let Some(evidence) = &a.evidence {
         out.push_str("\nThe evidence, one role at a time\n");
         out.push_str(
-            "  Three roles and none of them does another's job. A corridor makes the bound\n\
-             \x20 checkable by a stranger and does not tighten it. A beacon says not earlier. A\n\
-             \x20 witness says not later. The agent's own bound is a claim and is not on this list.\n",
+            "  Three roles and none of them does another's job. A corridor puts a signed interval\n\
+             \x20 round the moment that a stranger can check, and does not tighten the bound. A\n\
+             \x20 beacon says not earlier. A witness says not later. The agent's own bound is a\n\
+             \x20 claim and is not on this list.\n",
         );
         for reported in evidence.lines() {
             out.push_str(&format!("  {reported}\n"));
@@ -495,6 +503,16 @@ pub fn fields(a: &Assessment) -> String {
         ));
     }
     if let Some(evidence) = &a.evidence {
+        // The span the checked outside evidence brackets the moment to, or `none` where nothing
+        // checked bounds it on both sides. A whole number or one word, like everything here.
+        out.push_str(&format!(
+            "outside_bracket_ns={}
+",
+            evidence
+                .bracket()
+                .width()
+                .map_or_else(|| "none".to_string(), |span| span.to_string())
+        ));
         out.push_str(&format!(
             "attestations_carried={}
 ",

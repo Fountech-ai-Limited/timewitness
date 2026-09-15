@@ -79,6 +79,23 @@ Neither needs an account, a key from us, or a route to anything of ours.
 Then every evidence entry is checked against the trust material the reader holds, and the report says
 which entries were checked, against whose key, and what each check established, line by line.
 
+## The first two lines
+
+The verdict comes first. It says whether anything refused the receipt and how many of its
+attestations were checked. The line under it says how wide the checked outside evidence brackets the
+moment, which is the latest checked not-earlier-than against the earliest checked not-later-than. On a
+receipt resting on its agent's own model it names the width as the signer's own claim, and it says so
+where the receipt carries no Roughtime corridor or carries one nobody checked.
+
+On the receipt committed at `crates/verify/tests/data/a-real-stamp/` that line is a bracket of 2 s
+round a width of 153.875 ms. On the one at `crates/verify/tests/data/a-backdated-receipt/`, whose
+attestations are all genuine and whose reading was moved back three years, it is about 2.95 years.
+Both pass every check, and until 2026-09-15 both printed the same first line and nothing under it.
+
+The second line goes wherever the verdict goes. The command line prints it under `--quiet` as well,
+`--json` carries it as `bracket`, `--fields` carries the span as `outside_bracket_ns`, the page prints
+it under its own verdict, and the Action quotes both lines in its job summary.
+
 ## The reader's own floor
 
 Every plausibility test has two possible sources for its threshold. One is the receipt, which states

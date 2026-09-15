@@ -198,6 +198,9 @@ fn as_json(a: &timewitness_verify::Assessment) -> String {
         // The one line a person reads. The page prints it as given rather than composing its own,
         // so a reader of the page and a reader of the command line are told the same thing.
         ("verdict", Value::text(a.verdict())),
+        // The line under it, with how wide the checked outside evidence brackets the moment and
+        // whose the width is. Null where the receipt was refused.
+        ("bracket", a.bracket().map_or(Value::Null, Value::text)),
         (
             "steps",
             Value::Array(

@@ -64,6 +64,10 @@
      reason: amber would read as a pass and magenta as a refusal, and the difference between "this
      receipt is bad" and "I could not read your file" is the whole of what this state is for. */
   .verdict.unavailable { color: color-mix(in srgb, var(--tw-colour-paper) 85%, transparent); }
+  /* The line under the verdict: how wide the checked outside evidence brackets the moment, and whose
+     the width is. It sits at reading size in the heading face, so it is read with the verdict and
+     not skipped as detail. */
+  .bracket { font-family: var(--tw-font-family-heading); font-weight: var(--tw-font-weight-600); margin: 0 0 var(--tw-space-2); }
   /* Said on the form, before the button is pressed, about a file the browser may refuse to read.
      It is a limitation, so it carries the limitation colour. */
   .notice { border-left: var(--tw-border-thick) solid var(--tw-colour-magenta); padding-left: var(--tw-space-3); font-size: var(--tw-font-size-small); color: color-mix(in srgb, var(--tw-colour-paper) 82%, transparent); margin: 0 0 var(--tw-space-4); }
@@ -122,6 +126,7 @@ and carries signed evidence from parties who have never heard of us. This page c
      and tabindex="-1" so the handler can put the reader inside it once there is something to read. -->
 <section id="result" role="status" aria-live="polite" tabindex="-1" hidden>
   <p class="verdict" id="verdict"></p>
+  <p class="bracket" id="verdict-bracket"></p>
   <p class="detail" id="verdict-detail"></p>
 
   <h2>What was checked</h2>
@@ -131,9 +136,10 @@ and carries signed evidence from parties who have never heard of us. This page c
   <div id="claim"></div>
 
   <h2>The evidence, one role at a time</h2>
-  <p class="detail">Three roles and none of them does another's job. An authenticated corridor makes
-  the bound checkable by a stranger and does not tighten it. A freshness beacon says not earlier. A
-  final witness says not later. The agent's own bound is a claim and is not on this list.</p>
+  <p class="detail">Three roles and none of them does another's job. An authenticated corridor puts a
+  signed interval round the moment that a stranger can check, and does not tighten the bound. A
+  freshness beacon says not earlier. A final witness says not later. The agent's own bound is a claim
+  and is not on this list.</p>
   <ul id="evidence"></ul>
   <p class="detail" id="basis"></p>
 </section>
@@ -229,19 +235,23 @@ function renderResult(result) {
   }
   const verdict = document.getElementById("verdict");
   const detail = document.getElementById("verdict-detail");
+  const bracket = document.getElementById("verdict-bracket");
   // The sentence comes from the checking code and is printed as given, so it is the same sentence
   // the command line prints, count of attestations checked included. This page composing its own
-  // is how the two would drift.
+  // is how the two would drift. The line under it, how wide the outside evidence brackets the moment
+  // and whose the width is, comes from the same place for the same reason.
   if (result.accepted) {
     verdict.className = "verdict held";
     verdict.textContent = result.verdict;
+    bracket.textContent = result.bracket || "";
     detail.textContent =
-      "Read the list below rather than the line above it. A check nobody could run is not a check " +
+      "Read the list below rather than the lines above it. A check nobody could run is not a check " +
       "that passed, and this page says which is which.";
   } else {
     const refusal = result.steps.find((step) => step.state === "failed");
     verdict.className = "verdict refused";
     verdict.textContent = "Refused.";
+    bracket.textContent = "";
     detail.textContent = refusal ? refusal.question + ": " + refusal.detail : "";
   }
 
@@ -340,6 +350,7 @@ function renderUnavailable(detail) {
   const verdict = document.getElementById("verdict");
   verdict.className = "verdict unavailable";
   verdict.textContent = "The check did not run.";
+  document.getElementById("verdict-bracket").textContent = "";
   document.getElementById("verdict-detail").textContent = detail;
   document.getElementById("steps").replaceChildren();
   document.getElementById("claim").replaceChildren();

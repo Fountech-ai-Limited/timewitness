@@ -11,6 +11,7 @@
 //! that server's key, or none checked at all.
 
 use crate::schema::Role;
+use timewitness_core::time::Nanos;
 use timewitness_core::UnixNanos;
 
 /// What happened when one evidence entry was looked at.
@@ -68,7 +69,77 @@ pub struct Verified {
     pub anchors_held: usize,
 }
 
+/// What the checked outside evidence says about when, and nothing the receipt says about itself.
+///
+/// The latest moment a checked not-earlier-than entry puts the receipt after, and the earliest
+/// moment a checked not-later-than entry puts the thing it stamps before. A reader who trusts
+/// neither party can hold a receipt to this and to nothing narrower: the width inside it is the
+/// signer's own claim unless the receipt rests on a sandwich and the sandwich was granted.
+///
+/// One computation for two readers. The basis decision sizes a sandwich with it and the verifier's
+/// line under the verdict prints it, so the figure a reader sees there and the figure the grant was
+/// judged on cannot come apart. Until 2026-09-15 the decision took the first checked entry of each
+/// role, so a receipt carrying an old beacon beside a fresh one was sized on the old one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Bracket {
+    /// The latest not-earlier-than edge among the checked entries, where there is one.
+    pub not_earlier: Option<UnixNanos>,
+    /// The earliest not-later-than edge among the checked entries, where there is one.
+    pub not_later: Option<UnixNanos>,
+}
+
+impl Bracket {
+    /// The bracket the checked entries of one receipt put round its moment.
+    ///
+    /// A corridor is left out on purpose. It is a signed interval about the moment its server
+    /// answered, and the receipt is held to overlap it rather than to sit inside it, so it is
+    /// reported beside the bracket and never narrows it.
+    #[must_use]
+    pub fn of(entries: &[EntryReport]) -> Self {
+        let mut bracket = Bracket::default();
+        for entry in entries {
+            let Outcome::Checked {
+                earliest, latest, ..
+            } = &entry.outcome
+            else {
+                continue;
+            };
+            match entry.role {
+                Role::NotEarlierThan => {
+                    bracket.not_earlier = Some(
+                        bracket
+                            .not_earlier
+                            .map_or(*earliest, |at| at.max(*earliest)),
+                    );
+                }
+                Role::NotLaterThan => {
+                    bracket.not_later =
+                        Some(bracket.not_later.map_or(*latest, |at| at.min(*latest)));
+                }
+                Role::AuthenticatedUtcCorridor => {}
+            }
+        }
+        bracket
+    }
+
+    /// How far apart the two edges are, where both were checked. Negative where the two contradict
+    /// each other, which is a thing a reader has to be told rather than a width.
+    #[must_use]
+    pub fn width(&self) -> Option<Nanos> {
+        match (self.not_earlier, self.not_later) {
+            (Some(earlier), Some(later)) => Some(later - earlier),
+            _ => None,
+        }
+    }
+}
+
 impl Verified {
+    /// The bracket the checked outside evidence puts round this receipt's moment.
+    #[must_use]
+    pub fn bracket(&self) -> Bracket {
+        Bracket::of(&self.entries)
+    }
+
     /// How many entries were actually checked.
     #[must_use]
     pub fn checked(&self) -> usize {

@@ -23,6 +23,9 @@ fn value(a: &Assessment) -> Value {
         // The one line a person reads, carried here so the page prints the same sentence as the
         // command line and the two can be held to each other.
         ("verdict", Value::text(a.verdict())),
+        // The line under it, with how wide the checked outside evidence brackets the moment and
+        // whose the width is. Null where the receipt was refused.
+        ("bracket", a.bracket().map_or(Value::Null, Value::text)),
         (
             "steps",
             Value::Array(

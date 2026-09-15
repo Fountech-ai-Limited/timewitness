@@ -31,7 +31,7 @@ pub mod value;
 pub use anchors::{RoughtimeServerKey, TrustAnchors};
 pub use cose::{open, open_with, AgentKey};
 pub use error::ReceiptError;
-pub use report::{EntryReport, Outcome, Verified};
+pub use report::{Bracket, EntryReport, Outcome, Verified};
 pub use schema::{
     AgentClaim, BreakdownRecord, Evidence, Operators, Payload, PolicyRecord, Receipt, Role, Scheme,
     SourceRecord, CLAIM_KIND, FORMAT_VERSION,
