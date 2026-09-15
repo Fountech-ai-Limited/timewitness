@@ -46,20 +46,41 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 // $0.01 per receipt, with no minimum." went through on its "no", and a price had to be a currency
 // sign and a number with the unit straight after it, so "$10 per 1,000 receipts" and "1 cent each"
 // went through as well. A denial now counts only where it governs the offer: a word such as never,
-// not, no or nothing shortly before it in the same clause, a negated verb straight after it, or a
-// sentence saying the bound is the same on every plan. The words are few on purpose: every one added
-// is a way to write the refused thing past the rule.
+// not, no or nothing shortly before it in the same clause, a negated verb straight after it, or, for
+// the precision rule alone, a sentence saying the bound is the same on every plan. The words are few
+// on purpose: every one added is a way to write the refused thing past the rule.
+//
+// Until 2026-09-15 the rule against a price per receipt was a list of price shapes: a sum followed
+// by a unit, a unit followed by a sum, and the words per receipt and by the receipt. Twelve of the
+// seventeen ordinary pricing sentences the test run of that day wrote went through it, "Pricing:
+// 1,000 receipts for $10." and "Receipts are 10c each." among them, because a copywriter does not
+// write to a list. The rule is now the class. Any sum of money, in figures or in words, in a sentence
+// that names a receipt or a stamp prices it, whatever sits between the two; and any count of receipts
+// in a sentence carrying a word of paying, billing or charging is a quota, which is the same price
+// with the arithmetic left to the reader. The denial words are what keep the honest sentences green,
+// so a sentence saying the thing costs nothing is read as saying so.
 const NEGATOR = /\b(never|not|no|nothing|none|neither|nor)\b|n't\b/i;
 const WITHOUT = /\bwithout\b/i;
-const NEGATED_AFTER = /^\W*(\w+\s+){0,2}?(is|are|was|were|will|would|can|could|does|do|has|have|be)\s+(never|not)\b|^\W*(\w+\s+){0,2}?\w+n't\b|^\W*(\w+\s+){0,1}?never\b/i;
+const NEGATED_AFTER = /^\W*(\w+\s+){0,2}?(?:(?:is|are|was|were|will|would|can|could|does|do|has|have|be|costs?)\s+(?:never|not|nothing|no)\b|\w+n't\b|never\b|(?:is|are|stays?|remains?)\s+free\b)/i;
 const SAME_FOR_ALL = /\b(same|identical|equal)\s+(\w+\s+)?(bounds?|precision|resolution|accuracy|intervals?|widths?|evidence)\b|\bfor (everybody|everyone|all)\b|\balike\b|\b(every|all|each|any)\s+(plans?|tiers?)\b/i;
 const CLAUSE_BREAK = new RegExp('[,;:()]|\\s[-\u2013\u2014]\\s|\\b(?:and|but|with|while|though|although|plus|except|unless|whereas)\\b', 'gi');
 const OFFERED_BY_PLAN = /\b(paid|premium|pro|plus|enterprise|business|upgrade[sd]?|subscribers?|subscriptions?|tiers?|plans?)\b/i;
-const EVIDENCE = '(?:receipts?|stamps?|countersign\\w*|verifications?|timestamps?|signatures?)';
+// A word of paying, which turns a count of receipts into a quota.
+const PAYING = /\b(billed|billing|bills?|paid|pay|pays|paying|payments?|charged|charges?|charging|overage|priced|prices?|pricing|costs?|fees?|invoiced?|metered)\b/i;
+const EVIDENCE = '(?:receipts?|stamps?|stamping|countersign\\w*|verifications?|timestamps?|signatures?)';
+const NUMBER_WORD =
+  '(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|half a|a few)';
+// A sum of money, in figures or in words: a currency sign and a number, USD 0.01, 0.01 USD,
+// 10 cents, 10c, 0.5p, a number and the cent sign, ten cents, a penny, twenty five dollars, half a
+// cent. A sum in figures needs a boundary before its first digit, so a digit run inside a digest is
+// not read as one. Every sign is written as an escape, because this file is held to ASCII.
 const MONEY =
-  '(?:[$\\u00a3\\u20ac]\\s?\\d[\\d.,]*|\\b(?:USD|GBP|EUR)\\s?\\d[\\d.,]*' +
-  '|\\b\\d[\\d.,]*\\s*(?:USD|GBP|EUR|dollars?|pounds?|euros?|cents?|pence)\\b' +
-  '|\\b(?:a|one|half a)\\s+(?:cent|penny|dollar|pound|euro)\\b)';
+  '(?:[$\\u00a3\\u20ac]\\s?\\d[\\d.,]*' +
+  '|\\b(?:USD|GBP|EUR)\\s?\\d[\\d.,]*' +
+  '|\\b\\d[\\d.,]*\\s*(?:USD|GBP|EUR|dollars?|pounds?|euros?|cents?|pence|bucks?|quid)\\b' +
+  '|\\b\\d[\\d.,]*\\s*\\u00a2' +
+  '|\\b\\d[\\d.,]*[cp]\\b' +
+  `|\\b${NUMBER_WORD}(?:\\s+${NUMBER_WORD})?\\s+(?:cents?|penny|pennies|pence|dollars?|pounds?|euros?|bucks?|quid)\\b)`;
 const QUANTITY = '(?:\\d[\\d.,]*\\s*(?:k|thousand|million)?|(?:a|one)\\s+(?:hundred|thousand|million)|hundred|thousand|million)';
 const SHARPER = '(?:full|higher|finer|better|tighter|narrower|smaller|sharper|extra|increased|improved|enhanced|more\\s+(?:precise|accurate|exact))';
 const BOUND_WORD = '(?:precision|resolution|accuracy|bounds?|intervals?|widths?|error\\s+bars?|uncertainty)';
@@ -79,24 +100,34 @@ const RULES = [
       new RegExp(`\\b${SHARPER}\\s+${BOUND_WORD}\\b`, 'gi'),
       new RegExp(`\\b${SCALE}[- ]${BOUND_WORD}\\b`, 'gi'),
     ],
+    // A sentence saying the bound is the same on every plan is the promise itself, so it denies
+    // this rule. It denies no other: "$1 each for everybody" is a price on everybody's receipts.
+    deniedBySameness: true,
   },
   {
     name: 'a price per receipt',
     why: 'a price on each receipt makes people ration them, and a receipt on every event is the point',
+    // The words that price a receipt with no sum in the sentence.
     offers: [
-      new RegExp(`${MONEY}\\s*(?:/|per\\b|a\\b|each\\b|for each\\b|for every\\b|for\\b)?\\s*(?:${QUANTITY}\\s+)?${EVIDENCE}\\b`, 'gi'),
-      new RegExp(`\\b(?:each|every|per|a single|one)\\s+${EVIDENCE}\\b[^.]{0,40}?\\b(?:costs?|is|are|priced|billed|charged|at|for)\\b[^.]{0,20}?${MONEY}`, 'gi'),
       /\b(priced|charged|billed|metered|pay|paying|costs?|fees?|prices?|pricing|billing)\b[^.]{0,40}\bper[- ](receipt|stamp|countersign\w*|verification|timestamp)\b/gi,
       /\bper[- ](receipt|stamp|countersign\w*|verification|timestamp)\s+(price|pricing|fees?|charges?|costs?|billing|rates?)\b/gi,
       /\b(priced|charged|billed|metered|pay|paying)\b[^.]{0,20}\bby the (receipt|stamp)\b/gi,
     ],
-    // A sum with each or apiece prices a unit, and in a sentence about receipts the unit is a receipt.
-    withEvidence: [new RegExp(`${MONEY}\\s*(?:each|apiece|a piece|per piece|per unit|a pop)\\b`, 'gi')],
+    // Any sum of money in a sentence that names a receipt or a stamp.
+    withEvidence: [new RegExp(MONEY, 'gi')],
+    // Any count of receipts in a sentence that also carries a word of paying: a plan of so many
+    // receipts, and receipts free up to so many.
+    withEvidencePaid: [
+      new RegExp(`\\b${QUANTITY}\\s+${EVIDENCE}\\b`, 'gi'),
+      new RegExp(`\\b${EVIDENCE}\\b[^.;]{0,40}?\\bup to\\s+${QUANTITY}`, 'gi'),
+    ],
   },
 ];
 
-// The sentences the rules have to refuse, and they are the seeds the test run of 2026-09-14 wrote.
-// The first two are what `TW_PRICE_PROVE` and `PRICE_CHECK_PROVE` add to a surface as read.
+// The sentences the rules have to refuse. The first two are what `TW_PRICE_PROVE` and
+// `PRICE_CHECK_PROVE` add to a surface as read. The rest are the seeds of the test runs of
+// 2026-09-14 and 2026-09-15, twelve of which passed until the second of those days, and a further
+// set of the same class written the way a price is written rather than the way a rule is.
 const SEEDS = {
   precision: 'Full precision is available on the Pro plan.',
   'per-receipt': 'Stamping costs $0.01 per receipt.',
@@ -115,8 +146,43 @@ const REFUSED = [
   'Stamps at $0.01 per stamp.',
   'Receipts at $0.01 apiece.',
   'Enterprise customers get sub-millisecond bounds.',
+  'Pricing: 1,000 receipts for $10.',
+  'Receipts are 10c each.',
+  'Stamps cost 0.5p per stamp.',
+  'You pay for what you stamp, $0.001 a go.',
+  'Plans start at 10,000 receipts a month for $49.',
+  'Each receipt is ten cents.',
+  'A thousand receipts cost ten dollars.',
+  'One penny a receipt, billed monthly.',
+  'EUR 0.01 per receipt.',
+  'USD 0.01/receipt, no minimum.',
+  'Pay as you go: 1\u00a2 a stamp.',
+  '\u00a35 a month buys 500 receipts.',
+  'Receipt packs: 100 for \u00a31.',
+  'The Team plan includes 50,000 receipts; each one after that is billed.',
+  'Overage is charged per receipt above your plan.',
+  'Metered billing, by the receipt.',
+  'Receipts are free up to 1,000 a month, then paid.',
+  'Ten receipts for a dollar.',
+  'From $9 a month for 5,000 receipts.',
+  'Stamping costs a penny.',
+  'Receipts: 2p each.',
+  'Bulk receipts at \u20ac0.005.',
+  'Twenty five cents a stamp, billed monthly.',
+  'The Team plan includes 50,000 receipts, and each one after that is billed.',
+  'Receipts are free up to 1,000 a month and metered after that.',
+  'Overage runs 0.1 cents per receipt.',
+  'Pay per stamp: 1c.',
+  'Receipts cost half a cent.',
+  'USD 5 buys a thousand stamps.',
+  'Each verification is $0.10.',
+  'Stamps are a cent apiece.',
+  'Receipts are $1 each for everybody.',
+  'It works out at about a tenth of a cent a receipt.',
 ];
 
+// The sentences this product does say, or could say, and the rules have to let through: a denial
+// beside a sum, a count of receipts beside nothing anybody pays, and the promise in its own words.
 const HONEST = [
   'Nothing is ever priced per receipt.',
   'Full precision for everybody, always.',
@@ -130,6 +196,16 @@ const HONEST = [
   'There is no fee and no price per receipt.',
   'A plan may differ in how much it covers, never in how narrow the bound is.',
   'A wider interval says something true and a narrow wrong one does not.',
+  'Verifying a receipt costs nothing, not $1 and not a cent.',
+  'You pay nothing for 1,000 receipts or a million.',
+  'No plan caps how many receipts you can make, and none is billed by the receipt.',
+  'A receipt is about 10 KB and costs nothing to check.',
+  'Stamping is free in phase one.',
+  'The Action costs nothing to run, and neither does a receipt.',
+  'Nine servers behind six operators, and a receipt of 9765 bytes.',
+  'The bound is the same for everybody, paid or not.',
+  'Verifying 1,000 receipts costs nothing.',
+  'A receipt is never sold, and a stamp is never charged for.',
 ];
 
 function sentences(text) {
@@ -153,31 +229,33 @@ function clause(sentence, index, length) {
   return { before: sentence.slice(start, index), after: sentence.slice(index + length, end) };
 }
 
-function denied(sentence, index, length) {
+function denied(rule, sentence, index, length) {
   const { before, after } = clause(sentence, index, length);
   const words = before.trim().split(/\s+/);
   return (
     NEGATOR.test(words.slice(-5).join(' ')) ||
     WITHOUT.test(words.slice(-2).join(' ')) ||
     NEGATED_AFTER.test(after) ||
-    SAME_FOR_ALL.test(sentence)
+    (rule.deniedBySameness === true && SAME_FOR_ALL.test(sentence))
   );
 }
 
-function offered(sentence, patterns) {
+function offered(rule, sentence, patterns) {
   for (const pattern of patterns || []) {
     for (const m of sentence.matchAll(pattern)) {
-      if (!denied(sentence, m.index, m[0].length)) return true;
+      if (!denied(rule, sentence, m.index, m[0].length)) return true;
     }
   }
   return false;
 }
 
 function refuses(rule, sentence) {
+  const aboutEvidence = new RegExp(`\\b${EVIDENCE}\\b`, 'i').test(sentence);
   return (
-    offered(sentence, rule.offers) ||
-    (OFFERED_BY_PLAN.test(sentence) && offered(sentence, rule.offeredByPlan)) ||
-    (new RegExp(`\\b${EVIDENCE}\\b`, 'i').test(sentence) && offered(sentence, rule.withEvidence))
+    offered(rule, sentence, rule.offers) ||
+    (OFFERED_BY_PLAN.test(sentence) && offered(rule, sentence, rule.offeredByPlan)) ||
+    (aboutEvidence && offered(rule, sentence, rule.withEvidence)) ||
+    (aboutEvidence && PAYING.test(sentence) && offered(rule, sentence, rule.withEvidencePaid))
   );
 }
 
@@ -242,7 +320,7 @@ if (prove && !SEEDS[prove]) {
 // are text with no extension. The rest are named because they print words to a reader: the Action,
 // the verifier page, the scripts that write the Action's summary, and the command line's verdicts.
 // Until 2026-09-14 this was README.md and docs/ alone, so a PRICING.md at the root was never read.
-const SURFACE = /(^|\/)[^/]+\.(md|markdown|txt|text)$|^(LICENSE|NOTICE|action\.yml|verifier-page\/[^/]+\.html|scripts\/action-[^/]+\.(sh|py)|crates\/cli\/src\/render\.rs)$/i;
+const SURFACE = /(^|\/)[^/]+\.(md|markdown|txt|text)$|^(LICENSE|NOTICE|action\.yml|verifier-page\/[^/]+\.html|scripts\/action-[^/]+\.(sh|py)|crates\/cli\/src\/render\.rs|crates\/verify\/src\/[^/]+\.rs)$/i;
 const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' })
   .split('\n')
   .filter((path) => SURFACE.test(path) && existsSync(join(root, path)));
