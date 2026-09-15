@@ -171,6 +171,15 @@ jobs:
           TW_SURFACES_SITE: tree
         run: bash scripts/three-surfaces.sh
 
+      - name: Every sentence agrees with the shipped policy
+        # The check above holds each surface to its twin, and on 2026-09-15 it was green over four
+        # faults that every surface shared. This one reads the floor, the two ceilings, the Roughtime
+        # operators, the source kinds and the basis off the code, and refuses a sentence that says
+        # otherwise. The second run is the check backwards, one seed per rule, each watched refused.
+        run: |
+          python3 scripts/policy-sentences.py
+          python3 scripts/policy-sentences.py --self-test
+
       - name: No surface sells precision or prices a receipt
         # Full precision for everybody, and never a price per receipt. The same rules read the site
         # in the other repository. The two runs below it are this one backwards, and pass only if it
