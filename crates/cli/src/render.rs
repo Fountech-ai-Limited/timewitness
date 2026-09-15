@@ -73,7 +73,9 @@ pub fn usage() -> String {
         "      --key-log-signer <hex>\n                          the key you hold for our log's head, instead of the\n",
     );
     out.push_str("                          one that ships. --anchors replaces it too\n");
-    out.push_str("      --quiet             the verdict and the refusal only\n\n");
+    out.push_str(
+        "      --quiet             the verdict, the line under it and the refusal only\n\n",
+    );
     out.push_str("  timewitness stamp --subject <file> --key <file> --out <file> [options]\n");
     out.push_str("      Take a bounded-time receipt over the hash of a file. This one does use\n");
     out.push_str("      the network, because it has to ask the sources what time it is.\n\n");
@@ -83,9 +85,14 @@ pub fn usage() -> String {
     out.push_str("                          measured: the third round widens the bound, and it\n");
     out.push_str("                          narrows again from there as the rounds pile up.\n");
     out.push_str("                          Measured 2026-09-08 against three public Roughtime\n");
-    out.push_str("                          servers: 6.2 s at one round, 17.4 s at three,\n");
-    out.push_str("                          12.0 s at sixteen, 10.4 s at thirty-two\n");
-    out.push_str("      --max-width <ns>    the widest bound this agent will sign for. With\n");
+    out.push_str("                          servers, before the operator floor that now refuses\n");
+    out.push_str("                          a round of those three alone: 6.2 s at one round,\n");
+    out.push_str("                          17.4 s at three, 12.0 s at sixteen, 10.4 s at\n");
+    out.push_str("                          thirty-two\n");
+    out.push_str("      --max-width <ns>    the widest bound this agent will sign for, 2 s by\n");
+    out.push_str(
+        "                          default, the narrowest corridor Roughtime states. With\n",
+    );
     out.push_str("                          --agent it is the widest this run will accept from\n");
     out.push_str("                          the agent, whatever the agent says its own is\n");
     out.push_str("      --gap <ns>          how long to wait between polling rounds\n");

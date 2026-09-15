@@ -159,7 +159,12 @@ sentences=(
   # where the figure is six: Cloudflare answers on two of the three protocols rather than all three.
   "The nine servers a round asks stand behind six operators, and from 2026-09-09 the selection counts operators rather than names."
   "What an operator count cannot see is a shared upstream, a shared network path, a shared satellite constellation and a shared implementation, so it is an upper bound on how independent a round was rather than a measurement of it."
-  "A machine that can reach only the three public Roughtime servers reaches three operators, which is under the shipped floor of four, so it refuses to sign until somebody lowers the floor deliberately."
+  # Rewritten 2026-09-15. It said the floor refuses "until somebody lowers the floor deliberately",
+  # and nothing that ships can lower it. The two after it went in the same day: the two limitations a
+  # reading of the receipt format found missing from every surface.
+  "A machine that can reach only the three public Roughtime servers reaches three operators, which is under the shipped floor of four, so it refuses to sign, and nothing that ships lowers the floor."
+  "A receipt carries no measurement from any source, so nobody else can recompute its width."
+  "The operator names the floor counts are strings the signer wrote."
   # Pinned as far as the comma and no further. What follows it on each surface is the width of the
   # receipt on disk, and that is read from the receipt rather than pinned here.
   "Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms over three passes at 21:39,"
@@ -167,7 +172,12 @@ sentences=(
   "Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 128.7 ms, 128.8 ms and 129.1 ms over three readings at 22:17, against 122.7 ms, 122.8 ms and 122.6 ms from the same agent at the same uptime and the same cadence before the rule at 21:04."
   "The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did."
   "NTS authenticates a source and can never be evidence for a bound."
-  "The shipped default refuses any interval wider than 250 ms, and the GitHub Action raises that to 30 s, which is headroom and not a measurement."
+  # Rewritten 2026-09-15, when the one-shot ceiling moved from 30 s to 2 s. The sentence it replaces
+  # said the shipped default refused over 250 ms, and only the resident agent did: the one-shot
+  # command signed up to 30 s whether or not it ran inside the Action.
+  "The resident agent refuses any interval wider than 250 ms, and the one-shot command, which the GitHub Action runs, refuses one wider than 2 s."
+  # Added 2026-09-15. A log of our keys has been served since that afternoon and no surface said so.
+  "A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and no agent key."
   # Added 2026-09-10. All three are refusals the agent makes that no surface said it made, and
   # every claim ships beside what it cannot prove: a refusal a reader has not been told about is a
   # surprise, and this list exists so that nothing about this product is a surprise.

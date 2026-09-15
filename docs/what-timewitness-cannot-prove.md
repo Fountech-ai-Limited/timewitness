@@ -1,5 +1,16 @@
 # What TimeWitness cannot prove
 
+Version 19, 2026-09-15. Supersedes version 18 of the same day, which it keeps whole, corrects in six
+places and adds two items to. The Roughtime-only path was called seconds wide in four places and the
+shipped product refuses it: three operators is under the floor of four, and nothing that ships lowers
+the floor, where this list said one line of configuration did. The front page was said to claim four
+to six independent sources, and it is the README that does. A refusal was called a receipt in one
+item while a later item says no refusal receipt exists. The one-shot command's ceiling moved from
+30 s to 2 s, and the item on the ceilings now says what each path signs up to and why. The key item
+names the log of our keys that is served. The two new items are that a receipt carries no
+measurement from any source, so nobody can recompute its width, and that the operator names the
+floor counts are strings the signer wrote. The list runs to 59 items rather than 57.
+
 Version 18, 2026-09-15. Supersedes version 17 of 2026-09-11, which it keeps whole and corrects in two
 places. The claim at the head of the list said the outside evidence in a receipt supports the
 interval. It does not: every receipt says its bound rests on the agent's own model, and the outside
@@ -175,7 +186,7 @@ unbroken order. Not accurate time.
 
 ## About time itself
 
-**It cannot prove exact UTC over the public internet.** The design's bound is milliseconds and today's is about a sixth of a second on a machine that reaches the sources that narrow it and seconds on one that reaches only Roughtime, and the section on what is built says why. The 5 to 50 ms, the 1 ms and the 100
+**It cannot prove exact UTC over the public internet.** The design's bound is milliseconds and today's is about a sixth of a second on a machine that reaches the sources that narrow it. A machine that reaches only Roughtime is refused rather than given a wider bound, and the section on what is built says why. The 5 to 50 ms, the 1 ms and the 100
 microsecond figures are quoted from public research and none of them has been measured by us. They
 belong, in that order, to the public internet with no hardware of our own, to a good local network
 against a stratum-1 source, and to a cloud instance with a hypervisor clock. A claim needing
@@ -339,7 +350,8 @@ authenticated proof that ingestion was complete, and this product has neither.
 
 ## About what it does when something is wrong
 
-**It does not prevent anything.** A refusal receipt records that TimeWitness declined to sign. It
+**It does not prevent anything.** A refusal records that TimeWitness declined to sign, and today
+that record is a return value inside the agent rather than anything a third party can be shown. It
 does not record an action being stopped, and there is no enforcement path in this design. A clock
 rollback is the same: it is detected and recorded after the event, and nothing it enabled is undone.
 
@@ -354,11 +366,12 @@ services and none of them is a qualified trust service.
 
 Everything in this section is a fact about 2026-09-09 rather than about the design.
 
-**A bound is about 155 ms where a machine reaches the sources that narrow it, measured 2026-09-09 at sixteen polling rounds on an ordinary desktop, and seconds wide where it reaches only Roughtime.** Three time source clients exist in this repository, Roughtime, plain NTP
+**A bound is about 155 ms where a machine reaches the sources that narrow it, measured 2026-09-09 at sixteen polling rounds on an ordinary desktop, and a machine that reaches only Roughtime is refused, where before the operator floor it got seconds.** Three time source clients exist in this repository, Roughtime, plain NTP
 and NTS, and only Roughtime signs anything a stranger can check, so the one that can be shown to a
 stranger is the one that cannot narrow the bound. A Roughtime server states its own uncertainty as a radius in whole seconds, so a
-bound resting on Roughtime alone is seconds wide whatever else is done to it, and a plain NTP server
-states a delay and a dispersion in units of about fifteen microseconds and signs nothing at all.
+bound resting on Roughtime alone would be seconds wide whatever else is done to it, and the shipped
+floor refuses such a round; a plain NTP server states a delay and a dispersion in units of about
+fifteen microseconds and signs nothing at all.
 Measured against Roughtime alone on 2026-09-08, every one of them at the four rounds the Action
 shipped that day: 16.219 s from a GitHub runner, 16.424 s on the receipt committed at that path then and since replaced, and 16.439 s from a stamp on an ordinary desktop at 11:08. Measured against two kinds
 on 2026-09-09 at the sixteen rounds the Action ships now: 153.6 ms, 164.8 ms and 211.3 ms over three
@@ -369,7 +382,7 @@ three rounds no line is fitted, so the scatter of the measurements is never meas
 enters the width, and the bound at one round is narrower because less was measured rather than
 because the clock is better known. Measured on this desktop at 12:54 and 12:56 on 2026-09-08 against
 Roughtime alone, two passes at each setting: 6.2 s at one round, 17.4 s at three, 16.4 s at four,
-12.0 s at sixteen and 10.4 s at thirty-two. So the figure this product leads with is its own bound, about 155 ms at sixteen rounds where the sources that narrow it are reachable and about 12 s where only Roughtime is. About one second is still the target and it is a target for something else: a bound
+12.0 s at sixteen and 10.4 s at thirty-two. So the figure this product leads with is its own bound, about 155 ms at sixteen rounds where the sources that narrow it are reachable. Where only Roughtime is reachable it now refuses, and the 12 s it reached there on 2026-09-08 is from before the operator floor. About one second is still the target and it is a target for something else: a bound
 resting on third-party evidence rather than on the agent's own model, which nothing outside the
 tests constructs, and which a timestamp authority writing whole seconds puts a floor under. That is
 the rule underneath it, and it holds for everything this product says about itself: the prose may be
@@ -453,7 +466,7 @@ nine can fail for a different reason in the code.** `SourceKind` names plain NTP
 local hardware, and three of the four have a client, `crates/sources/src/roughtime.rs`,
 `crates/sources/src/ntp.rs` and `crates/sources/src/nts.rs`. What runs is three servers of each of
 those three kinds. Local hardware has no client and needs a receiver this product cannot assume
-anybody has. The front page says four to six independent sources, and independent in this product
+anybody has. The README says four to six independent sources, and independent in this product
 means the operator rather than the protocol, which is the only reading the design supports:
 `SourceKind` has four variants, so six kinds cannot exist and a claim of four to six kinds could
 never be met. On the count this product defines and enforces the claim is met, at six operators with
@@ -492,12 +505,31 @@ than what it was. Where the operator itself is in doubt, two names are treated a
 than two, because merging can only lower the count and refuse, while splitting inflates the very
 floor that is supposed to catch it.
 
+**A receipt carries no measurement from any source, so nobody else can recompute its width.** For each source it names an id, a
+kind, an operator, a timescale, the leap and smear state and whether the source was kept. It carries
+none of the four timestamps of an exchange, no round trip and no uncertainty a source stated. So a
+stranger can check that the parts of the width add up to the width and that a majority was kept, and
+cannot work out any part of it from what the sources said. The width is the agent's arithmetic on
+measurements only the agent saw. A receipt format that carries them would be version 1, and it is
+not built.
+
+**The operator names the floor counts are strings the signer wrote.** The verifier counts operators from
+the labels in the receipt rather than taking a count the receipt states, which stops the agent's
+arithmetic being checked against itself. It does not stop the labels being made up. A signer running
+nine servers at one company could name nine companies, and nothing in NTP, NTS or Roughtime lets a
+reader see which company answered. A Roughtime corridor, where one is carried and checked, is signed
+by a key the reader holds, and every other operator name is the signer's word.
+
 **A machine that can reach only the three public Roughtime servers reaches three operators, which is
-under the shipped floor of four, so it refuses to sign until somebody lowers the floor deliberately.**
-That path was already the seconds-wide one and it is now also the one the shipped policy declines, on
-two counts rather than one: the width ceiling of 250 ms refuses it as well. Lowering the floor is one
-line of configuration and it is deliberately not the default, because a product whose independence
-floor bends to whatever the network gave it today has a floor in name only.
+under the shipped floor of four, so it refuses to sign, and nothing that ships lowers the floor.**
+That path was the seconds-wide one until 2026-09-09. The shipped product now declines it on two
+counts: the operator floor refuses the round before any width is looked at, and the width ceilings
+refuse it as well, 250 ms through the resident agent and 2 s on the one-shot command the Action runs.
+No option on the command line and no input to the Action lowers the floor. It is `min_operators` in
+`Policy::default`, in `crates/clock/src/policy.rs`, so lowering it means building from a changed
+source. That is deliberate, because a product whose independence floor bends to whatever the network
+gave it today has a floor in name only. Every seconds-wide figure on this list is from before the
+floor, and none of them is a receipt the shipped product issues.
 
 **NTS authenticates a source and can never be evidence for a bound.** The keys come out of a TLS
 session and are symmetric, so this machine holds the same secret the server used and could compose
@@ -514,13 +546,19 @@ in the receipt and checked by the verifier against keys a reader chose in advanc
 does is support the width: the receipt's own bound is the agent's claim and is labelled as one. The
 format can express a bound resting on outside signatures and nothing issues a receipt that does.
 
-**The shipped default refuses any interval wider than 250 ms, and the GitHub Action raises that to
-30 s, which is headroom and not a measurement.** Read on 2026-09-09 off
-`crates/clock/src/policy.rs`, `max_bound_width` in `Policy::default`, and off the `max-width` input
-in `action.yml`. A runner reached 211.3 ms on 2026-09-09 and 16.219 s the day before, so the ceiling
-is set for the bad day rather than the good one. The refusal is the honesty mechanism of this
-product and the one configuration that ships loosens it by a factor of a hundred and twenty, which
-is why both numbers are here rather than one.
+**The resident agent refuses any interval wider than 250 ms, and the one-shot command, which the
+GitHub Action runs, refuses one wider than 2 s.** Read on 2026-09-15 off `max_bound_width` in
+`Policy::default`, in `crates/clock/src/policy.rs`, off `CI_MAX_BOUND_WIDTH` in
+`crates/cli/src/stamp_cmd.rs`, and off the `max-width` input in `action.yml`. Only the agent signs
+under 250 ms. The one-shot path needs a ceiling of its own, because the widest receipt a build
+runner has given us, 287.147 ms on 2026-09-14 at sixteen rounds, is already past the agent's. Two
+seconds is the narrowest interval a Roughtime corridor can state, a radius of one second either side,
+so a bound wider than that says less than one signed corridor already tells a stranger. It is about
+seven times that runner's width, and about nine times the 211.3 ms another runner reached on
+2026-09-09. The ceiling was 30 s until 2026-09-15, sized for the 16.219 s a runner reached against
+Roughtime alone on 2026-09-08, a round the operator floor has refused since 2026-09-09. Every receipt
+the one-shot command signed before 2026-09-15 states that older ceiling in its own policy, the one at
+`crates/verify/tests/data/a-real-stamp/` included.
 
 **Nothing verifies order.** Every receipt carries a sequence number and the hash of the receipt
 before it, both signed, and no code anywhere compares two receipts, so nothing that exists today can
@@ -537,8 +575,9 @@ from source in this repository. The `v0` release carries no binary and there is 
 so today a stranger compiles it rather than downloading it.
 
 **Nothing links an agent's key to anybody.** A receipt proves that whoever signed it held that key.
-There is no public log of agent keys to check one against, so a reader who does not already recognise
-a key learns only that one key signed this. The Action generates a key on the runner where none is
+A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and no agent key. So a reader who does not already recognise an agent key learns only that one key
+signed this. The `v0` release refuses that log's format by name, so reading it takes a verifier built
+from `main` until a later release. The Action generates a key on the runner where none is
 supplied, which is what keeps the install to one line and is exactly as meaningful as that sounds.
 
 **There is no first-run figure from anybody who is not us.** Nobody outside has run it.
