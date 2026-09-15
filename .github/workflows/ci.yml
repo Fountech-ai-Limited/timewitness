@@ -177,7 +177,7 @@ jobs:
         # operators, the source kinds and the basis off the code, and refuses a sentence that says
         # otherwise. The second run is the check backwards, one seed per rule, each watched refused.
         run: |
-          python3 scripts/policy-sentences.py
+          python3 scripts/policy-sentences.py --no-site
           python3 scripts/policy-sentences.py --self-test
 
       - name: No surface sells precision or prices a receipt

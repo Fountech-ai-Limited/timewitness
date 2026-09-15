@@ -156,6 +156,30 @@ const DEFAULT_ROUNDS: usize = 16;
 /// rounds a minute apart bought.
 const DEFAULT_GAP_SECONDS: u64 = 0;
 
+/// The longest `--gap` this command takes, in seconds.
+///
+/// A gap is read in whole seconds and the help says so from 2026-09-15. Until then the help said
+/// nanoseconds while the code slept for seconds, so a reader asking for thirty seconds between
+/// rounds with `30000000000` got a run that was still asleep when it was killed at 502 s, and
+/// nothing bounded it. Five minutes is the ceiling because sixteen rounds that far apart is over an
+/// hour of a build's time, and a cadence longer than that is what `timewitness agent --interval`
+/// is written for.
+const MAX_GAP_SECONDS: u64 = 300;
+
+/// The seconds to wait between polling rounds, or the sentence that refuses the number given.
+fn a_gap_between_rounds(args: &Args) -> Result<u64, String> {
+    match args.number("--gap") {
+        Ok(Some(n)) if n < 0 => Err("--gap is a number of seconds and is not negative".into()),
+        Ok(Some(n)) if n > i128::from(MAX_GAP_SECONDS) => Err(format!(
+            "--gap is at most {MAX_GAP_SECONDS} seconds between rounds. A longer cadence is the \
+             agent's: `timewitness agent --interval`"
+        )),
+        Ok(Some(n)) => Ok(u64::try_from(n).unwrap_or(DEFAULT_GAP_SECONDS)),
+        Ok(None) => Ok(DEFAULT_GAP_SECONDS),
+        Err(e) => Err(e.0),
+    }
+}
+
 /// How far a beacon round may sit from where the model thinks the present is.
 ///
 /// Two minutes. A drand relay can lag by a few rounds of three seconds, and a value further out than
@@ -190,6 +214,9 @@ pub fn run(args: &Args) -> Outcome {
         if let Err(text) = a_ceiling_of_our_own(args) {
             return fail(&text);
         }
+    } else if let Err(text) = a_gap_between_rounds(args) {
+        // The same reason: a gap past the ceiling is turned down before a key exists for it.
+        return fail(&text);
     }
 
     let subject_path = match args.required("--subject") {
@@ -449,12 +476,7 @@ fn from_a_model_of_our_own(args: &Args) -> Result<Reading, String> {
     }
     let polls_per_round = disciplining.len();
 
-    let gap = match args.number("--gap") {
-        Ok(Some(n)) if n >= 0 => u64::try_from(n).unwrap_or(DEFAULT_GAP_SECONDS),
-        Ok(Some(_)) => return Err("--gap is not negative".into()),
-        Ok(None) => DEFAULT_GAP_SECONDS,
-        Err(e) => return Err(e.0),
-    };
+    let gap = a_gap_between_rounds(args)?;
 
     // What the model cannot see for itself: the machine going to sleep, and another time service
     // moving the clock underneath it. Both are read from the operating system's own counters and

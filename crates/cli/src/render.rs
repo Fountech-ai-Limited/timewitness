@@ -95,7 +95,9 @@ pub fn usage() -> String {
     );
     out.push_str("                          --agent it is the widest this run will accept from\n");
     out.push_str("                          the agent, whatever the agent says its own is\n");
-    out.push_str("      --gap <ns>          how long to wait between polling rounds\n");
+    out.push_str("      --gap <s>           seconds to wait between polling rounds, none by\n");
+    out.push_str("                          default and at most 300. A longer cadence is the\n");
+    out.push_str("                          agent's, `timewitness agent --interval`\n");
     out.push_str("      --sequence <n>      where this receipt sits in a chain\n");
     out.push_str("      --previous <file>   the receipt before it in that chain\n");
     out.push_str(
