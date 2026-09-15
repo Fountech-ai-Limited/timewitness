@@ -1,5 +1,13 @@
 # What TimeWitness cannot prove
 
+Version 18, 2026-09-15. Supersedes version 17 of 2026-09-11, which it keeps whole and corrects in two
+places. The claim at the head of the list said the outside evidence in a receipt supports the
+interval. It does not: every receipt says its bound rests on the agent's own model, and the outside
+signatures pin the moment to a few seconds, against a width of our own of about a sixth of a second.
+The claim now says which is which. The item on the corridor said it makes the bound checkable and
+that no ordinary time source runs here; it makes the moment checkable, and plain NTP and NTS run in
+every stamp. The list still runs to 57 items.
+
 Version 17, 2026-09-11. Supersedes version 16 of 2026-09-10, which it keeps whole and adds two items
 to. A source that could not have disagreed with anybody no longer decides which
 other source is in the minority, and the two new items say what that fixed and what it did not: three
@@ -160,7 +168,9 @@ of what is built today. The last group is marked, because those move.
 ## The claim, so the limits have something to be limits of
 
 TimeWitness says: at this local counter reading, UTC was somewhere in this interval, and here is
-signed evidence from three parties who have never heard of us that supports it. Bounded time and
+signed evidence from three parties who have never heard of us about when that reading was taken.
+The interval is our own claim and the outside evidence does not vouch for it. That evidence pins the
+moment to a few seconds, and a bound resting on it is what we are building towards. Bounded time and
 unbroken order. Not accurate time.
 
 ## About time itself
@@ -201,11 +211,10 @@ in the parties involved; it is what their signatures actually say.
 
 **An authenticated corridor does not tighten the bound.** A Roughtime server states a midpoint and a
 radius in whole seconds, and the three public servers reachable on 2026-09-07 were stating one, three
-and five. So a corridor is seconds wide. It is the thing that makes the bound checkable by a
-stranger, and in the design the millisecond figure comes from ordinary time sources rather than from
-it. Today there are no ordinary time sources here, only the corridor, which is why the bound is
-seconds and not milliseconds. Anybody who expects Roughtime to be the precise part has the roles the
-wrong way round.
+and five. So a corridor is seconds wide. It puts a signed interval round the moment that a stranger
+can check, and the millisecond figure comes from ordinary time sources rather than from it. Plain NTP
+and NTS run in every stamp beside the corridor, and neither signs anything a stranger can check.
+Anybody who expects Roughtime to be the precise part has the roles the wrong way round.
 
 **A corridor does not prove the server's clock was right.** It proves that the holder of a named key
 signed a statement covering a nonce we chose. The draft says so itself. A server whose clock is wrong

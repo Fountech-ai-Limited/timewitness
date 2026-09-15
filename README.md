@@ -6,8 +6,10 @@ A machine's recorded time looks precise and is not. The event happens at one mom
 asked at another, the answer comes back over a path nobody measured, and the stamp is written later
 again. TimeWitness never asks for the time at stamp time. An agent disciplines the machine's clock
 continuously against four to six independent sources and keeps a running measure of how wrong that
-clock could be. A stamp is then a local read with no network in it, and it says three things: the
-reading, a bound on the error, and third-party signed evidence for that bound.
+clock could be. Through the agent a stamp is then a local read with no network in it, and it says
+three things: the reading, a bound on the error, which is our own claim, and third-party signed
+evidence of when it was taken. That evidence pins the moment to a few seconds and does not vouch for
+the bound. A bound resting on it is what this is being built towards.
 
 The claim is bounded time and unbroken order. It is not accurate time.
 
@@ -29,6 +31,7 @@ This repository is early and it says so rather than describing a finished produc
 | Final witness client, not-later-than | built for RFC 3161, proved against two free authorities. No OpenTimestamps anchor |
 | Public verifier | built, as a command line tool and as one HTML page that runs from a local disk with no network. `docs/verifier.md` |
 | GitHub Action | built. One line in a workflow, and the receipt goes into the SLSA provenance and the container image labels that already ship |
+| A bound resting on outside evidence | not built. Every receipt says its bound rests on the agent's own model. The outside signatures it carries are checked and pin the moment to a few seconds, and nothing issues a receipt whose width rests on them. The format can say so and the verifier refuses the claim unless all three roles check out |
 | Order within a chain | not built. A receipt carries a sequence number and a link to the one before it, both signed, and nothing here compares two receipts |
 | A public log of agent keys | not built. A receipt proves whoever signed it held that key and nothing about who that was |
 
@@ -118,7 +121,8 @@ sources reach alone.
 A receipt is worth something only if a stranger can check it, and that takes three different kinds of
 evidence.
 
-- **An authenticated UTC corridor** makes the bound checkable by a stranger. A Roughtime response,
+- **An authenticated UTC corridor** puts a signed interval round the moment that a stranger can
+  check. A Roughtime response,
   where we generate the nonce and the server signs ours. It does not make the bound tighter: a
   Roughtime radius is a whole number of seconds, and the three public servers reachable on
   2026-09-07 were stating one, three and five.
@@ -159,8 +163,8 @@ on the shipped settings the agent refuses about sixteen minutes after the source
 rather than reporting a number too wide to be worth anything, and that figure and the widths behind
 it come from the simulated harness rather than from a real network.
 
-**About the evidence.** An authenticated corridor makes the bound checkable and does not make it
-tighter, because a Roughtime radius is seconds. A beacon's signature covers a round number and not a
+**About the evidence.** An authenticated corridor makes the moment checkable to within seconds and
+does not make the bound tighter, because a Roughtime radius is seconds. A beacon's signature covers a round number and not a
 time, and rests on no coalition holding enough of a shared key. A beacon pins the receipt, not the
 thing being stamped. A final witness attests the payload rather than the receipt, and is checked
 against a certificate pinned in advance rather than chained to a root. Where parties who are meant to
