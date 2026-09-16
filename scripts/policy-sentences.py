@@ -59,11 +59,32 @@ clause asserts or denies it. The clause is what the denial is scoped to, so "No 
 checked, including A, B and C, requires clock accuracy" is one denial and "It refuses to sign, so it
 prevents the build" is a denial and then a claim.
 
-What it cannot do. A denial is read from the clause, so a claim followed in the same clause by a
-negation of something else, "it averages the readings but not the outliers", is read as denied. A
-sentence that says the wrong thing in words none of the lists carries gets past it, and somebody adds
-the word. A figure it has no rule for is not checked here; `tests/check-messaging-figures.py` at the
-product root holds figures to the artefacts they came from.
+What a cold reader found on 2026-09-16, and what changed for it. Two sentence sets written from the
+the rules of what this product may say, before this file was opened, were refused 26 of 45 and 22 of 45 while three sets whose
+misses had been folded in scored 45, 35 and 42, so the seeds were measuring the seeds. The eight
+classes they found are rules now, and each is written as the class rather than the sentence: the
+three millisecond figures rule 1 of what this product may say names as somebody else's, and the two the simulated harness
+produced, are refused beside a first-person subject without the attribution; accuracy as a bare noun
+with a positive predicate, as ours, or as a thing delivered or guaranteed; Roughtime called a standard,
+held to the standing its own client states; our own number said to be, to count as or to be treated as
+evidence of any kind, whatever verb links them; each evidence role held to the direction it proves; the
+gating verbs when negated, the neutral objects a CI gate acts on, and the noun forms of enforcement;
+averaging by particle or by arithmetic; the verifiable delay function said to prove elapsed time; and
+accreditation or qualified status claimed in the first person, where the phrase that let the honest
+denial through had been letting the claim through too. The denial test changed shape with them: the
+negated verb after a claim word has to be that word's own predicate, with no conjunction between,
+so a trailing "and no hardware is required" denies nothing; `do`, `does` and `did` are denials; and
+"nothing" counts only as the claim word's own object. Every set is fitted the moment its classes go
+in, so the number that measures this file is the next cold set and never one of these.
+
+What it cannot do. Metaphor: "your machine stops lying about the time" and "the door already shut"
+say the forbidden thing in words no list carries. A negation of something else that sits before the
+claim word in the same clause with no comma, "a stranger who trusts none of us can lean on the
+servers' word that the bound is correct", is read as a denial. A pronoun standing for an outside
+party, "they certify how far from UTC it could have been", names nothing this reads. And each rule's
+honest register, the words that make a mention honest, is a list a writer could ride: "comes from
+accreditation" beside a claim passes the claim. A figure it has no rule for is not checked here;
+`tests/check-messaging-figures.py` at the product root holds figures to the artefacts they came from.
 
 Served pages are read as text and as the attributes a reader is given without seeing the page: the
 meta description, every alt, title and aria-label, and the page title. Until 2026-09-15 served mode
@@ -91,10 +112,17 @@ SITE_PAGES = ['/', '/cannot-prove', '/how-a-receipt-works', '/for-maintainers', 
 # job summary, yields nineteen; an emptied file yields none.
 SENTENCE_FLOOR = 5
 
-# Keys in the site's content files that are notes to whoever edits them and never reach a page. The
-# build sheds them, and `doNotSay` is the list of what not to say, so it is made of wrong sentences.
-NOT_SERVED = re.compile(r'^\$|^src$|^id$|Note$|^provenance$|^departsFromSource$|^carriedLimit$|^doNotSay$|'
-                        r'^claimsUsed$|^srcNote$|^gapNote$|^editorNote$|^note_?src$')
+# Keys in the site's content files whose own string is a note to whoever edits them and never
+# reaches a page: an id, a source, a provenance line, an editor's note. The test is made against the
+# key that holds the string and against nothing above it. Until 2026-09-16 it was made against every
+# key on the way down, so `Note$` matched `commandNote` and pruned the whole object under it, and
+# `install.commandNote.text`, which the front page prints under the install command, was not read: a
+# dishonest sentence planted there exited 0 with the count unmoved at 1618, while the same sentence
+# one key over exited 1. Two keys hold objects that are editorial in full and are named here rather
+# than matched: `claimsUsed` is the register of which claim each block drew on, and `doNotSay` is the
+# list of what not to say, so it is made of wrong sentences on purpose.
+NOT_SERVED = re.compile(r'^\$|^src$|^id$|Note$|^provenance$|^departsFromSource$|^carriedLimit$|^note_?src$')
+NOT_SERVED_OBJECTS = {'claimsUsed', 'doNotSay'}
 
 WORDS = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8,
          'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12, 'fifteen': 15, 'sixteen': 16, 'twenty': 20,
@@ -167,6 +195,12 @@ def the_policy():
     radius = re.search(r'pub const MIN_RADIUS_SECONDS: u32 = (\d+);', roughtime_core)
     if not radius:
         raise Unreadable('MIN_RADIUS_SECONDS is not where this reads it')
+    # The client says at its head which document it implements and what standing that document has.
+    # A sentence calling Roughtime an RFC or a standard is held to this line, and the day the draft is
+    # published as one the line changes and this check stops reading until the rule below is revisited.
+    standing = re.search(r'(Internet-Draft with intended status \w+), not an RFC', roughtime_core)
+    if not standing:
+        raise Unreadable('roughtime.rs no longer says what standing the specification it implements has')
     known = {'NANOS_PER_SEC': 10**9, 'NANOS_PER_MILLI': 10**6, 'NANOS_PER_MICRO': 10**3,
              'MIN_RADIUS_SECONDS': int(radius.group(1))}
     one_shot = re.search(r'const CI_MAX_BOUND_WIDTH: Nanos = ([^;]+);', read('crates/cli/src/stamp_cmd.rs'))
@@ -222,11 +256,13 @@ def the_policy():
         'one_shot_ns': one_shot_ns,
         'action_ns': int(max_width.group(1)),
         'roughtime_operators': len(operators),
+        'roughtime_servers': len(names),
         'kinds': kinds,
         'kind_names': kind_names,
         'local_model_only': not sandwich_setters,
         'floor_lowerable': floor_lowerable,
         'refusal_receipt': refusal_receipt,
+        'roughtime_standing': 'an ' + standing.group(1),
     }
 
 
@@ -279,12 +315,13 @@ def site_strings(node, key=''):
         if node.get('name') == 'max-width' and 'default' in node:
             yield ('max-width input', f'max-width default {node["default"]} ns. {node.get("body", "")}')
         for k, v in node.items():
-            if not NOT_SERVED.search(k):
-                yield from site_strings(v, k)
+            if k in NOT_SERVED_OBJECTS:
+                continue
+            yield from site_strings(v, k)
     elif isinstance(node, list):
         for v in node:
             yield from site_strings(v, key)
-    elif isinstance(node, str):
+    elif isinstance(node, str) and not NOT_SERVED.search(key):
         yield (key, node)
 
 
@@ -296,11 +333,20 @@ ATTRIBUTE_TEXT = re.compile(r'<meta\b[^>]*\b(?:name|property)="(?:description|og
                             r'\b(?:alt|title|aria-label)="([^"]*)"|<title\b[^>]*>([^<]*)</title>', re.I)
 
 
+# A block element ends a sentence the way a blank line does in a content file, so the three items
+# of a list on the front page are three sentences and not one. Until 2026-09-16 every tag became a
+# space, and "signed evidence from independent outside parties of when it was taken Our own bound is
+# labelled inside the receipt as our claim" was read as one sentence and refused, because the outside
+# party of item three and the bound of the sentence after the list sat in one clause.
+BLOCK_TAG = re.compile(r'</?(?:p|li|ul|ol|dl|dt|dd|h[1-6]|div|section|article|header|footer|nav|aside|main|table|tr|td|th|'
+                       r'blockquote|figure|figcaption|pre|br|hr)\b[^>]*>', re.I)
+
+
 def served_text(url):
     page = urllib.request.urlopen(url, timeout=30).read().decode('utf-8')
     body = re.sub(r'(?is)<(script|style)\b.*?</\1>', ' ', page)
     spoken = [html.unescape(next(g for g in m.groups() if g is not None)) for m in ATTRIBUTE_TEXT.finditer(body)]
-    text = html.unescape(re.sub(r'<[^>]+>', ' ', body))
+    text = html.unescape(re.sub(r'<[^>]+>', ' ', BLOCK_TAG.sub('\n\n', body)))
     return text + '\n\n' + '\n\n'.join(s for s in spoken if s.strip())
 
 
@@ -357,17 +403,39 @@ LOWERING = re.compile(r'\b(?:lower|drop|reduce|relax|override|change|turn down|s
 # comma does not end one, so "No regulation we have checked, including A, B and C, requires X" is one
 # denial rather than four clauses with the "No" in the first, and "It refuses, so it prevents the
 # build" is a denial and then a claim.
-CLAUSE_BREAK = re.compile(r'[;:()]|,\s*(?=(?:and|but|so|which|while|whereas|yet|because|although|though|whose|where|'
-                          r'when|rather than|not|nor)\b)|(?<=\s)(?=(?:but|whereas|although|though|so that)\b)', re.I)
+CLAUSE_BREAK = re.compile(r'[;:()|]|,\s*(?=(?:and|but|so|which|while|whereas|yet|because|although|though|whose|where|'
+                          r'when|rather than|not|nor|thereby|therefore|hence|thus)\b)|'
+                          r'(?<=\s)(?=(?:but|whereas|although|though|so that|thereby|therefore|hence|thus)\b)', re.I)
 # What makes a clause a denial of the word the claim turns on: one of these before it in the clause,
-# or a denial of it within a few words after. "The third kind narrowed nothing", "An average of
-# clocks is not a measurement" and "a compliance claim built on any of them would be false" are the
-# second kind, and the few words are what keep "averages the readings from all its sources but not
-# the outliers" from counting as one.
+# or a denial of it in the words after, per DENIED_AFTER below. "The third kind narrowed nothing", "An
+# average of clocks is not a measurement" and "a compliance claim built on any of them would be
+# false" are the second kind; "averages the readings from all its sources but not the outliers" is
+# not one, because the "but" between the claim word and the negation means the negation is of
+# something else.
 DENIED_BEFORE = re.compile(r"^\W*(?:instead of|whether)\b|\b(?:no|not|never|nothing|none|nor|neither|cannot|without|refus\w*|declin\w*|"
                            r"rather than|far from|anything but|as opposed to|false|wrong|untrue|myth)\b|n't\b", re.I)
-DENIED_AFTER = re.compile(r'^\W*(?:\S+\s+){0,5}?(?:is|are|was|were|and|but|being|remains?|would be|could be)\s+'
-                          r'(?:not|never|no|false|wrong|untrue|nothing)\b|^\W*(?:\S+\s+){0,3}?(?:nothing|none|nobody|no one|neither)\b', re.I)
+# The denial after the word has to be of that word. Until 2026-09-16 this was any negation inside a
+# five-word window, and `and` and `but` were on its list of verbs, so "Certified microsecond accuracy
+# ships with the standard agent and no hardware is required" was read as a denial of the accuracy,
+# and one trailing selling point switched off four of the five claim rules. Now the words between the
+# claim word and its verb may not include a conjunction, so the negated verb is the claim word's own
+# predicate; `do`, `does` and `did` are on the list, because "AI Act Article 12 does not require
+# tamper-evidence" is the sentence rule 6 of what this product may say wants written and it was refused; and "nothing" or
+# "nobody" counts only as the claim word's own object, not as the subject of a following verb, so
+# "narrowed nothing" is a denial and "evidence nobody has to trust us for" is not.
+AUXILIARY = r"(?:is|are|was|were|be|being|been|remains?|does|do|did|has|have|had|can|could|will|would|shall|should|may|might|must)"
+NOT_A_CONJUNCTION = r"(?!(?:and|but|or|so|which|whose|whom|that|because|when|while|if|where|since|although|though|whereas|as|unless|until)\b)"
+DENIED_AFTER = re.compile(r"^\W*(?:" + NOT_A_CONJUNCTION + r"[\w'-]+\s+){0,5}?" + AUXILIARY + r"(?:\s+be)?(?:n't\b|\s+(?:not|never|no|nothing|false|wrong|untrue)\b)|"
+                          r"^\W*(?:" + NOT_A_CONJUNCTION + r"[\w'-]+\s+){0,5}?(?:would|could|might) be\b[^.;,]{0,30}?\brather than\b|"
+                          r"^\W*(?:(?:for|of|about|to|at|by|with|from|on|in)\s+)?(?:nothing|none|nobody|no one|no-one|neither)\b"
+                          r"(?=\s*(?:$|[.,;:!?)]|(?:about|from|of|to|at|for|in|on|by|with|else|at all|whatever|more|further|beyond|but|and)\b))|"
+                          r"^\W*(?:for|of|about|to|at|by|with|from|on|in)\s+no\b", re.I)
+# A comma starts a new clause when what follows it has a subject or a verb of its own, and stays
+# inside the clause when what follows is a list item or an aside: "No regulation we have checked,
+# including A, B and C, requires X" is one denial and "Never mind the weather, our bound is third-party
+# evidence" is an aside and then a claim.
+NEW_CLAUSE = re.compile(r"\b(?:is|are|was|were|be|been|has|have|had|does|do|did|will|would|can|could|should|may|might|must|"
+                        r"we|our|us|TimeWitness|it|its|they|their|you|your)\b", re.I)
 
 
 def clause_around(sentence, at):
@@ -385,21 +453,56 @@ def clause_around(sentence, at):
 ANSWER = re.compile(r'^\W*(?:A: )?(?:No|Yes)[,.:;]\s*', re.I)
 
 
+def same_clause(before):
+    """The part of `before` from the last comma that starts a new clause, per NEW_CLAUSE."""
+    start = at = 0
+    for i, segment in enumerate(before.split(',')):
+        if i and NEW_CLAUSE.search(segment):
+            start = at
+        at += len(segment) + 1
+    return before[start:]
+
+
+def denied_at(sentence, at, until, blank=None):
+    """Whether the clause holding the span [at, until) denies it. `blank` is another span in the
+    same clause whose words are not read for a negation, because they are the other half of the
+    match: "not later than" in an evidence role is the role and not a denial."""
+    c0, c1 = clause_around(sentence, at)
+    before = sentence[c0:at]
+    if blank and c0 <= blank[0] < at:
+        before = before[:blank[0] - c0] + ' ' * (blank[1] - blank[0]) + before[blank[1] - c0:]
+    before = ANSWER.sub('', before) if c0 == 0 else before
+    return bool(DENIED_BEFORE.search(same_clause(before))) or bool(DENIED_AFTER.match(sentence[until:c1]))
+
+
 def denied(sentence, match, group=0):
     """Whether the clause holding the word the claim turns on denies it."""
     at, until = match.span(group) if group and match.group(group) is not None else match.span()
-    c0, c1 = clause_around(sentence, at)
-    before = ANSWER.sub('', sentence[c0:at]) if c0 == 0 else sentence[c0:at]
-    return bool(DENIED_BEFORE.search(before)) or bool(DENIED_AFTER.match(sentence[until:c1]))
+    return denied_at(sentence, at, until)
+
+
+def clauses(sentence):
+    """The spans of the sentence's clauses."""
+    cuts = [(m.start(), m.end()) for m in CLAUSE_BREAK.finditer(sentence)]
+    starts = [0] + [end for _, end in cuts]
+    ends = [start for start, _ in cuts] + [len(sentence)]
+    return [(a, b) for a, b in zip(starts, ends) if b > a]
+
+
+def denied_pair(sentence, c0, c1, first, second):
+    """Whether the clause [c0, c1) denies a claim made of two spans in it. The later span is the
+    word the denial is read against and the earlier is blanked out of the words before it."""
+    a, b = (first, second) if first[0] <= second[0] else (second, first)
+    return denied_at(sentence, b[0], b[1], blank=a)
 
 
 # Outside parties, as the surfaces name them, and the width they may not be said to stand behind.
 OUTSIDE = (r'(?:(?:outside|third.party|external|neutral|disinterested)\s+'
            r'(?:evidence|signatures?|parties|witnesses|attestations?|signers?|operators?|servers?|sources?)|'
-           r'(?:independent|their|signed)\s+(?:evidence|signatures?|parties|witnesses|attestations?|signers?)|'
+           r'(?:independent|their|signed)\s+(?:evidence|signatures?|parties|witness(?:es)?|attestations?|signers?)|'
            r'(?:servers?|sources?|operators?|signers?)\'\s+(?:signatures?|word|say-so|names?)|independent (?:servers?|sources?)|'
            r'third parties|signers|strangers)')
-OURS = (r'(?:(?:the|that|its|our|this|a receipt\'s|the receipt\'s) (?:whole |entire |stated |full |error )?(?:bound|width|interval|second number|claim|error margin|margin|'
+OURS = (r'(?:(?:the|that|its|our|your|this|a receipt\'s|the receipt\'s) (?:whole |entire |stated |full |error |own )?(?:bound|width|interval|second number|claim|error margin|margin|'
         r'uncertainty|error bar)|how (?:wide|tight|narrow|big|small) (?:the|its|our|that) (?:bound|width|interval) (?:is|was)|'
         r'how far (?:from|off) UTC|how wrong (?:it|the clock|the reading) (?:could|might|may|can) (?:have )?be(?:en)?)')
 # Each has one group, the word the claim turns on, and the clause around that word is what is read
@@ -441,13 +544,79 @@ VOUCHING = [re.compile(p, re.I) for p in (
 NEVER_HEARD = re.compile(r'\bwho (?:have|has) never heard of (?:us|this product)\b', re.I)
 # A receipt said to be signed by anybody but the agent that issued it. The outside signatures inside a
 # receipt are on the signers' own answers, and the receipt itself is signed by the agent's key.
-RECEIPT_SIGNED_BY = re.compile(r'\breceipts?\b[^.;,]{0,30}?\b(?:is|are|gets?|was|were|being) ((?:counter)?signed by '
+RECEIPT_SIGNED_BY = re.compile(r'\breceipts?\b[^.;,]{0,30}?\b(?:(?:is|are|gets?|was|were|being) (?:counter)?signed by |'
+                               r'(?:bears?|carr(?:y|ies)|holds?) the (?:counter)?signatures? of )('
                                r'(?:(?:the |its |their )?(?:Roughtime |NTS |NTP |public |time |upstream |outside )?(?:servers?|sources?|signers?|operators?|corridor)\b|Roughtime|NTS|NTP|'
                                r'(?:a |an |the )?(?:third.part\w+|outside|independent|external|neutral|public)\b))', re.I)
 # NTS said to be evidence of any kind. Its keys are symmetric, so the machine holding one could
 # compose the answer it then checks, and the receipt format refuses it in every evidence role.
 NTS_EVIDENCE = re.compile(r'\bNTS\b[^.;]{0,80}?\b(evidence(?! role)|proof|attest\w*|portable|stranger|third.party|vouch\w*|'
-                          r'verifiable|checkable)\b', re.I)
+                          r'verifiable|checkable|witness\w*)\b|'
+                          r'\b(evidence(?! role)|proof|attest\w*|portable|stranger|third.party|vouch\w*|verifiable|checkable|witness\w*)\b'
+                          r'[^.;]{0,80}?\bNTS\b', re.I)
+# Our own number said to be, to count as, or to be treated as evidence, whatever kind of evidence
+# and whatever verb links them. VOUCHING above needed the evidence to be called outside or
+# third-party; "the interval is independently attested", "treat the agent's interval as the
+# independent witness" and "our own bound are the same kind of proof" said it without that word.
+OUR_NUMBER = r'(?:bound|width|interval|second number|model|reading|number|figure|error margin|uncertainty)s?'
+OWN_AS_EVIDENCE = [re.compile(p, re.I) for p in (
+    r'\b' + OUR_NUMBER + r'\b[^.;,]{0,40}?\b(?:is|are|as|counts? as|serves? as|stands? as|amounts? to|constitutes?|doubles? as|'
+    r'becomes?|supplies|supply|provides?|carries|carry|generates?|makes?) (?:\w+[ -]+){0,4}?'
+    r'((?:evidence|proof|attest\w*|witness\w*|vouched for|corroborated|underwritten|certified|notari[sz]ed|independently \w+))\b',
+    r'\b(?:treat\w*|read|take|count|accept|regard|use)\b[^.;,]{0,30}?\b' + OUR_NUMBER + r'\b[^.;,]{0,20}?\bas (?:\w+ ){0,3}?'
+    r'((?:evidence|proof|attestation|witness\w*))\b',
+    r'\b(?:evidence|proof|attestation|witness\w*)\b[^.;,]{0,30}?\b((?:generated|produced|computed|written|issued|made|supplied|'
+    r'provided|created|signed) by (?:our|the agent|us|TimeWitness|itself|the product|the receipt))\b',
+    r'\b' + OUR_NUMBER + r'\b[^.;]{0,60}?\b((?:the )?same (?:kind|sort|class|type|grade|level|weight)(?: of)? '
+    r'(?:evidence|proof|attestation|witness))\b',
+    r'\b(self.signed (?:\w+ ){0,2}?(?:is|as|counts? as) (?:\w+ ){0,3}?(?:evidence|proof|attestation|witness))\b',
+)]
+# The three evidence roles, and the direction each one proves. A public freshness beacon proves
+# not-earlier-than, because its value could not have been known before its round was published; an
+# independent final witness, a timestamp authority, a transparency log or a public anchor, proves
+# not-later-than, because it signed after the payload existed. A source given the other direction
+# is refused: "the freshness beacon proves the stamp was not made later than it says" was passing
+# on 2026-09-16 because nothing here knew which way each role points.
+ROLE_SOURCE = {
+    'freshness beacon': re.compile(r'\b(?:(?:freshness|public|randomness) )?beacons?\b|\bdrand\b|\bUChile\b', re.I),
+    'final witness': re.compile(r'\bRFC ?3161\b|\bRFC ?9921\b|\btime.?stamp(?:ing)? authorit(?:y|ies)\b|\bTSA\b|\btransparency logs?\b|'
+                                r'\bOpenTimestamps\b|\bpublic anchors?\b|\banchors? into a public chain\b|\bfinal witness(?:es)?\b|'
+                                r'\btime.?stamp tokens?\b', re.I),
+}
+ROLE_DIRECTION = {
+    'not-later-than': re.compile(r'\bnot[- ]later[- ]than\b|\bno later than\b|\bnot (?:been )?(?:made|taken|created|written|stamped|issued) '
+                                 r'(?:any )?later\b|\bat the latest\b|\bexisted by\b|\bby then\b|\bbefore (?:that|then|it says)\b', re.I),
+    'not-earlier-than': re.compile(r'\bnot[- ]earlier[- ]than\b|\bno earlier than\b|\bnot (?:been )?(?:made|taken|created|written|stamped|issued) '
+                                   r'(?:any )?earlier\b|\bat the earliest\b|\bafter (?:that|then|it says)\b|'
+                                   r'\bcould not have (?:been )?(?:known|existed|made) before\b', re.I),
+}
+ROLE_PROVES = {'freshness beacon': 'not-earlier-than', 'final witness': 'not-later-than'}
+# A verifiable delay function proves sequential work and never elapsed time (rule 4).
+DELAY_FUNCTION = re.compile(r'\b(?:verifiable )?delay functions?\b|\bVDFs?\b', re.I)
+ELAPSED = re.compile(r'\belapsed\b|\bseconds?\b|\bminutes?\b|\bhours?\b|\bhow long\b|\bduration\b|\bwall.?clock\b|\breal time\b|'
+                     r'\btime (?:passed|elapsed|has passed|went by)\b|\bpassage of time\b|\bmeasures? time\b|\bproves? time\b', re.I)
+# The three millisecond figures rule 1 of what this product may say names as somebody else's, each with the conditions it
+# belongs to, and the two the simulated harness produced. None of the five has been measured by
+# this product, so beside a first-person subject and without the attribution they are a claim.
+FOREIGN_FIGURES = [(re.compile(p, re.I), where) for p, where in (
+    (r'\b5 to 50 ?(?:ms|milliseconds?)\b', 'the public internet with no owned hardware'),
+    (r'(?<![\d.])(?:about |roughly |around |some |under |within )?1 ?(?:ms|millisecond)\b(?! of half)', 'a good LAN against a stratum-1 source'),
+    (r'(?<![\d.])(?:about |roughly |around |some )?100 ?(?:us|\u00b5s|\u03bcs|microseconds?)\b', 'a cloud instance with a hypervisor clock'),
+)]
+SIMULATED_FIGURES = re.compile(r'(?<![\d.])(?:26\.6|234\.6) ?(?:ms|milliseconds?)\b', re.I)
+OURS_SUBJECT = re.compile(r"\b(?:we|our|us|ours|TimeWitness|the agent|the product|this product|the clock|the bound|your bound|the stamp|"
+                          r"receipts?|you(?:'ll| will)? (?:see|get|reach)|expect)\b", re.I)
+OURS_MEASURED = re.compile(r'\b(?:we|our agent|TimeWitness|the agent|our clock|the clock) (?:\w+ ){0,2}?(?:measured?|measures|reach\w*|hold\w*|'
+                           r'see|sees|saw|achiev\w*|deliver\w*|get\w*|got|settl\w*|hit\w*|manag\w*|attain\w*)\b|\bour measured\b', re.I)
+ATTRIBUTED = re.compile(r'\bresearch\b|\bquot\w+\b|\bpublished\b|\bsomebody else|\bsomeone else|\bnot ours\b|\bnever (?:been )?measured|'
+                        r'\bnot (?:been )?measured|\bhas not been measured|\bbelongs?\b|\btypical(?:ly)?\b|\bliterature\b|\busually\b|'
+                        r'\bfor (?:ordinary|other people\'s|anybody else\'s) machines|\bpresented as ours\b', re.I)
+SIMULATED = re.compile(r'\bsimulat\w*|\bharness\b|\barithmetic of the model\b|\btest wrote\b|\bknown true offset\b', re.I)
+# Roughtime called a standard. Held to the standing the client's own head says the document has.
+ROUGHTIME_STANDARD = re.compile(r'\bRoughtime\b[^.;,]{0,40}?\b(RFC)\b(?!\s*\d)|'
+                                r'\bRoughtime\b[^.;,]{0,40}?\b((?:is|as|being|became|now) (?:an? |the )?(?:IETF |internet |published |full |'
+                                r'ratified |finished |final |proposed )?(?:RFC|standard))\b', re.I)
+STANDING_SAID = re.compile(r'\bdraft\b|\bnot an RFC\b|\bexpir\w*', re.I)
 OTHER_SOURCE = re.compile(r'\bRoughtime\b|\bNTP\b|\bdrand\b|\bbeacon\b|\bauthority\b|\bRFC\b', re.I)
 ONE_SOURCE = re.compile(r'\bno ordinary time sources\b|\bonly the corridor\b|'
                         r'\b(?:one|a single) (?:time )?source (?:client|kind)\b|'
@@ -473,6 +642,10 @@ HAS_CLIENT = re.compile(r'\bclients?\b|\bship\w*\b|\bsupports?\b|\bspeaks?\b|\bi
 # count of operators in a sentence about Roughtime and no other kind is that count, unless the
 # clause it sits in is about the floor, which FLOOR_COUNT holds.
 ROUGHTIME_COUNT = re.compile(r'\b(' + COUNT + r') ' + QUAL + r'(?:Roughtime )?operators\b', re.I)
+# The count of published Roughtime servers, stated as such: "Roughtime's four public servers".
+ROUGHTIME_SERVERS = re.compile(r'\b(' + COUNT + r') (?:public |published )Roughtime servers\b|'
+                               r'\bRoughtime\'s (' + COUNT + r') (?:public |published )?servers\b|'
+                               r'\b(' + COUNT + r') (?:public |published )servers\b', re.I)
 # The floor, wherever a sentence states it as a number.
 FLOOR_COUNT = [re.compile(p, re.I) for p in (
     r'\bfloor (?:of|is|at|sits at|stays at|was|remains|stands at) (' + COUNT + r')\b(?!\s*(?:ms|s|us|ns|seconds?|milliseconds?)\b)',
@@ -540,7 +713,15 @@ CLAIMS = [
         r'\b(?:reading|resolution|counter)\b[^.;,]{0,25}?\b(?:is|are) (?:also |the same as )?(?:its|our|the|their|an?) (accuracy)\b',
         r'\b(accuracy) of (?:about |roughly |under |better than |within )?\d',
         r'\b(precise (?:time|UTC))\b',
-        r'\b((?:precise|correct|exact|true|faithful|right) to (?:within |the |a |about |roughly )?(?:\d|a |the |one |nearest|nano|micro|milli|billionth|millionth|thousandth))',
+        r'\b((?:precise(?:ly)?|correct(?:ly)?|exact(?:ly)?|true|faithful(?:ly)?|right) to (?:within |the |a |about |roughly )?'
+        r'(?:\d|a |the |one |nearest|nano|micro|milli|billionth|millionth|thousandth))',
+        # Accuracy as a bare noun with a positive predicate, as ours, or as something delivered or
+        # guaranteed. "Accuracy is the whole product" and "Accuracy today is 128.7 milliseconds" are
+        # the claim whatever figure follows; "Milliseconds is the accuracy to UTC" is not.
+        r'\b(accuracy) (?:is|was|remains|matters|comes|today|of the fleet|improves?|gets? better|goes? up)\b',
+        r"\b(?:our|the agent's|TimeWitness's|the product's|the fleet's|the clock's) (?:[\w']+ )?(accuracy)\b",
+        r'\b(?:deliver|offer|give|provide|bring|guarantee|promise|achieve|reach|sell|boast)\w* (?:\w+ ){0,3}?(accuracy)\b',
+        r'\b(accura\w+)\b[^.;,]{0,30}?\bguarantee\w*\b',
         r'\b(within) (?:a |about |roughly |\d)[^.;,]{0,30}? of UTC\b',
         r'\b(exactly) when\b',
         r'\b(?:precise|correct|faithful|true|exact|synchroni[sz]ed|agree\w*|right)\b[^.;,]{0,20}?\b(to UTC)\b',
@@ -551,7 +732,10 @@ CLAIMS = [
         r'\b((?:clock |timing |time )?accuracy)\s*[:|]\s*(?:sub-?\w+|\d|nanosecond|microsecond|millisecond|to the)',
     ], None,
      r'\b(?:needs?|requires?|takes?|means?|is|are) (?:\w+ ){0,2}?hardware\b|\bdatacent(?:re|er)\b|\bdata cent(?:re|er)\b|'
-     r'somebody else|someone else|public research|\b(?:in|of|as) resolution\b',
+     r'somebody else|someone else|public research|\b(?:in|of|as) resolution\b|'
+     r'\b(?:anyone|anybody|whoever|those|people|vendors?|somebody|someone) (?:who |that )?(?:promis|sell|claim|offer|quot|advertis|tell)\w*\b|'
+     r"\b(?:cannot|can't|could not|will not|won't) (?:build|deliver|reach|promise|offer|sell|do|make|ship)\b|"
+     r"\bsource's own\b|\bits own accuracy\b|\bstates? (?:no|any) accuracy\b|\bconfused\b",
      'claims accuracy, and this product has resolution and a bound: bounded, never accurate (rule 1 of what this product may say)'),
     ('another source narrows the bound', [
         r'\b(?:adding|add|another|more|extra|additional|each (?:new|extra|additional)|every (?:new|extra|additional)|'
@@ -559,8 +743,10 @@ CLAIMS = [
         r'an? authenticated (?:source|corridor|kind)|' + COUNT + r' (?:\w+ )?(?:sources?|servers?|operators?|kinds?) instead of|'
         r'with ' + COUNT + r' (?:\w+ )?(?:sources?|servers?|operators?|kinds?)|(?:switching|turning) on (?:the |an? )?(?:\w+ )?(?:NTS|kind|source|client)|'
         r'point(?:ing|s|ed)? (?:it|the agent) at more)\b'
-        r'[^.;]{0,50}?\b((?:narrow|tighten|shrink|sharpen|shave|vanish|disappear|collaps)\w*|tighter|narrower|smaller|sharper|'
-        r'comes? down|goes? down|falls? away)\b',
+        r'[^.;]{0,50}?\b((?:narrow|tighten|shrink|sharpen|shave|vanish|disappear|collaps)\w*|improv\w* (?:\w+ ){0,2}?'
+        r'(?:bound|interval|width|accuracy|margin|uncertainty)\b|tighter|narrower|smaller|sharper|better|comes? down|goes? down|falls? away)\b',
+        r'\b((?:narrow|tighten|shrink|sharpen|improv)\w*|tighter|narrower|smaller|sharper|better) (?:\w+ ){0,3}?with '
+        r'(?:each|every|another|more|extra|additional)\b',
     ], None, None,
      'says another source narrows the bound, and a source of the same width narrows nothing: the third kind narrowed nothing '
      'and nobody may write that it did (rule 1 of what this product may say)'),
@@ -571,7 +757,20 @@ CLAIMS = [
         r'\b(?:back.?dat\w*|tamper\w*|attack\w*|rollback\w*|roll(?:ed|ing|s)? back|publish\w*|deploy\w*|releas\w*|forg\w*|fraud\w*|'
         r'spoof\w*|manipulat\w*|adversar\w*|attacker\w*|malicious|intruder\w*|offending|rogue|unauthori[sz]ed|fraudulent|'
         r'from (?:being|completing|happening|taking effect|going|running|landing|shipping)|in real time|at runtime|'
-        r'before (?:it|they) (?:can|could)|being (?:published|deployed|released|merged|shipped))',
+        r'before (?:it|they) (?:can|could)|being (?:published|deployed|released|merged|shipped)|'
+        # The neutral objects: what a CI gate would be said to act on. "Blocks any build whose clock
+        # has drifted" is the claim with no adversary word in it.
+        r'builds?\b|pipelines?\b|publication|merges?\b|commits?\b|pushes\b|tags?\b|workflows?\b|jobs?\b|artefacts?\b|artifacts?\b|'
+        r'packages?\b|images?\b|signatures?\b|(?:the |an? |any |every )action\b|promotion|the release|runs?\b|steps?\b)',
+        # The gating verbs are the claim when negated: "will not permit", "refuses to let ... continue".
+        r"\b((?:will not|won't|does not|doesn't|do not|don't|did not|never|cannot|can't|refuses? to|declines? to|is not going to) "
+        r"(?:permit|allow|let|authori[sz]e|tolerate|admit|clear|green.?light|wave through) (?:\w+ ){0,4}?"
+        r"(?:builds?|pipelines?|releases?|publication|deploy\w*|merges?|commits?|push(?:es)?|tags?|workflows?|jobs?|steps?|runs?|"
+        r"artefacts?|artifacts?|packages?|images?|signatures?|stamps?|receipts?|actions?|anything|it|them|through|continue|proceed|past|out))\b",
+        # The noun forms.
+        r'\b((?:prevention|blocking|interception|deterrence|suppression) of (?:\w+ ){0,2}?(?:tamper\w*|back.?dat\w*|rollbacks?|attacks?|'
+        r'fraud|forger\w*|spoofing|manipulation))\b',
+        r'\b((?:tamper|rollback|back.?dating|fraud|attack|replay) (?:prevention|blocking|suppression|interception))\b',
         r'\b(enforcement)\b',
         r'\b(tamper-? ?proof)\b',
         r'\b((?:cannot|can\'t|can not|could not|couldn\'t|will never|can never|impossible to|no way to|nobody can|no one can|never) '
@@ -579,12 +778,14 @@ CLAIMS = [
         r'\b(?:back.?dating|tampering|rollback|clock rollback|a rollback|rolling back)\b[^.;,]{0,20}?\b((?:is|are|becomes?|is made|are made) '
         r'(?:\w+ )?impossible)\b',
         r'\b(makes? (?:\w+ ){0,3}?(?:back.?dating|tampering|rollback|rolling back) impossible)\b',
-        r'\b((?:nothing|no (?:build|release|artefact|artifact|commit|deployment)) (?:\w+ )?(?:gets?|is|can be|will be|ever) '
-        r'(?:published|deployed|released|shipped|merged|promoted))\b',
+        r'\b((?:nothing|no (?:build|release|artefact|artifact|commit|deployment|merge|tag|package|image))\b[^.;,]{0,40}?'
+        r'\b(?:gets?|is|can be|will be|ever|may be|shall be) (?:published|deployed|released|shipped|merged|promoted|committed|pushed|'
+        r'tagged|accepted|signed off))\b',
         # The passive, and the two impossibility forms that name the adversary's act rather than ours.
-        r'\b(?:back.?dat\w*|tamper\w*|attacks?|rollbacks?|roll.?backs?|forger\w*|fraud|spoofing|manipulation)\b[^.;,]{0,20}?'
-        r'\b(?:is|are|was|were|gets?|get) ((?:blocked|prevented|stopped|halted|thwarted|forbidden|defeated|deterred|foiled|intercepted|'
-        r'ruled out|shut down))\b',
+        r'\b(?:back.?dat\w*|tamper\w*|attacks?|rollbacks?|roll.?backs?|forger\w*|fraud|spoofing|manipulation|deployments?|builds?|'
+        r'releases?|publication|merges?|commits?|pipelines?|the action)\b[^.;,]{0,20}?'
+        r'\b(?:is|are|was|were|gets?|get) (?:\w+ly )?((?:blocked|prevented|stopped|halted|thwarted|forbidden|defeated|deterred|foiled|'
+        r'intercepted|ruled out|shut down))\b',
         r'\b(?:tampered|back.?dated|forged|rolled.back|fraudulent|rogue|malicious|unauthori[sz]ed)\b[^.;,]{0,25}?'
         r'\b((?:cannot|can\'t|can never|will never|could never|never) (?:be )?(?:published|deployed|released|shipped|merged|go out|'
         r'get out|land|pass|slip through|get through))\b',
@@ -601,7 +802,8 @@ CLAIMS = [
      'claims enforcement, and TimeWitness declines to sign rather than preventing anything: a refusal records that it did not sign, '
      'not that an action was stopped (rule 3 of what this product may say)'),
     ('averaging', [
-        r'(?<!on )\b(averag\w*)\b',
+        r'(?<!on )\b(averag\w*)\b(?! (?:desktop|machine|laptop|user|person|day|case|network|round.?trip|latency|developer|reader))',
+        r'\b((?:summed|added up|added together|totalled|totaled)\b[^.;,]{0,30}?\bdivided\b|divided by the (?:number|count) of)\b',
         r'\b((?:the|a|an|simple|plain|arithmetic|weighted|straight|running) mean|mean of|mean (?:offset|time|reading|value|clock))\b',
         r'\b(median)\b',
         r'\b((?:midpoint|middle (?:value|point|reading|answer)) of (?:the |its |all )?(?:\w+ )?(?:readings|sources|answers|replies|responses|'
@@ -610,8 +812,7 @@ CLAIMS = [
         r'\b(consensus (?:of|between|among|value|time|offset)|midpoint between|the (?:one|value|reading|answer) in the middle|middle one)\b',
         r'\b(pool(?:ed|s|ing)?|blend(?:ed|s|ing)?|smooth(?:ed|s|ing)?)\b',
         r'\b(?:finds?|computes?|calculates?|derives?|arrives? at|determines?|works? out|settles? on|reports?) (?:the )?(true (?:time|UTC))\b',
-    ], r'\b(?:readings?|sources?|clocks?|answers?|replies|responses?|results?|samples?|measurements?|values?|offsets?|servers?|intervals?|'
-       r'timestamps?|time|UTC|estimate|model|rounds?)\b', None,
+    ], None, None,
      'says readings are averaged, and sources are combined by Marzullo intersection and never averaged: an average of clocks is '
      'not a measurement (rule 4 of what this product may say)'),
     ('legal weight', [
@@ -629,9 +830,22 @@ CLAIMS = [
         r'\b(regulators? (?:accept|recogni[sz]e|approve|require|treat)s?)\b',
         r'\b((?:certified|qualified|legal|official) (?:electronic )?time.?stamps?)\b',
         r'\b(eIDAS|AI Act|Article 12|17a-4|FINRA|MiFID|GDPR|Sarbanes|SOX|HIPAA|DORA|NIS ?2|21 CFR|Part 11|ISO ?27001|SOC ?2|ETSI|PCI.?DSS)\b',
-    ], None, r'\bfrom accreditation\b|\baccreditation\b[^.;,]{0,20}?\b(?:rather|not)\b|qualified trust service provider|\bstanding (?:in this area )?comes from\b',
+    # What makes the mention honest is saying where standing comes from, never the noun on its own:
+    # until 2026-09-16 "qualified trust service provider" was on this list, so "We are a qualified
+    # trust service provider for timestamping" passed on the entry written to let the denial through.
+    ], None, r'\bfrom (?:being )?(?:an? )?accredit\w*\b|\baccreditation\b[^.;,]{0,20}?\b(?:rather|not|confers?|is (?:the only|what))\b|'
+             r'\bstanding\b[^.;,]{0,25}?\bcomes from\b|\bcomes from (?:being )?(?:an? )?(?:accredit\w*|qualified|QTSP)\b',
      'claims legal weight or compliance, and standing comes from accreditation rather than engineering: no regulation we have '
      'checked requires a clock bound (rule 6 of what this product may say)'),
+    ('accreditation', [
+        r'\b(?:we|TimeWitness|the (?:agent|product|company)|our (?:company|product)) (?:is|are|am|remains?|became|become|were|was)\b'
+        r'[^.;,]{0,25}?\b((?:an? )?(?:accredited|qualified trust service|QTSP|certified|licen[sc]ed|approved|recogni[sz]ed))\b',
+        r'\b(our (?:eIDAS |own )?(?:accreditation|QTSP status|qualified status|licen[sc]e|certification|qualification))\b',
+        r'\b((?:eIDAS[- ])?qualified (?:trust service provider|status|time.?stamps?|electronic time.?stamps?)\b[^.;,]{0,30}?'
+        r'\b(?:is|are|ours|conferred|granted|held|comes with|ships))\b',
+    ], None, None,
+     'claims accreditation or qualified status, and this product holds neither: standing under eIDAS comes from being an '
+     'accredited qualified trust service provider, which we are not (rule 6 of what this product may say)'),
 ]
 CLAIMS = [(name, [re.compile(p, re.I) for p in patterns], re.compile(needs, re.I) if needs else None,
            re.compile(unless, re.I) if unless else None, message) for name, patterns, needs, unless, message in CLAIMS]
@@ -708,6 +922,15 @@ def judge(sentence, policy, landing=None):
                 continue
             break
     if re.search(r'\bRoughtime\b', sentence) and not re.search(r'\bNTP\b|\bNTS\b', sentence):
+        for m in ROUGHTIME_SERVERS.finditer(sentence):
+            count = next(g for g in m.groups() if g is not None)
+            try:
+                n = int(number_of(count))
+            except ValueError:
+                continue
+            if n != policy['roughtime_servers']:
+                faults.append(f'puts {n} published Roughtime servers where there are {policy["roughtime_servers"]}')
+            break
         for m in ROUGHTIME_COUNT.finditer(sentence):
             n = counted(m)
             c0, c1 = clause_around(sentence, m.start(1))
@@ -760,16 +983,59 @@ def judge(sentence, policy, landing=None):
         faults.append('says a receipt is signed by an outside party, and a receipt is signed by the agent\'s own key: the '
                       'outside signatures inside it are on the signers\' own answers (rule 2 of what this product may say)')
     for m in NTS_EVIDENCE.finditer(sentence):
-        c0, c1 = clause_around(sentence, m.start(1))
+        group = 1 if m.group(1) is not None else 2
+        c0, c1 = clause_around(sentence, m.start(group))
         clause = sentence[c0:c1]
         # NTS has to be the subject of the clause the evidence word sits in: in that clause, or in
         # the one before it with no other source named in this one.
         if 'NTS' not in clause and OTHER_SOURCE.search(clause):
             continue
-        if not denied(sentence, m, 1):
+        if not denied(sentence, m, group):
             faults.append('presents NTS as evidence, and NTS can never be portable evidence: its keys are symmetric, so the '
                           'machine holding one could compose the answer it then checks (rule 2 of what this product may say)')
             break
+
+    for rule in OWN_AS_EVIDENCE:
+        m = rule.search(sentence)
+        if m and not denied(sentence, m, 1):
+            faults.append('presents our own bound as evidence, and our own bound is labelled inside the receipt as our claim: only '
+                          'a signature a stranger can check is evidence (rule 2 of what this product may say)')
+            break
+    for c0, c1 in clauses(sentence):
+        clause = sentence[c0:c1]
+        for role, source in ROLE_SOURCE.items():
+            s = source.search(clause)
+            if not s:
+                continue
+            for direction, said in ROLE_DIRECTION.items():
+                d = said.search(clause)
+                if d and direction != ROLE_PROVES[role] and not denied_pair(sentence, c0, c1, (c0 + s.start(), c0 + s.end()),
+                                                                             (c0 + d.start(), c0 + d.end())):
+                    faults.append(f'gives a {role} the {direction} role, and a {role} proves {ROLE_PROVES[role]}: the three evidence '
+                                  f'roles do different jobs and none of them does another\'s (rule 2 of what this product may say)')
+                    break
+        v, e = DELAY_FUNCTION.search(clause), ELAPSED.search(clause)
+        if v and e and not denied_pair(sentence, c0, c1, (c0 + v.start(), c0 + v.end()), (c0 + e.start(), c0 + e.end())):
+            faults.append('says a verifiable delay function proves elapsed time, and it proves sequential work rather than elapsed '
+                          'seconds (rule 4 of what this product may say)')
+        m = ROUGHTIME_STANDARD.search(clause)
+        if m and not STANDING_SAID.search(clause):
+            group = 1 if m.group(1) else 2
+            if not denied_at(sentence, c0 + m.start(group), c0 + m.end(group)):
+                faults.append(f'calls Roughtime a standard, and the specification this code implements is {policy["roughtime_standing"]}')
+    for figure, where in FOREIGN_FIGURES:
+        for m in figure.finditer(sentence):
+            c0, c1 = clause_around(sentence, m.start())
+            clause = sentence[c0:c1]
+            if OURS_MEASURED.search(clause) or (OURS_SUBJECT.search(clause) and not ATTRIBUTED.search(sentence)
+                                                and not denied_at(sentence, m.start(), m.end())):
+                faults.append(f'writes {m.group().strip()} as ours, and it is somebody else\'s figure for {where}, quoted from public '
+                              'research and never measured by this product (rule 1 of what this product may say)')
+                break
+    m = SIMULATED_FIGURES.search(sentence)
+    if m and not SIMULATED.search(sentence):
+        faults.append(f'gives {m.group()} as a reading, and it is the arithmetic of the simulated harness at '
+                      'crates/clock/tests/common/mod.rs and says so wherever it is quoted (rule 1 of what this product may say)')
 
     if policy['kinds'] >= 2:
         m = ONE_SOURCE.search(sentence)
@@ -997,6 +1263,46 @@ SEEDS = [
     ('legal weight', 'Using TimeWitness satisfies SEC 17a-4 recordkeeping requirements out of the box.'),
     ('legal weight', 'Our receipts are admissible in court as certified legal timestamps.'),
     ('legal weight', 'These receipts will hold up in court.'),
+    # From the two cold sets of 2026-09-16, written from the rules of what this product may say before this file was opened,
+    # which refused 26 of 45 and 22 of 45 against the rules above: one or two sentences a class.
+    ('somebody else\'s figure written as ours', 'We measured 5 to 50 ms over the public internet, so your bound is never worse than that.'),
+    ('somebody else\'s figure written as ours', 'On a good LAN our agent holds about 1 ms against a stratum-1 source.'),
+    ('somebody else\'s figure written as ours', 'About 100 microseconds on a cloud instance is what TimeWitness reaches with a hypervisor clock.'),
+    ('a simulated figure given as a reading', 'The agent settles at 26.6 ms at synchronisation and 234.6 ms after fifteen minutes on real networks.'),
+    ('a simulated figure given as a reading', 'The bound narrows to 26.6 ms at synchronisation.'),
+    ('accuracy claimed', 'Accuracy is the whole product: we tell you the time correctly to the nanosecond.'),
+    ('accuracy claimed', 'Accuracy to UTC is guaranteed at one millisecond by the resident agent.'),
+    ('accuracy claimed', 'Accuracy today is 128.7 milliseconds and improving.'),
+    ('Roughtime called a standard', 'Roughtime is an RFC, so the corridor is standards-backed.'),
+    ('Roughtime server count stated wrongly', 'Roughtime\'s four public servers were probably unreachable; check your firewall.'),
+    ('our bound presented as evidence', 'Because our agent signs the interval, the interval is independently attested.'),
+    ('our bound presented as evidence', 'A Roughtime signature and our own bound are the same kind of proof.'),
+    ('our bound presented as evidence', 'Treat the agent\'s interval as the independent witness.'),
+    ('our bound presented as evidence', 'Every receipt carries independent evidence generated by our own agent.'),
+    ('our bound presented as evidence', 'The bound we compute is evidence nobody has to trust us for.'),
+    ('our bound presented as evidence', 'We are not a notary, we are the independent witness standing behind your own bound.'),
+    ('an evidence role swapped', 'The freshness beacon proves the stamp was not made later than it says.'),
+    ('an evidence role swapped', 'An RFC 3161 authority in the receipt proves the event was not earlier than the stamp.'),
+    ('NTS as evidence', 'Evidence of not-later-than comes from our NTS discipline.'),
+    ('enforcement', 'TimeWitness blocks any build whose clock has drifted out of bounds.'),
+    ('enforcement', 'The gate refuses to let the pipeline continue when the bound is too wide.'),
+    ('enforcement', 'TimeWitness will not permit a signature outside the corridor.'),
+    ('enforcement', 'Prevention of tampering is built into the agent.'),
+    ('enforcement', 'The agent, which refuses to sign, thereby prevents the action.'),
+    ('enforcement', 'Deployment is blocked automatically when the bound is exceeded.'),
+    ('enforcement', 'Nothing that happens outside the bound can be committed.'),
+    ('averaging', 'Outliers are averaged out rather than discarded.'),
+    ('averaging', 'The readings are summed and divided by the number of servers.'),
+    ('a verifiable delay function proving elapsed time', 'A verifiable delay function proves how many seconds actually elapsed.'),
+    ('accreditation claimed', 'We are a qualified trust service provider for timestamping.'),
+    ('accreditation claimed', 'eIDAS qualified status is conferred by the public verifier.'),
+    # The denial of something else, which switched four of the five claim rules off until 2026-09-16.
+    ('a denial of something else', 'Certified microsecond accuracy ships with the standard agent and no hardware is required.'),
+    ('a denial of something else', 'We average the sources and no hardware is required.'),
+    ('a denial of something else', 'TimeWitness receipts are legally admissible under eIDAS and no hardware is required.'),
+    ('a denial of something else', 'Our agent\'s own bound is the third-party evidence in every receipt and no hardware is required.'),
+    ('a denial of something else', 'Never mind the weather, our agent\'s own bound is the third-party evidence in every receipt.'),
+    ('a denial of something else', 'It averages the readings but not the outliers.'),
 ]
 
 # The sentences that replaced them and the sentences the surfaces carry that sit nearest a rule,
@@ -1064,11 +1370,60 @@ HONEST = [
     'A Roughtime corridor, where one is carried and checked, is signed by a key the reader holds, and every other operator name is the signer\'s word.',
     'Three operators publish the Roughtime servers we reach today.',
     'The agent\'s width ceiling refuses any bound wider than two hundred and fifty milliseconds.',
+    # The honest sentences the two cold sets of 2026-09-16 carried that were refused, and the ones
+    # nearest the rules added that day. Each has to pass while its neighbour in the list above is refused.
+    'Anyone promising you microsecond accuracy without hardware is selling something we cannot build.',
+    'A mean of clocks would be arithmetic rather than a measurement, which is why there is none here.',
+    'Standing under eIDAS comes from being an accredited QTSP, and we are not one.',
+    'No legal weight is claimed, and accreditation under eIDAS is the only thing that confers it.',
+    'AI Act Article 12 does not require tamper-evidence.',
+    'AI Act Article 12 does not require tamper-evidence, and we do not say that it does.',
+    'eIDAS does not apply to a private root.',
+    'SEC 17a-4 did not ask for a clock bound.',
+    'Our receipts do not carry legal weight.',
+    'The 5 to 50 ms figure is quoted from public research and has not been measured by us.',
+    'The 5 to 50 ms, the 1 ms and the 100 microsecond figures are quoted from public research and none of them has been measured by us.',
+    'About 1 ms on a good LAN against a stratum-1 source',
+    'That figure and the widths behind it, 26.6 ms at the moment of synchronising and 234.6 ms at fifteen minutes, come from the simulated harness at crates/clock/tests/common/mod.rs, whose whole purpose is that the true offset is a number the test wrote down; they are the arithmetic of the model rather than a reading from a real network.',
+    'A public freshness beacon proves not-earlier-than, because the beacon value could not have been known before its round was published.',
+    'An independent final witness proves not-later-than: an RFC 3161 timestamp authority, a transparency log, or an anchor into a public chain.',
+    'DigiCert signed for the payload hash, so the document existed no later than the moment its token states.',
+    'It cannot prove elapsed time from a verifiable delay function, which proves sequential work.',
+    'A delay function shows that sequential work was done, and it says nothing about how many seconds passed.',
+    'Roughtime is an Internet-Draft that expires on 18 September 2026.',
+    'A Roughtime corridor, a drand beacon and an RFC 3161 timestamp authority.',
+    'The interval is our own claim and the outside evidence does not vouch for it.',
+    'NTS improves the clock and can never be portable evidence.',
+    'Two of the four timestamps in an exchange are the source\'s, and so is its statement about its own accuracy.',
+    'Resolution and accuracy get confused constantly and the confusion is the whole problem this product exists to fix.',
+    'An agent that cannot reach its sources stops issuing receipts; it does not issue worse ones.',
+    'A refusal does not prevent anything, it records that we declined to sign.',
+    'We do not block a deploy; the receipt records what the clock could have been.',
+    'Nothing prevents a machine from lying about its own clock; the receipt makes the lie checkable.',
 ]
 
 
+def content_reader_reads_the_leaf():
+    """Whether site_strings prunes a note's own string and nothing above or beside it. Until
+    2026-09-16 a key that looked like a note pruned the object under it, and the front page's
+    install note went unread."""
+    seed = 'The install block says our clock is accurate to the microsecond.'
+    faults = []
+    for key in ('commandNote', 'gapNote', 'editorNote', 'srcNote', 'provenance', 'src', 'id', '$source'):
+        if list(site_strings({key: seed})):
+            faults.append(f'a string under the key {key} was read, and it is a note')
+        if [s for _, s in site_strings({key: {'text': seed}})] != [seed]:
+            faults.append(f'the object under the key {key} was pruned whole, and only its own string is a note')
+    for key in NOT_SERVED_OBJECTS:
+        if list(site_strings({key: [{'note': seed}, seed]})):
+            faults.append(f'a string under {key} was read, and that object is editorial in full')
+    if [s for _, s in site_strings({'install': {'commandNote': {'text': seed, 'src': 'x', 'id': 'y'}}})] != [seed]:
+        faults.append('install.commandNote.text is not read, and the front page prints it')
+    return faults
+
+
 def self_test(policy):
-    missed = []
+    missed = content_reader_reads_the_leaf()
     for rule, seed in SEEDS:
         faults = judge(seed, policy)
         if not faults:
@@ -1082,7 +1437,8 @@ def self_test(policy):
         if faults:
             print(f'policy sentences: an honest sentence was refused ({"; ".join(faults)}): {honest}', file=sys.stderr)
             return 1
-    print(f'policy sentences: {len(SEEDS)} seeds, each refused by its own rule, and {len(HONEST)} honest sentences passed')
+    print(f'policy sentences: {len(SEEDS)} seeds, each refused by its own rule, {len(HONEST)} honest sentences passed, and the '
+          f'content reader prunes a note and reads the object under a note-shaped key')
     return 0
 
 
