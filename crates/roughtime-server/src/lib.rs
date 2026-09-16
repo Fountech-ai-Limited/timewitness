@@ -121,6 +121,11 @@ pub enum Dropped {
     NoReading(String),
     /// The response could not be built, which is a fault in this server rather than in the request.
     CouldNotAnswer(String),
+    /// A datagram was lost on the way in, and the socket said why.
+    ///
+    /// There is no address on this one because a receive that failed did not bring one. See the
+    /// note on [`serve`] about what a failed receive is and is not evidence of.
+    CouldNotReceive(String),
     /// The response was built and the socket would not send it to that address.
     ///
     /// Dropped and counted rather than returned, from 2026-09-15. Until then one failed send ended
@@ -139,6 +144,9 @@ impl core::fmt::Display for Dropped {
             Dropped::NoReading(d) => write!(f, "this server will not date a response: {d}"),
             Dropped::CouldNotAnswer(d) => write!(f, "this server could not build a response: {d}"),
             Dropped::CouldNotSend(d) => write!(f, "the socket would not send the response: {d}"),
+            Dropped::CouldNotReceive(d) => {
+                write!(f, "a datagram was lost before it could be read: {d}")
+            }
         }
     }
 }
@@ -492,6 +500,75 @@ impl Default for RateLimit {
     }
 }
 
+/// After how many receive faults in a row the loop starts waiting between receives.
+///
+/// Eight. No honest burst reaches it, because a fault on the way in means a datagram was lost and
+/// the next receive normally finds either the next datagram or the read timeout, and both of those
+/// put the run back to nought. Eight in a row with neither means the socket is answering
+/// instantly and answering nothing, which is a spin rather than traffic.
+const FAULTS_BEFORE_WAITING: u32 = 8;
+
+/// How long to wait between receives once faults are arriving with nothing in between.
+///
+/// Twenty milliseconds. It is short enough to be invisible to a client that is being answered and
+/// long enough that a socket failing instantly costs a sleeping thread rather than a core. It also
+/// sets the clock on [`FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT`], which is the part that matters.
+const FAULT_WAIT: Duration = Duration::from_millis(20);
+
+/// After how many receive faults in a row the loop stops calling them datagrams and returns.
+///
+/// A thousand and twenty-four, and the count is doing less work here than [`FAULT_WAIT`] beside
+/// it. From the eighth fault on, every one of them costs a wait, so a run this long takes over
+/// twenty seconds in which the socket produced no datagram and not one timeout. That is the real
+/// test: not how many faults, but that the socket gave back nothing else for that long.
+///
+/// The number is chosen to be out of reach of anything a client can do, which is the whole point.
+/// Every fault a remote client can cause needs a packet from that client, and a packet arriving
+/// during the wait is a datagram waiting on the next receive, which puts the run back to nought.
+/// Reaching this by sending would mean a flood sustained for twenty seconds that never once let a
+/// datagram through, and the answer to a flood is not in this function. One packet must never
+/// reach it, and before 2026-09-16 one packet did.
+const FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT: u32 = 1024;
+
+/// Whether a receive error means nothing was waiting rather than that something went wrong.
+///
+/// Three kinds and they are not faults at all. `WouldBlock` and `TimedOut` are the read timeout
+/// expiring, which is how [`serve`] gets to look at `keep_going`, and `Interrupted` is a signal
+/// arriving while the thread sat in the receive. In all three the socket is working and there was
+/// simply nothing to read.
+fn nothing_was_waiting(kind: io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
+    )
+}
+
+/// What [`serve`] does about the `n`th receive fault in a row.
+///
+/// Split out from the loop so the policy can be read and tested on its own, because the loop
+/// having this policy written as a list of error kinds inline is what made the fault of
+/// 2026-09-16 possible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AfterAFault {
+    /// Count the lost datagram and receive again straight away.
+    CarryOn,
+    /// Count it, then wait before receiving again, so a socket failing instantly does not spin.
+    WaitFirst,
+    /// The socket has given back nothing but faults for long enough that it is the socket.
+    GiveUp,
+}
+
+/// The policy in one place: carry on, wait, or give up, by how long the run of faults is.
+fn after_a_fault(consecutive: u32) -> AfterAFault {
+    if consecutive >= FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT {
+        AfterAFault::GiveUp
+    } else if consecutive >= FAULTS_BEFORE_WAITING {
+        AfterAFault::WaitFirst
+    } else {
+        AfterAFault::CarryOn
+    }
+}
+
 /// Serve until `keep_going` says otherwise.
 ///
 /// `clock` is asked for a reading per request rather than once, because a server that cached its
@@ -502,12 +579,45 @@ impl Default for RateLimit {
 /// `watch` is handed every drop, so whatever is running this can count them. It is not a logger and
 /// nothing here writes to a stream.
 ///
+/// # A fault on the way in is about one datagram, and almost never about the socket
+///
+/// This is the part to read before changing anything here, because getting it wrong once already
+/// cost us a server.
+///
+/// Until 2026-09-16 this loop tolerated two error kinds on `recv_from` and returned on every other
+/// one. On Windows a client that asks and then closes its socket has the answer arrive at a port
+/// nobody is listening on, the host answers ICMP port-unreachable, and the next receive on this
+/// server's own unconnected socket returns `ConnectionReset`, os error 10054. Neither of the two
+/// tolerated kinds, so the loop returned and the server answered nobody while the process stayed
+/// up. One packet and a close, from anybody, with no authentication. Linux does not surface ICMP
+/// on an unconnected UDP socket without `IP_RECVERR`, which is why CI never saw it and why only a
+/// desktop run went red.
+///
+/// A list of tolerated kinds is the wrong shape for this and lengthening it would only push the
+/// same fault into whichever kind nobody thought of. What a receive error actually says is that
+/// this datagram, or the answer to the last one, did not arrive. It says nothing about whether the
+/// socket still works, and the great majority of the kinds that can appear here are the platform
+/// passing on news about somebody else's socket. So **no error kind ends this loop**. Every one of
+/// them costs one datagram, is handed to `watch` as [`Dropped::CouldNotReceive`], and the loop
+/// receives again.
+///
+/// The one thing left worth defending against is a socket that has genuinely stopped working and
+/// so fails instantly for ever, which would be a hot loop burning a core and answering nobody in
+/// silence. That is answered by the length of the run rather than by the kind: from
+/// [`FAULTS_BEFORE_WAITING`] faults in a row the loop waits [`FAULT_WAIT`] between receives, and
+/// at [`FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT`] it gives up and returns, which lets whatever runs
+/// this start it again. A single datagram, a single timeout, or a signal puts the run back to
+/// nought, and the wait is what keeps that ceiling out of a remote client's reach; see the note on
+/// the constant.
+///
 /// # Errors
 ///
-/// Anything the socket says on a read other than a timeout. A timeout is how `keep_going` gets
-/// looked at, so the socket wants a read timeout set before this is called. A failed send is not an
-/// error here: it is a drop, handed to `watch` as [`Dropped::CouldNotSend`], and the loop carries
-/// on to the next packet.
+/// Only what [`FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT`] describes: the socket gave back nothing but
+/// faults for over twenty seconds, so the last of them is returned. A failed send is not an error
+/// here and neither is a single failed receive: both are drops, handed to `watch` as
+/// [`Dropped::CouldNotSend`] and [`Dropped::CouldNotReceive`], and the loop carries on to the next
+/// packet. A read timeout is how `keep_going` gets looked at, so the socket wants one set before
+/// this is called.
 pub fn serve<D, C, K, W>(
     mut socket: D,
     server: &mut Server,
@@ -520,28 +630,47 @@ where
     D: Datagrams,
     C: FnMut() -> Option<Reading>,
     K: FnMut() -> bool,
-    W: FnMut(SocketAddr, &Dropped),
+    W: FnMut(Option<SocketAddr>, &Dropped),
 {
     let mut buffer = [0u8; MAX_DATAGRAM];
+    // How many receives in a row have come back a fault, with no datagram and no timeout between
+    // them. Nought almost always, and the only thing that can end this loop from the inside.
+    let mut faults: u32 = 0;
     while keep_going() {
         let (len, from) = match socket.recv_from(&mut buffer) {
-            Ok(got) => got,
-            Err(e)
-                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
-            {
-                continue
+            Ok(got) => {
+                faults = 0;
+                got
             }
-            Err(e) => return Err(e),
+            Err(e) if nothing_was_waiting(e.kind()) => {
+                faults = 0;
+                continue;
+            }
+            Err(e) => {
+                faults += 1;
+                match after_a_fault(faults) {
+                    AfterAFault::GiveUp => return Err(e),
+                    AfterAFault::WaitFirst => {
+                        watch(None, &Dropped::CouldNotReceive(e.to_string()));
+                        std::thread::sleep(FAULT_WAIT);
+                        continue;
+                    }
+                    AfterAFault::CarryOn => {
+                        watch(None, &Dropped::CouldNotReceive(e.to_string()));
+                        continue;
+                    }
+                }
+            }
         };
 
         if !limit.allows(from, Instant::now()) {
-            watch(from, &Dropped::RateLimited);
+            watch(Some(from), &Dropped::RateLimited);
             continue;
         }
 
         let Some(reading) = clock() else {
             watch(
-                from,
+                Some(from),
                 &Dropped::NoReading(
                     "the clock this server runs on has no usable bound, so it will not date a \
                      response"
@@ -554,17 +683,17 @@ where
         // Before answering rather than on a timer, so a server that has been idle for a day does
         // not answer its first request under an expired delegation.
         if let Err(e) = server.renew_if_due(reading.seconds) {
-            watch(from, &Dropped::CouldNotAnswer(e.to_string()));
+            watch(Some(from), &Dropped::CouldNotAnswer(e.to_string()));
             continue;
         }
 
         match server.answer(&buffer[..len], reading) {
             Ok(response) => {
                 if let Err(e) = socket.send_to(&response, from) {
-                    watch(from, &Dropped::CouldNotSend(e.to_string()));
+                    watch(Some(from), &Dropped::CouldNotSend(e.to_string()));
                 }
             }
-            Err(dropped) => watch(from, &dropped),
+            Err(dropped) => watch(Some(from), &dropped),
         }
     }
     Ok(())
@@ -857,11 +986,207 @@ mod tests {
             "the second request was answered"
         );
         assert_eq!(dropped.len(), 1);
-        assert_eq!(dropped[0].0, first);
+        assert_eq!(dropped[0].0, Some(first));
         assert!(
             matches!(dropped[0].1, Dropped::CouldNotSend(_)),
             "{:?}",
             dropped[0].1
+        );
+    }
+
+    /// A transport reading from a script, so a receive can be made to fail on demand.
+    ///
+    /// A real socket cannot be asked for `ConnectionReset` on a platform that does not produce it,
+    /// and the fault of 2026-09-16 only appears on Windows. This is how the loop's answer to a
+    /// failed receive gets tested everywhere rather than on one platform.
+    struct Scripted {
+        script: Vec<io::Result<(Vec<u8>, SocketAddr)>>,
+        sent: Vec<SocketAddr>,
+    }
+
+    impl Datagrams for Scripted {
+        fn recv_from(&mut self, buffer: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+            if self.script.is_empty() {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "nothing more"));
+            }
+            match self.script.remove(0) {
+                Ok((packet, from)) => {
+                    buffer[..packet.len()].copy_from_slice(&packet);
+                    Ok((packet.len(), from))
+                }
+                Err(e) => Err(e),
+            }
+        }
+
+        fn send_to(&mut self, _response: &[u8], to: SocketAddr) -> io::Result<usize> {
+            self.sent.push(to);
+            Ok(0)
+        }
+    }
+
+    /// Run the scripted transport for `rounds` turns of the loop.
+    #[allow(clippy::type_complexity)]
+    fn serve_script(
+        script: Vec<io::Result<(Vec<u8>, SocketAddr)>>,
+        rounds: i32,
+    ) -> (
+        Result<(), io::Error>,
+        Vec<SocketAddr>,
+        Vec<(Option<SocketAddr>, Dropped)>,
+    ) {
+        let mut server = a_server();
+        let mut transport = Scripted {
+            script,
+            sent: Vec::new(),
+        };
+        let mut dropped = Vec::new();
+        let mut left = rounds;
+        let outcome = serve(
+            &mut transport,
+            &mut server,
+            &mut RateLimit::default(),
+            || {
+                Some(Reading {
+                    seconds: NOW,
+                    radius_seconds: 1,
+                })
+            },
+            || {
+                left -= 1;
+                left > 0
+            },
+            |from, why| dropped.push((from, why.clone())),
+        );
+        (outcome, transport.sent, dropped)
+    }
+
+    #[test]
+    fn a_client_that_walks_away_costs_one_datagram_and_not_the_server() {
+        // The fault of 2026-09-16. A client asks and closes its socket, the answer reaches a port
+        // nobody is listening on, the host answers ICMP port-unreachable, and Windows hands that
+        // to the next receive on this server's own socket as ConnectionReset, os error 10054.
+        // Until this was fixed the loop returned on it and the server answered nobody afterwards.
+        let server = a_server();
+        let request = build_request(&[0x51u8; 32], &server.public_key());
+        let next: SocketAddr = "203.0.113.9:2002".parse().unwrap();
+        let (outcome, sent, dropped) = serve_script(
+            vec![
+                Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "os error 10054",
+                )),
+                Ok((request, next)),
+            ],
+            4,
+        );
+
+        assert!(
+            outcome.is_ok(),
+            "one lost datagram is not a socket fault: {outcome:?}"
+        );
+        assert_eq!(sent, vec![next], "the next request was answered");
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].0, None, "a failed receive brings no address");
+        assert!(
+            matches!(dropped[0].1, Dropped::CouldNotReceive(_)),
+            "{:?}",
+            dropped[0].1
+        );
+    }
+
+    #[test]
+    fn an_error_nobody_anticipated_does_not_end_the_loop_either() {
+        // The point of the fix, and the reason it is not a longer list of tolerated kinds: the
+        // kind nobody thought of is the one that takes the server off the air.
+        let server = a_server();
+        let request = build_request(&[0x52u8; 32], &server.public_key());
+        let next: SocketAddr = "203.0.113.10:2002".parse().unwrap();
+        let (outcome, sent, dropped) = serve_script(
+            vec![
+                Err(io::Error::other("a kind this loop was never told about")),
+                Ok((request, next)),
+            ],
+            4,
+        );
+
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert_eq!(sent, vec![next]);
+        assert_eq!(dropped.len(), 1);
+        assert!(matches!(dropped[0].1, Dropped::CouldNotReceive(_)));
+    }
+
+    #[test]
+    fn a_datagram_between_the_faults_puts_the_run_back_to_nought() {
+        // Which is what keeps the give-up ceiling out of a client's reach: every fault a client
+        // can cause needs a packet from that client, and that packet is a datagram.
+        let server = a_server();
+        let request = build_request(&[0x53u8; 32], &server.public_key());
+        let one: SocketAddr = "203.0.113.11:2002".parse().unwrap();
+        let two: SocketAddr = "203.0.113.12:2002".parse().unwrap();
+        let fault = || {
+            Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "os error 10054",
+            ))
+        };
+        let (outcome, sent, dropped) = serve_script(
+            vec![
+                fault(),
+                Ok((request.clone(), one)),
+                fault(),
+                Ok((request, two)),
+            ],
+            6,
+        );
+
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert_eq!(sent, vec![one, two], "both requests were answered");
+        assert_eq!(dropped.len(), 2, "and both lost datagrams were counted");
+    }
+
+    #[test]
+    fn the_policy_on_a_run_of_faults_is_carry_on_then_wait_then_give_up() {
+        assert_eq!(after_a_fault(1), AfterAFault::CarryOn);
+        assert_eq!(
+            after_a_fault(FAULTS_BEFORE_WAITING - 1),
+            AfterAFault::CarryOn
+        );
+        assert_eq!(after_a_fault(FAULTS_BEFORE_WAITING), AfterAFault::WaitFirst);
+        assert_eq!(
+            after_a_fault(FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT - 1),
+            AfterAFault::WaitFirst
+        );
+        assert_eq!(
+            after_a_fault(FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT),
+            AfterAFault::GiveUp,
+            "a socket answering nothing but faults is a socket, not a datagram"
+        );
+    }
+
+    #[test]
+    fn the_give_up_ceiling_cannot_be_reached_in_under_twenty_seconds() {
+        // The property that makes the ceiling safe to have at all. It is arithmetic rather than a
+        // measurement, and it is a test because the two constants are edited separately and either
+        // one moving alone would take the property away with nothing saying so.
+        let waiting = FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT - FAULTS_BEFORE_WAITING;
+        let shortest = FAULT_WAIT * waiting;
+        assert!(
+            shortest >= Duration::from_secs(20),
+            "a run of faults reaching the ceiling takes {shortest:?}, which is short enough for a \
+             client to sit through"
+        );
+    }
+
+    #[test]
+    fn the_three_kinds_that_mean_nothing_was_waiting_are_not_faults() {
+        assert!(
+            !nothing_was_waiting(io::ErrorKind::ConnectionReset),
+            "a reset is a lost datagram rather than a quiet socket, so it is counted"
+        );
+        assert!(
+            nothing_was_waiting(io::ErrorKind::TimedOut)
+                && nothing_was_waiting(io::ErrorKind::WouldBlock)
+                && nothing_was_waiting(io::ErrorKind::Interrupted)
         );
     }
 

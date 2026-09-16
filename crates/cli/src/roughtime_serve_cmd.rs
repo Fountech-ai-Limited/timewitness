@@ -214,21 +214,28 @@ pub fn run(args: &Args) -> Outcome {
             let kind = kind_of(dropped);
             if !said.contains(&kind) {
                 said.push(kind);
-                drops(format!("{from} got nothing: {dropped}"));
+                // A receive that failed brought no address with it, which is why the address is
+                // optional rather than a zero somebody would later read as a real one.
+                match from {
+                    Some(address) => drops(format!("{address} got nothing: {dropped}")),
+                    None => drops(format!("{dropped}")),
+                }
             }
         },
     );
 
     match outcome {
         // Unreachable while `keep_going` is always true, which it is: the loop only leaves on a
-        // socket fault, and a server that has lost its socket is not one that should look like it
-        // stopped tidily.
+        // socket that gave back nothing but faults for over twenty seconds, and a server that has
+        // lost its socket is not one that should look like it stopped tidily.
         Ok(()) => fail("this server stopped reading its own socket"),
-        Err(e) => fail(&format!("the socket this server reads failed: {e}")),
+        Err(e) => fail(&format!(
+            "the socket this server reads gave back nothing but faults, so it is the socket              rather than the datagrams: {e}"
+        )),
     }
 }
 
-/// Which of the five refusals this is, for counting rather than for reading.
+/// Which of the six refusals this is, for counting rather than for reading.
 fn kind_of(dropped: &Dropped) -> u8 {
     match dropped {
         Dropped::NotOurs(_) => 0,
@@ -236,6 +243,7 @@ fn kind_of(dropped: &Dropped) -> u8 {
         Dropped::NoReading(_) => 2,
         Dropped::CouldNotAnswer(_) => 3,
         Dropped::CouldNotSend(_) => 4,
+        Dropped::CouldNotReceive(_) => 5,
     }
 }
 

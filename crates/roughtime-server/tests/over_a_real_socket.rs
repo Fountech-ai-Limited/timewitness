@@ -238,3 +238,41 @@ fn a_server_with_no_usable_clock_answers_nobody() {
         reasons[0]
     );
 }
+
+#[test]
+fn a_client_that_asks_and_walks_away_does_not_stop_the_server() {
+    // The fault of 2026-09-16, and it is the reason this file was being read as a flake.
+    //
+    // A client asks and closes its socket before the answer arrives. The answer then reaches a port
+    // nobody is listening on. Windows has the host answer that with ICMP port-unreachable, and the
+    // server's next `recv_from` on its own unconnected socket returns `ConnectionReset`, os error
+    // 10054. Until this was fixed, `serve` tolerated two error kinds and returned on every other,
+    // so that one packet and a close took the server off the air for everybody while the process
+    // stayed up. One packet, no authentication, and nothing in the logs but a line about a socket.
+    //
+    // Linux does not surface ICMP on an unconnected UDP socket unless `IP_RECVERR` is set, so there
+    // the sequence is simply harmless and this test passes without ever exercising the path. That
+    // is also why CI never saw it and why only a desktop run went red, once in three.
+    let server = Running::start(60);
+
+    {
+        let walker = UdpSocket::bind("127.0.0.1:0").expect("a client port");
+        walker
+            .send_to(
+                &build_request(&[0x44; 32], &server.public_key),
+                server.address,
+            )
+            .expect("sent");
+        // Closed here, before the answer can be read.
+    }
+
+    // Long enough for the server to answer the closed port, for the host to answer that with ICMP,
+    // and for the loop to come round to a receive and be told about it.
+    std::thread::sleep(Duration::from_millis(300));
+
+    let request = build_request(&[0x45; 32], &server.public_key);
+    assert!(
+        server.ask(&request).is_some(),
+        "one client closing its socket does not stop the server answering anybody else"
+    );
+}
