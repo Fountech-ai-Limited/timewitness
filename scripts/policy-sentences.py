@@ -33,6 +33,8 @@ What it reads off the code, and nothing else:
   `crates/sources/src`
 - whether anything outside the tests issues a receipt resting on outside signatures
 - whether anything ships that lowers the floor, and whether a refusal receipt exists
+- which kinds those are, by the file each client sits in, so a protocol named as having a client
+  when no file carries one is refused by name
 
 Every one of those is held to the sentences. A sentence stating the floor, the Roughtime operator
 count or the kind count wrongly is refused, and so is one saying the Roughtime-only round is signed,
@@ -43,9 +45,25 @@ passive as well as the active. Until the evening of 2026-09-15 three of the fact
 nothing, and each of the other shapes was matched on the one sentence it was written from, so "at
 least two operators" and "the outside signatures back up the width" passed on every surface.
 
-What it cannot do. A sentence that says the wrong thing in a form none of the rules describes gets
-past it, and somebody adds the form. A figure it has no rule for is not checked here;
-`tests/check-messaging-figures.py` at the product root holds figures to the artefacts they came from.
+What it refuses on principle, because the fact is the design and not a number in the code. Until
+2026-09-16 every rule here held a sentence to a value read off the tree, and two independent test
+passes that day refused 7 of 24 and 5 of 29 fresh sentences: "Our clock is accurate to the
+millisecond", "TimeWitness prevents a backdated build from being published", "averages the readings
+from all its sources" and "receipts carry legal weight under eIDAS" all passed, because nothing here
+had a rule for them. Five claims are now refused wherever a clause asserts them and does not deny
+them: accuracy where the product has resolution, our own bound presented as outside evidence or NTS
+as evidence of any kind, enforcement of anything beyond declining to sign, readings averaged into a
+time, and legal weight or compliance. Each is written as the claim rather than as a wording of it: a
+list of the words the claim turns on, the clause each word sits in, and one test of whether that
+clause asserts or denies it. The clause is what the denial is scoped to, so "No regulation we have
+checked, including A, B and C, requires clock accuracy" is one denial and "It refuses to sign, so it
+prevents the build" is a denial and then a claim.
+
+What it cannot do. A denial is read from the clause, so a claim followed in the same clause by a
+negation of something else, "it averages the readings but not the outliers", is read as denied. A
+sentence that says the wrong thing in words none of the lists carries gets past it, and somebody adds
+the word. A figure it has no rule for is not checked here; `tests/check-messaging-figures.py` at the
+product root holds figures to the artefacts they came from.
 
 Served pages are read as text and as the attributes a reader is given without seeing the page: the
 meta description, every alt, title and aria-label, and the page title. Until 2026-09-15 served mode
@@ -75,18 +93,21 @@ SENTENCE_FLOOR = 5
 
 # Keys in the site's content files that are notes to whoever edits them and never reach a page. The
 # build sheds them, and `doNotSay` is the list of what not to say, so it is made of wrong sentences.
-NOT_SERVED = re.compile(r'^\$|^src$|Note$|^provenance$|^departsFromSource$|^carriedLimit$|^doNotSay$|'
+NOT_SERVED = re.compile(r'^\$|^src$|^id$|Note$|^provenance$|^departsFromSource$|^carriedLimit$|^doNotSay$|'
                         r'^claimsUsed$|^srcNote$|^gapNote$|^editorNote$|^note_?src$')
 
 WORDS = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8,
          'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12, 'fifteen': 15, 'sixteen': 16, 'twenty': 20,
-         'thirty': 30, 'forty': 40, 'fifty': 50, 'sixty': 60, 'ninety': 90, 'hundred': 100}
+         'thirty': 30, 'forty': 40, 'fifty': 50, 'sixty': 60, 'ninety': 90, 'hundred': 100,
+         'a couple of': 2, 'a pair of': 2, 'half a dozen': 6, 'a dozen': 12, 'dozen': 12}
+WORD = '(?:' + '|'.join(sorted(WORDS, key=len, reverse=True)) + ')'
 # A count, in digits or in words, as sentences about operators and kinds write it.
-COUNT = r'(?:\d+|' + '|'.join(WORDS) + r'|a single|single)'
-# A duration's number, which can also be "a", "an", "half a" or "a quarter of a".
-AMOUNT = (r'(?:\d+(?:\.\d+)?|half an?|a quarter of an?|an?|(?:' + '|'.join(WORDS) + r')(?:-(?:'
-          + '|'.join(WORDS) + r'))?)')
-UNIT = r'(ms|milliseconds?|s|seconds?)'
+COUNT = r'(?:\d+|' + WORD + r'|a single|single)'
+# A duration's number, which can also be "a", "an", "a full", "half a", "a quarter of a" or
+# "two hundred and fifty".
+AMOUNT = (r'(?:\d+(?:\.\d+)?|half an?|a quarter of an?|a full|an?|' + WORD + r' hundred(?: and ' + WORD
+          + r'(?:-' + WORD + r')?)?|' + WORD + r'(?:-' + WORD + r')?)')
+UNIT = r'(ms|milliseconds?|s|seconds?|minutes?)'
 
 
 class Unreadable(Exception):
@@ -191,6 +212,9 @@ def the_policy():
     # signs it and nothing carries it anywhere. A receipt of one would be a type of its own.
     refusal_receipt = any(re.search(r'struct RefusalReceipt|fn refusal_receipt', p.read_text(encoding='utf-8'))
                           for p in (ROOT / 'crates').glob('*/src/**/*.rs'))
+    # The kinds by name, from the file each client sits in: ntp.rs is NTP, roughtime.rs is Roughtime.
+    kind_names = {p.stem.upper() if len(p.stem) <= 3 else p.stem.title()
+                  for p in sources.rglob('*.rs') if 'impl TimeSource for' in p.read_text(encoding='utf-8')}
 
     return {
         'floor': int(floor.group(1)),
@@ -199,6 +223,7 @@ def the_policy():
         'action_ns': int(max_width.group(1)),
         'roughtime_operators': len(operators),
         'kinds': kinds,
+        'kind_names': kind_names,
         'local_model_only': not sandwich_setters,
         'floor_lowerable': floor_lowerable,
         'refusal_receipt': refusal_receipt,
@@ -210,9 +235,9 @@ def words_of(text):
 
 
 def sentences(text):
-    # A blank line ends a sentence whatever punctuation came before it, so the job summary's echo
-    # lines and a content file's strings are read one at a time rather than run together into one
-    # sentence that names nothing when it is refused.
+    # A blank line ends a sentence whatever punctuation came before it, so the job summary's
+    # paragraphs and a content file's strings are read one at a time rather than run together into
+    # one sentence that names nothing when it is refused.
     out = []
     for paragraph in re.split(r'\n\s*\n', text):
         out += [s for s in re.split(r'(?<=[.!?:;])\s+(?=[A-Z0-9])', words_of(paragraph)) if s]
@@ -234,7 +259,19 @@ def yaml_text(text):
 
 
 def summary_text(text):
-    return '\n\n'.join(m.group(1) for m in re.finditer(r'echo "([^"]*)"', text))
+    # The job summary is written one echo a line and a bare echo between paragraphs, so the lines of
+    # a paragraph are one text and a sentence that runs over a line break is read whole. Until
+    # 2026-09-16 each echo was its own paragraph, and "enforcement path in this design." was read as a
+    # sentence with its "there is no" on the line before.
+    paragraphs, current = [], []
+    for m in re.finditer(r'^\s*echo(?: "([^"]*)")?\s*$', text, re.M):
+        if m.group(1) is None:
+            paragraphs.append(' '.join(current))
+            current = []
+        else:
+            current.append(m.group(1))
+    paragraphs.append(' '.join(current))
+    return '\n\n'.join(p for p in paragraphs if p)
 
 
 def site_strings(node, key=''):
@@ -272,12 +309,17 @@ def number_of(token):
     token = token.strip().lower()
     if re.match(r'[\d.]+$', token):
         return float(token)
-    if token in ('a', 'an', 'a single', 'single'):
+    if token in WORDS:
+        return float(WORDS[token])
+    if token in ('a', 'an', 'a single', 'single', 'a full'):
         return 1.0
     if token.startswith('half'):
         return 0.5
     if token.startswith('a quarter'):
         return 0.25
+    hundreds = re.match(r'(\w+) hundred(?: and (.+))?$', token)
+    if hundreds:
+        return 100 * number_of(hundreds.group(1)) + (number_of(hundreds.group(2)) if hundreds.group(2) else 0)
     total = 0
     for part in token.split('-'):
         if part not in WORDS:
@@ -288,11 +330,12 @@ def number_of(token):
 
 def duration_ns(number, unit):
     return round(number_of(number) * {'ms': 10**6, 'millisecond': 10**6, 'milliseconds': 10**6,
-                                      's': 10**9, 'second': 10**9, 'seconds': 10**9}[unit.lower()])
+                                      's': 10**9, 'second': 10**9, 'seconds': 10**9,
+                                      'minute': 60 * 10**9, 'minutes': 60 * 10**9}[unit.lower()])
 
 
 NEGATED_BEFORE = re.compile(r"\b(?:no|not|never|nothing|none|nor|cannot|without)\b|n't\b", re.I)
-ROUGHTIME_ONLY = re.compile(r'\bonly\b[^.,;]{0,30}?\bRoughtime\b(?! signs)|Roughtime alone|'
+ROUGHTIME_ONLY = re.compile(r'\bonly\b[^.,;]{0,30}?\bRoughtime\b(?! signs)|Roughtime(?: servers?)? alone|'
                             r'cannot reach an NTP server', re.I)
 PRESENT_SECONDS = re.compile(r'\b(?:is|are) seconds\b|\bseconds wide\b|\bstill reaches\b|\bSeconds is still\b|'
                              r'\bcan honestly (?:reach|do)\b|\bseconds on one\b|'
@@ -306,24 +349,89 @@ LOWERING = re.compile(r'\b(?:lower|drop|reduce|relax|override|change|turn down|s
                       r'(?:operator |independence )?floor\b|'
                       r'\bfloor (?:can|may|could|might) be (?:lowered|dropped|reduced|relaxed|set|changed|overridden|configured)\b|'
                       r'\bfloor is (?:configurable|adjustable|a setting|an option|a flag|yours to set)\b|'
+                      r'\bfloor\b[^.;]{0,30}?\b(?:was|were|is|has been|got|gets|will be) (?:reduced|lowered|dropped|cut|relaxed|'
+                      r'changed|set|configured|turned down|overridden)\b|'
                       r'\bone line of configuration\b|--min-operators|\bmin-operators input\b', re.I)
-# Each has one group, the word the claim turns on, and a negation is looked for in the clause before
-# that word rather than anywhere in the sentence: "does not vouch for the bound" is the honest
-# sentence and "who have never heard of us that supports it" is the fault.
+
+# A clause ends at a semicolon, a colon, a bracket, a conjunction, or a comma followed by one. A bare
+# comma does not end one, so "No regulation we have checked, including A, B and C, requires X" is one
+# denial rather than four clauses with the "No" in the first, and "It refuses, so it prevents the
+# build" is a denial and then a claim.
+CLAUSE_BREAK = re.compile(r'[;:()]|,\s*(?=(?:and|but|so|which|while|whereas|yet|because|although|though|whose|where|'
+                          r'when|rather than|not|nor)\b)|(?<=\s)(?=(?:but|whereas|although|though|so that)\b)', re.I)
+# What makes a clause a denial of the word the claim turns on: one of these before it in the clause,
+# or a denial of it within a few words after. "The third kind narrowed nothing", "An average of
+# clocks is not a measurement" and "a compliance claim built on any of them would be false" are the
+# second kind, and the few words are what keep "averages the readings from all its sources but not
+# the outliers" from counting as one.
+DENIED_BEFORE = re.compile(r"^\W*(?:instead of|whether)\b|\b(?:no|not|never|nothing|none|nor|neither|cannot|without|refus\w*|declin\w*|"
+                           r"rather than|far from|anything but|as opposed to|false|wrong|untrue|myth)\b|n't\b", re.I)
+DENIED_AFTER = re.compile(r'^\W*(?:\S+\s+){0,5}?(?:is|are|was|were|and|but|being|remains?|would be|could be)\s+'
+                          r'(?:not|never|no|false|wrong|untrue|nothing)\b|^\W*(?:\S+\s+){0,3}?(?:nothing|none|nobody|no one|neither)\b', re.I)
+
+
+def clause_around(sentence, at):
+    """The span of the clause holding position `at`."""
+    start, end = 0, len(sentence)
+    for m in CLAUSE_BREAK.finditer(sentence):
+        if m.end() <= at:
+            start = m.end()
+        elif m.start() > at:
+            end = m.start()
+            break
+    return start, end
+
+
+ANSWER = re.compile(r'^\W*(?:A: )?(?:No|Yes)[,.:;]\s*', re.I)
+
+
+def denied(sentence, match, group=0):
+    """Whether the clause holding the word the claim turns on denies it."""
+    at, until = match.span(group) if group and match.group(group) is not None else match.span()
+    c0, c1 = clause_around(sentence, at)
+    before = ANSWER.sub('', sentence[c0:at]) if c0 == 0 else sentence[c0:at]
+    return bool(DENIED_BEFORE.search(before)) or bool(DENIED_AFTER.match(sentence[until:c1]))
+
+
+# Outside parties, as the surfaces name them, and the width they may not be said to stand behind.
+OUTSIDE = (r'(?:(?:outside|third.party|external|neutral|disinterested)\s+'
+           r'(?:evidence|signatures?|parties|witnesses|attestations?|signers?|operators?|servers?|sources?)|'
+           r'(?:independent|their|signed)\s+(?:evidence|signatures?|parties|witnesses|attestations?|signers?)|'
+           r'(?:servers?|sources?|operators?|signers?)\'\s+(?:signatures?|word|say-so|names?)|independent (?:servers?|sources?)|'
+           r'third parties|signers|strangers)')
+OURS = (r'(?:(?:the|that|its|our|this|a receipt\'s|the receipt\'s) (?:whole |entire |stated |full |error )?(?:bound|width|interval|second number|claim|error margin|margin|'
+        r'uncertainty|error bar)|how (?:wide|tight|narrow|big|small) (?:the|its|our|that) (?:bound|width|interval) (?:is|was)|'
+        r'how far (?:from|off) UTC|how wrong (?:it|the clock|the reading) (?:could|might|may|can) (?:have )?be(?:en)?)')
+# Each has one group, the word the claim turns on, and the clause around that word is what is read
+# for a denial: "does not vouch for the bound" is the honest sentence and "who have never heard of us
+# that supports it" is the fault. The seventh names no verb: until 2026-09-16 it listed the verbs an
+# outside party could be said to do to the width, and "are what make the width believable" and "sign
+# off on how wide the bound is" were not on the list. An outside party and our width in one clause,
+# in that order and with nothing denying it, is the claim whatever verb carries it.
 VOUCHING = [re.compile(p, re.I) for p in (
     r'evidence[^.;]{0,80}?\b(supporting|for) (?:that|the|its|this) (?:bound|width|second number|interval)\b',
-    r'\b(vouch)(?:es)? for (?:that|the|its|this) (?:second number|bound|width|interval)\b',
+    r'\b(vouch)(?:es|ing)? for (?:that|the|its|this) (?:second number|bound|width|interval)\b',
     r'evidence[^.;]{0,120}?\bthat (supports) it\b',
     r'\bhow wrong it could be,? and (proves) it\b',
     r'\breceipt anyone (can) check without trusting\b',
     r'\b(makes) the bound checkable\b',
-    # Outside parties said to stand behind the width, whichever verb carries it.
-    r'\b(?:(?:outside|third.party|independent|external|their|signed)\s+(?:evidence|signatures?|parties|witnesses|attestations?)|signers)\b'
-    r'[^.;]{0,40}?\b(backs?|back up|backing|supports?|vouch(?:es)? for|underwrites?|confirms?|attests?(?: to)?|corroborates?|proves?|'
-    r'stands? behind|guarantees?|verif(?:y|ies)|certif(?:y|ies))\b[^.;]{0,25}?\b(?:the|that|its|our|this) (?:bound|width|interval|claim|second number)\b',
+    r'\b' + OUTSIDE + r'\b[^.;,]{0,60}?\b(' + OURS + r')\b',
+    r'\b(?:bound|width|interval|second number)\b[^.;,]{0,25}?\b(?:is|are) (?:something|what|a (?:number|figure|thing)) '
+    r'(?:the |that |those )?(' + OUTSIDE + r')\b',
+    # A named signer said to stand behind the width, and the width said to be signed by one.
+    r'\b(?:Roughtime|Cloudflare|Google|the (?:upstream |time |outside )?servers)\b(?: and \w+)?(?: servers?)? '
+    r'((?:confirms?|attests?|vouch\w*|certif\w*|stands? behind|backs?|signs? off|underwrites?|guarantees?|verif\w*)\b[^.;,]{0,40}?'
+    r'\b(?:bound|width|interval|margin|second number|uncertainty)\b)',
+    r'\b(?:bound|width|interval|margin|second number)\b[^.;,]{0,30}?\b(?:is|are|was|were|gets?) ((?:counter)?signed by (?:[\w-]+ ){0,3}?'
+    r'(?:Roughtime|NTS|NTP|servers?|sources?|operators?|signers?|third.part\w+|outside|independent|external|Cloudflare|Google)\b)',
     # The passive.
-    r'\b(?:bound|width|interval|second number)\b[^.;]{0,20}?\b(?:is|are|was|were|gets?) (backed|supported|vouched for|underwritten|confirmed|'
-    r'attested|corroborated|proved|proven|verified|guaranteed|certified) by\b',
+    r'\b(?:bound|width|interval|second number|claim|model)s?\b[^.;,]{0,30}?\b(?:is|are|was|were|gets?|has been|have been) '
+    r'(?:[\w-]+ ){0,3}?((?:backed|supported|vouched for|underwritten|confirmed|attested|corroborated|proved|proven|verified|'
+    r'guaranteed|certified|validated|endorsed|warranted|audited|signed off)(?: [\w-]+){0,3}? (?:by|from)\b)',
+    # Our own number said to be, or to count as, outside evidence.
+    r'\b(?:bound|width|interval|second number|model)s?\b[^.;,]{0,40}?\b(?:is|as|counts? as|serves? as|stands? as|amounts? to|'
+    r'constitutes?|doubles? as|becomes?) (?:\w+[ ,-]+){0,3}?((?:outside|third.party|independent|external|portable|'
+    r'stranger.checkable|neutral|signed|objective)[- ](?:evidence|proof|attestation))\b',
     # What a receipt is said to rest on, in the present tense. A bound "resting on" outside evidence
     # is the target the surfaces name and is not this.
     r'\b(?:receipts?|the (?:bound|width|interval|second number)|its (?:bound|width)|every receipt|each receipt)\b[^.;]{0,30}?'
@@ -331,57 +439,202 @@ VOUCHING = [re.compile(p, re.I) for p in (
 )]
 # The product's own phrase for a third party, which carries a "never" that negates nothing.
 NEVER_HEARD = re.compile(r'\bwho (?:have|has) never heard of (?:us|this product)\b', re.I)
+# A receipt said to be signed by anybody but the agent that issued it. The outside signatures inside a
+# receipt are on the signers' own answers, and the receipt itself is signed by the agent's key.
+RECEIPT_SIGNED_BY = re.compile(r'\breceipts?\b[^.;,]{0,30}?\b(?:is|are|gets?|was|were|being) ((?:counter)?signed by '
+                               r'(?:(?:the |its |their )?(?:Roughtime |NTS |NTP |public |time |upstream |outside )?(?:servers?|sources?|signers?|operators?|corridor)\b|Roughtime|NTS|NTP|'
+                               r'(?:a |an |the )?(?:third.part\w+|outside|independent|external|neutral|public)\b))', re.I)
+# NTS said to be evidence of any kind. Its keys are symmetric, so the machine holding one could
+# compose the answer it then checks, and the receipt format refuses it in every evidence role.
+NTS_EVIDENCE = re.compile(r'\bNTS\b[^.;]{0,80}?\b(evidence(?! role)|proof|attest\w*|portable|stranger|third.party|vouch\w*|'
+                          r'verifiable|checkable)\b', re.I)
+OTHER_SOURCE = re.compile(r'\bRoughtime\b|\bNTP\b|\bdrand\b|\bbeacon\b|\bauthority\b|\bRFC\b', re.I)
 ONE_SOURCE = re.compile(r'\bno ordinary time sources\b|\bonly the corridor\b|'
                         r'\b(?:one|a single) (?:time )?source (?:client|kind)\b|'
                         r'\b(?:only|just) (?:one|a single) (?:kind|sort|type) of (?:time )?source\b|'
                         r'\b(?:only|just) (?:Roughtime|NTP|NTS)\b[^.;]{0,20}?\bhas a client\b|'
                         r'\b(?:Roughtime|NTP|NTS) has the only client\b|\bthe only (?:time )?(?:source )?client\b', re.I)
+QUAL = r'(?:independent |distinct |different |separate |unrelated )?'
 # A count of the kinds that have a client, which is the count the code gives, and not a count of
-# the kinds in one round or of the variants an enum has.
+# the kinds in one round or of the variants an enum has. "N kinds of time source" anywhere is that
+# count: no surface writes the phrase about anything else.
 KIND_COUNT = [re.compile(p, re.I) for p in (
-    r'\b(' + COUNT + r') (?:kinds?|sorts?|types?) of (?:time )?sources?\b[^.;]{0,40}?\b(?:have|has|with|got|have got) (?:a |their own |its own )?clients?\b',
+    r'\b(' + COUNT + r') ' + QUAL + r'(?:kinds?|sorts?|types?) of (?:time )?sources?\b',
     r'\b(' + COUNT + r') source (?:kinds?|clients?)\b[^.;]{0,30}?\b(?:have|has|with|exist|are built|are implemented|in this repository|here)\b',
     r'\b(' + COUNT + r') (?:kinds?|sorts?|types?) (?:of (?:time )?sources? )?(?:this product|the product|the agent|it|this repository|the tree) (?:speaks|knows|polls|supports|implements|has|carries)\b',
     r'\b(?:this repository|the repository|the tree|the code|the agent|this product|the product|it) (?:speaks|has|carries|holds|implements|polls|knows) (' + COUNT + r') (?:kinds?|sorts?|types?) of (?:time )?sources?\b',
     r'\b(?:only|just) (' + COUNT + r') (?:kinds?|sorts?|types?) of (?:time )?sources?\b',
 )]
-# The count of operators behind the published Roughtime servers, stated as such.
-ROUGHTIME_COUNT = [re.compile(p, re.I) for p in (
-    r'\b(?:public|published|three|3) Roughtime servers?\b[^.;]{0,60}?\b(' + COUNT + r') (?:independent |distinct |different )?operators\b',
-    r'\b(' + COUNT + r') (?:independent |distinct |different )?Roughtime operators\b',
-    r'\bRoughtime\b[^.;]{0,40}?\b(?:run|operated|owned) by (' + COUNT + r')\b',
-    r'\bRoughtime (?:alone|only)\b[^.;]{0,30}?\b(?:reaches|is|gives|gets|means|counts) (' + COUNT + r') operators\b',
-    r'\b(' + COUNT + r') (?:independent |distinct |different )?operators (?:run|operate|stand behind|are behind|own) the (?:public |published |three )?Roughtime servers\b',
-)]
+# A protocol named as having a client here. Held to the file names under crates/sources/src.
+FOREIGN_KIND = re.compile(r'\b(PTP|SNTP|GPS|GNSS|PPS|White Rabbit|IEEE 1588|chrony|ntpd|IRIG|DCF77|WWVB|MSF|GLONASS|Galileo)\b')
+HAS_CLIENT = re.compile(r'\bclients?\b|\bship\w*\b|\bsupports?\b|\bspeaks?\b|\bimplements?\b', re.I)
+# The count of operators behind the published Roughtime servers, stated as such. Until 2026-09-16
+# five shapes each named the verb, and "Roughtime gives us four operators" was not one of them. A
+# count of operators in a sentence about Roughtime and no other kind is that count, unless the
+# clause it sits in is about the floor, which FLOOR_COUNT holds.
+ROUGHTIME_COUNT = re.compile(r'\b(' + COUNT + r') ' + QUAL + r'(?:Roughtime )?operators\b', re.I)
 # The floor, wherever a sentence states it as a number.
 FLOOR_COUNT = [re.compile(p, re.I) for p in (
     r'\bfloor (?:of|is|at|sits at|stays at|was|remains|stands at) (' + COUNT + r')\b(?!\s*(?:ms|s|us|ns|seconds?|milliseconds?)\b)',
-    r'\b(' + COUNT + r') (?:independent |distinct |different )?operators (?:is|are|were|would be|will) (?:the )?(?:floor|minimum|enough|sufficient|all it takes|required|needed|what it takes|plenty|do|suffice)\b',
-    r'\b(' + COUNT + r') (?:independent |distinct |different )?operators (?:suffices?|will do)\b',
-    r'\b(?:at least|no fewer than|a minimum of|fewer than|under|below|short of|needs?|requires?|takes?|wants?|before) (' + COUNT + r') (?:independent |distinct |different )?operators\b',
+    r'\bfloor\b[^.;]{0,40}?\b(?:reduced|lowered|dropped|cut|set|raised|changed|moved) to (' + COUNT + r')\b',
+    r'\b(' + COUNT + r') ' + QUAL + r'operators (?:is|are|were|would be|will be|will) (?:the )?(?:floor|minimum|bar|quorum|enough|sufficient|'
+    r'all it takes|required|needed|what it takes|plenty|do|suffice|all (?:\w+ ){0,3}?(?:takes|needs?|asks? for|wants?|requires?)|'
+    r'what (?:\w+ ){0,3}?(?:takes|needs?|asks? for|wants?|requires?))\b',
+    r'\b(' + COUNT + r') ' + QUAL + r'operators (?:suffices?|will do)\b',
+    r'\b(?:at least|no fewer than|a minimum of|a quorum of|quorum of|fewer than|under|below|short of|unless|until|needs?|requires?|'
+    r'takes?|wants?|asks? for|insists? on|before) (' + COUNT + r') ' + QUAL + r'operators\b',
     r'\b(?:at least|no fewer than|fewer than|a minimum of|minimum of) (' + COUNT + r')\b(?!\s*(?:ms|s|us|ns|seconds?|milliseconds?|sources?|servers?|names?|kinds?|of|beacons?|parties)\b)',
-    r'\b(?:minimum|floor) (?:is|of) (' + COUNT + r') (?:independent |distinct |different )?operators\b',
-    r'\b(' + COUNT + r') (?:independent |distinct |different )?operators (?:must|have to|need to) (?:stand|be|answer|agree)\b',
+    r'\b(?:minimum|floor|quorum) (?:is|of) (' + COUNT + r') ' + QUAL + r'operators\b',
+    r'\b(' + COUNT + r') ' + QUAL + r'operators (?:must|have to|need to) (?:stand|be|answer|agree)\b',
+    r'\b(' + COUNT + r') (?:is|was|remains|being) (?:the |our )?(?:shipped |current |operator )?(?:floor|minimum|quorum)\b',
 )]
+# Signing said to happen on fewer operators than the floor: "will happily sign with three operators".
+SIGNS_ON = re.compile(r'\b(?:signs?|signing|signed) (?:with|on|at|from) (?:just |only )?(' + COUNT + r') ' + QUAL + r'operators\b', re.I)
+# Sources said to be enough on their own. A source stands at one operator, so N sources cannot reach
+# a floor of more than N operators.
+SOURCES_ENOUGH = re.compile(r'\b(' + COUNT + r') (?:good |healthy |independent |single |working |reachable )?(?:time )?(?:sources?|servers?) '
+                            r'(?:is|are|would be|will be|was|were) (?:enough|sufficient|plenty|all it takes)\b', re.I)
 REFUSAL_RECEIPT = re.compile(r'\b(?:signed )?refusal receipts?\b', re.I)
 REFUSAL_HYPOTHETICAL = re.compile(r'\bwould\b|\bif one\b|\bnot yet\b|\bis not (?:built|shipped|issued)\b|\bphrase rather than\b|'
                                   r'\bthere is no\b|\bno refusal receipt\b', re.I)
-# A ceiling, in the forms a sentence gives one: refused over, up to, capped at, nothing wider than.
+# A ceiling, in the forms a sentence gives one: refused over, up to, capped at, nothing wider than,
+# holds itself to, at worst, will happily sign a bound of.
 CEILING = re.compile(r'(?:refuses? (?:any|an|one|a)(?: interval| bound| width| receipt)? (?:wider|over|more|past|beyond) (?:than )?|'
+                     r'refuses? anything (?:over|wider than|past|beyond|above|more than) |refused (?:past|over|beyond|above|wider than) |'
                      r'no (?:receipt|interval|bound|width) (?:wider|more|over|past|beyond) (?:than )?|'
-                     r'raises (?:that|it) to |ceiling (?:of|is|at) |(?:up to|at most|no wider than|no more than|as wide as|'
+                     r'rais(?:es|ed|ing) (?:that|it|the ceiling|the cap|its ceiling)? ?to |ceiling (?:of|is|at|sits at|stands at|is set at|was set at|is at|now at) |'
+                     r'(?:up to|at most|no wider than|no more than|as wide as|'
                      r'capped at|a cap of|caps? (?:the|its|a|every) (?:bound|width|interval|receipt) at|limit(?:ed|s)? (?:of|to|at)|'
-                     r'nothing (?:over|wider than|narrower than|past|beyond|above)|anything (?:narrower than|under|below|inside|within|up to)|'
+                     r'holds? (?:itself|the bound|the width|its bound) (?:to|at|under|within)|'
+                     r'(?:tolerates?|allows?|permits?) (?:a |an )?(?:bound|width|interval)s? (?:of|up to|as wide as)|'
+                     r'will (?:happily |gladly |still |readily )?(?:report|sign|issue|give|return|hand back|accept|allow|tolerate)[^.;]{0,25}?'
+                     r'\b(?:bound|width|interval|receipt)s? (?:of|as wide as|at|up to)|'
+                     r'nothing (?:over|wider than|narrower than|past|beyond|above)|anything (?:over|wider than|narrower than|under|below|inside|within|up to)|'
                      r'(?:signs?|accepts?|answers? with|hands? back|gives?)[^.;]{0,30}?\b(?:narrower than|under|below|inside|within)) )'
                      r'(' + AMOUNT + r') ?' + UNIT + r'\b|'
                      r'\b(' + AMOUNT + r') ?' + UNIT + r' (?:ceiling|cap|limit)\b|'
-                     r'\b(' + AMOUNT + r') ?' + UNIT + r'\b,? (?:is|are|which is|being) the (?:widest|most|largest|ceiling|cap|limit)\b', re.I)
+                     r'\b(' + AMOUNT + r') ?' + UNIT + r'\b,? (?:is|are|which is|being) the (?:widest|most|largest|ceiling|cap|limit)\b|'
+                     r'\b(' + AMOUNT + r') ?' + UNIT + r' at (?:worst|most|the (?:widest|outside|most))\b', re.I)
+# A width said to sit inside the ceiling, which is a claim the ceiling is at least that wide.
+INSIDE_CEILING = re.compile(r'\b(' + AMOUNT + r') ?' + UNIT + r' (?:is|are|sits|falls|lies|counts as|still) (?:well |comfortably |still |easily )?'
+                            r'(?:within|inside|under|below|acceptable|accepted|fine|allowed|permitted)\b[^.;]{0,40}?'
+                            r'\b(?:bound|ceiling|cap|limit|width|policy)\b', re.I)
 AGENT = re.compile(r'\bagent\b|\buptime\b|\bcadence\b', re.I)
 ONE_SHOT = re.compile(r'one-shot|\bAction\b|\bstamp command\b|\brunner\b|\bworkflow\b|max-width', re.I)
-MAX_WIDTH_DEFAULT = re.compile(r'\bdefault (?:of |is )?(?:the )?(' + AMOUNT + r') ?' + UNIT + r'\b|\bso (' + '|'.join(WORDS) + r') seconds\b|'
-                               r'\bmax-width (?:is|of|defaults? to|comes as|ships as|ships at|starts at|sits at) (' + AMOUNT + r') ?' + UNIT + r'\b|'
-                               r'\b(?:left unset|unset|out of the box|by default|if you do not set it|when nothing is set)\b[^.;]{0,30}?'
+MAX_WIDTH_DEFAULT = re.compile(r'\bdefault (?:of |is )?(?:the )?(' + AMOUNT + r') ?' + UNIT + r'\b|\bso (' + WORD + r') seconds\b|'
+                               r'\bmax-width(?: input)? (?:is|of|defaults? to|comes as|ships as|ships at|starts at|sits at) (' + AMOUNT + r') ?' + UNIT + r'\b|'
+                               r'\b(?:left unset|unset|out of the box|by default|if you do not set it|when nothing is set|unless you set|'
+                               r'if you don\'t set|if unset|when unset|with nothing set|absent a value)\b[^.;]{0,30}?'
                                r'\b(' + AMOUNT + r') ?' + UNIT + r'\b', re.I)
+
+# The claims refused on principle. Each is a rule of what this product may say, rather than a value read off
+# the code, and each row is the words the claim turns on, in a group where the claim turns on one
+# word inside a longer match; what else the sentence must carry for the words to be that claim;
+# what in the clause makes the mention honest whatever else it says; and what the refusal says.
+CLAIMS = [
+    ('accuracy', [
+        r'\b(accurate(?:ly)?)\b',
+        r'\b(?:nanosecond|microsecond|picosecond|sub-?millisecond|sub-?microsecond|ns|us|\u00b5s|\u03bcs)[- ](?:level |grade )?(accura\w*)',
+        r'\b(accura\w+) (?:to|of|at|within|down to) (?:the |a |an |about |roughly |within |under |better than |a few |some )?'
+        r'(?:\d+(?:\.\d+)? ?)?(?:nanosecond|microsecond|picosecond|ns\b|us\b|\u00b5s|\u03bcs)',
+        r'\b(?:reading|resolution|counter)\b[^.;,]{0,25}?\b(?:is|are) (?:also |the same as )?(?:its|our|the|their|an?) (accuracy)\b',
+        r'\b(accuracy) of (?:about |roughly |under |better than |within )?\d',
+        r'\b(precise (?:time|UTC))\b',
+        r'\b((?:precise|correct|exact|true|faithful|right) to (?:within |the |a |about |roughly )?(?:\d|a |the |one |nearest|nano|micro|milli|billionth|millionth|thousandth))',
+        r'\b(within) (?:a |about |roughly |\d)[^.;,]{0,30}? of UTC\b',
+        r'\b(exactly) when\b',
+        r'\b(?:precise|correct|faithful|true|exact|synchroni[sz]ed|agree\w*|right)\b[^.;,]{0,20}?\b(to UTC)\b',
+        r'\b(?:exact|precise|correct|right|true)\b[^.;]{0,40}?\b((?:down )?to the (?:last )?(?:nanosecond|microsecond|billionth|millionth|thousandth))',
+        r'\b(agree\w*|synchroni[sz]\w*|match\w*|aligned|in step) [^.;,]{0,25}?\bto the (?:nanosecond|microsecond|billionth|millionth)\b',
+        r'\b(nanosecond|microsecond|picosecond)[- ](?:timekeeping|synchroni[sz]ation|sync|UTC|truth|agreement|clock)\b',
+        r'\b(?:knows?|has|holds?|keeps?|tracks?|gives?|reports?|tells? you|shows?) (the true (?:time|UTC))\b',
+        r'\b((?:clock |timing |time )?accuracy)\s*[:|]\s*(?:sub-?\w+|\d|nanosecond|microsecond|millisecond|to the)',
+    ], None,
+     r'\b(?:needs?|requires?|takes?|means?|is|are) (?:\w+ ){0,2}?hardware\b|\bdatacent(?:re|er)\b|\bdata cent(?:re|er)\b|'
+     r'somebody else|someone else|public research|\b(?:in|of|as) resolution\b',
+     'claims accuracy, and this product has resolution and a bound: bounded, never accurate (rule 1 of what this product may say)'),
+    ('another source narrows the bound', [
+        r'\b(?:adding|add|another|more|extra|additional|each (?:new|extra|additional)|every (?:new|extra|additional)|'
+        r'a (?:second|third|fourth|fifth|sixth) (?:kind|source|server)|(?:the|that|this) third kind|NTS|'
+        r'an? authenticated (?:source|corridor|kind)|' + COUNT + r' (?:\w+ )?(?:sources?|servers?|operators?|kinds?) instead of|'
+        r'with ' + COUNT + r' (?:\w+ )?(?:sources?|servers?|operators?|kinds?)|(?:switching|turning) on (?:the |an? )?(?:\w+ )?(?:NTS|kind|source|client)|'
+        r'point(?:ing|s|ed)? (?:it|the agent) at more)\b'
+        r'[^.;]{0,50}?\b((?:narrow|tighten|shrink|sharpen|shave|vanish|disappear|collaps)\w*|tighter|narrower|smaller|sharper|'
+        r'comes? down|goes? down|falls? away)\b',
+    ], None, None,
+     'says another source narrows the bound, and a source of the same width narrows nothing: the third kind narrowed nothing '
+     'and nobody may write that it did (rule 1 of what this product may say)'),
+    ('enforcement', [
+        r'\b(prevents?|prevented|preventing|stops?|stopped|stopping|blocks?|blocked|blocking|halts?|halted|halting|thwarts?|'
+        r'thwarted|forbids?|forbade|defeats?|defeated|deters?|deterred|foils?|foiled|intercepts?|guards? (?:\w+ ){0,3}?against|'
+        r'protects? (?:\w+ ){0,3}?(?:against|from)|defends? (?:\w+ ){0,3}?against|rules? out|shuts? down)\b[^.;,]{0,45}?'
+        r'\b(?:back.?dat\w*|tamper\w*|attack\w*|rollback\w*|roll(?:ed|ing|s)? back|publish\w*|deploy\w*|releas\w*|forg\w*|fraud\w*|'
+        r'spoof\w*|manipulat\w*|adversar\w*|attacker\w*|malicious|intruder\w*|offending|rogue|unauthori[sz]ed|fraudulent|'
+        r'from (?:being|completing|happening|taking effect|going|running|landing|shipping)|in real time|at runtime|'
+        r'before (?:it|they) (?:can|could)|being (?:published|deployed|released|merged|shipped))',
+        r'\b(enforcement)\b',
+        r'\b(tamper-? ?proof)\b',
+        r'\b((?:cannot|can\'t|can not|could not|couldn\'t|will never|can never|impossible to|no way to|nobody can|no one can|never) '
+        r'be (?:back.?dated|tampered with|rolled back))\b',
+        r'\b(?:back.?dating|tampering|rollback|clock rollback|a rollback|rolling back)\b[^.;,]{0,20}?\b((?:is|are|becomes?|is made|are made) '
+        r'(?:\w+ )?impossible)\b',
+        r'\b(makes? (?:\w+ ){0,3}?(?:back.?dating|tampering|rollback|rolling back) impossible)\b',
+        r'\b((?:nothing|no (?:build|release|artefact|artifact|commit|deployment)) (?:\w+ )?(?:gets?|is|can be|will be|ever) '
+        r'(?:published|deployed|released|shipped|merged|promoted))\b',
+        # The passive, and the two impossibility forms that name the adversary's act rather than ours.
+        r'\b(?:back.?dat\w*|tamper\w*|attacks?|rollbacks?|roll.?backs?|forger\w*|fraud|spoofing|manipulation)\b[^.;,]{0,20}?'
+        r'\b(?:is|are|was|were|gets?|get) ((?:blocked|prevented|stopped|halted|thwarted|forbidden|defeated|deterred|foiled|intercepted|'
+        r'ruled out|shut down))\b',
+        r'\b(?:tampered|back.?dated|forged|rolled.back|fraudulent|rogue|malicious|unauthori[sz]ed)\b[^.;,]{0,25}?'
+        r'\b((?:cannot|can\'t|can never|will never|could never|never) (?:be )?(?:published|deployed|released|shipped|merged|go out|'
+        r'get out|land|pass|slip through|get through))\b',
+        r'\b(?:nobody|no one|no-one|none)\b[^.;,]{0,30}?\b((?:gets? to|can|could|is able to|will be able to|would be able to|may|shall)'
+        r'(?: ever)? (?:\w+ )?(?:tamper|back.?date|roll back|falsify))\b',
+        r'\b(stands? guard|standing guard|keeps? watch)\b',
+        r'\b(guarantee\w*)\b[^.;,]{0,30}?\b(?:back.?dat\w*|tamper\w*|rollback|rolled back|forg\w*)',
+        r'\b((?:rollback|tamper|back.?dating|replay) protection|protection (?:against|from) (?:rollback|tamper\w*|back.?dat\w*|replay))\b',
+        r'\b(enforces? (?:honest|correct|true|accurate|trustworthy|genuine) (?:time|timestamps?|stamps?|clocks?|dates?))\b',
+        r'\b(?:publication|publishing|releases?|deployments?|deploys?|builds?|merges?|shipping)\b[^.;,]{0,15}?'
+        r'\b((?:does not|doesn\'t|do not|don\'t|will not|won\'t|cannot|can\'t|is not allowed to|are not allowed to) '
+        r'(?:go ahead|proceed|happen|ship|go out|complete|run|land))\b',
+    ], None, None,
+     'claims enforcement, and TimeWitness declines to sign rather than preventing anything: a refusal records that it did not sign, '
+     'not that an action was stopped (rule 3 of what this product may say)'),
+    ('averaging', [
+        r'(?<!on )\b(averag\w*)\b',
+        r'\b((?:the|a|an|simple|plain|arithmetic|weighted|straight|running) mean|mean of|mean (?:offset|time|reading|value|clock))\b',
+        r'\b(median)\b',
+        r'\b((?:midpoint|middle (?:value|point|reading|answer)) of (?:the |its |all )?(?:\w+ )?(?:readings|sources|answers|replies|responses|'
+        r'clocks|servers|offsets|intervals|values))\b',
+        r'\b(split(?:s|ting)? the difference)\b',
+        r'\b(consensus (?:of|between|among|value|time|offset)|midpoint between|the (?:one|value|reading|answer) in the middle|middle one)\b',
+        r'\b(pool(?:ed|s|ing)?|blend(?:ed|s|ing)?|smooth(?:ed|s|ing)?)\b',
+        r'\b(?:finds?|computes?|calculates?|derives?|arrives? at|determines?|works? out|settles? on|reports?) (?:the )?(true (?:time|UTC))\b',
+    ], r'\b(?:readings?|sources?|clocks?|answers?|replies|responses?|results?|samples?|measurements?|values?|offsets?|servers?|intervals?|'
+       r'timestamps?|time|UTC|estimate|model|rounds?)\b', None,
+     'says readings are averaged, and sources are combined by Marzullo intersection and never averaged: an average of clocks is '
+     'not a measurement (rule 4 of what this product may say)'),
+    ('legal weight', [
+        r'\b(legal(?:ly)?)\b',
+        r'\b(evidenti(?:al|ary))\b',
+        r'\b((?:in|before|to) (?:a |the )?courts?|court-?(?:ready|grade|admissible|proof)|(?:hold|stand)s? up in court)\b',
+        r'\b(admissible (?:in|as))\b',
+        r'\b(non-?repudiation|notar\w*|barristers?|solicitors?|attorneys?|lawyers?|tribunals?|litigation|(?:the|a|your) hearing)\b',
+        r'\b((?:same|equal|equivalent|as much) (?:weight|standing|force|authority) (?:as|to)|carries (?:the )?(?:same |legal |full )?weight)\b',
+        r'\b(complian\w+(?: claim)?|compl(?:y|ies|ied|ying) with)\b',
+        r'\b((?:satisf|meet|fulfil|pass|tick|discharg)\w* (?:\w+ ){0,4}?(?:requirements?|regulations?|regulators?|rules?|standards?|'
+        r'obligations?|audits?|mandates?))\b',
+        r'\b((?:required|mandated|recognised|recognized|accepted|approved|endorsed) (?:by|under) (?:the |a )?(?:\w+ )?(?:regulat\w+|law|'
+        r'courts?|SEC|FINRA|eIDAS|EU|statute|auditors?))\b',
+        r'\b(regulators? (?:accept|recogni[sz]e|approve|require|treat)s?)\b',
+        r'\b((?:certified|qualified|legal|official) (?:electronic )?time.?stamps?)\b',
+        r'\b(eIDAS|AI Act|Article 12|17a-4|FINRA|MiFID|GDPR|Sarbanes|SOX|HIPAA|DORA|NIS ?2|21 CFR|Part 11|ISO ?27001|SOC ?2|ETSI|PCI.?DSS)\b',
+    ], None, r'\bfrom accreditation\b|\baccreditation\b[^.;,]{0,20}?\b(?:rather|not)\b|qualified trust service provider|\bstanding (?:in this area )?comes from\b',
+     'claims legal weight or compliance, and standing comes from accreditation rather than engineering: no regulation we have '
+     'checked requires a clock bound (rule 6 of what this product may say)'),
+]
+CLAIMS = [(name, [re.compile(p, re.I) for p in patterns], re.compile(needs, re.I) if needs else None,
+           re.compile(unless, re.I) if unless else None, message) for name, patterns, needs, unless, message in CLAIMS]
 
 
 def negated(sentence, match, group=0):
@@ -398,6 +651,29 @@ def counted(match):
         return int(number_of(match.group(1)))
     except ValueError:
         return None
+
+
+def claimed(sentence):
+    """Which of the principle claims the sentence asserts, each as its refusal."""
+    faults = []
+    if sentence.rstrip().endswith('?'):
+        return faults
+    for name, patterns, needs, unless, message in CLAIMS:
+        if needs and not needs.search(sentence):
+            continue
+        for pattern in patterns:
+            for m in pattern.finditer(sentence):
+                group = 1 if m.re.groups else 0
+                c0, c1 = clause_around(sentence, m.start(group))
+                if unless and unless.search(sentence[c0:c1]):
+                    continue
+                if not denied(sentence, m, group):
+                    faults.append(message)
+                    break
+            else:
+                continue
+            break
+    return faults
 
 
 def judge(sentence, policy, landing=None):
@@ -417,24 +693,29 @@ def judge(sentence, policy, landing=None):
             faults.append(f'says the Roughtime-only round is refused, and {rt} operators clear the floor of {floor}')
 
     # The three counts, each held to the code wherever a sentence states it.
+    floor_at = set()
     if re.search(r'\boperator', sentence, re.I):
         for rule in FLOOR_COUNT:
             for m in rule.finditer(sentence):
                 n = counted(m)
-                if n is not None and n != floor:
+                if n is None:
+                    continue
+                floor_at.add(m.start(1))
+                if n != floor:
                     faults.append(f'puts the operator floor at {n}, and it is {floor}')
                     break
             else:
                 continue
             break
     if re.search(r'\bRoughtime\b', sentence) and not re.search(r'\bNTP\b|\bNTS\b', sentence):
-        for rule in ROUGHTIME_COUNT:
-            m = rule.search(sentence)
-            if m:
-                n = counted(m)
-                if n is not None and n != rt:
-                    faults.append(f'puts {n} operators behind the published Roughtime servers, and there are {rt}')
-                break
+        for m in ROUGHTIME_COUNT.finditer(sentence):
+            n = counted(m)
+            c0, c1 = clause_around(sentence, m.start(1))
+            if n is None or m.start(1) in floor_at or re.search(r'\bfloor\b|\bminimum\b|\bquorum\b', sentence[c0:c1], re.I):
+                continue
+            if n != rt:
+                faults.append(f'puts {n} operators behind the published Roughtime servers, and there are {rt}')
+            break
     for rule in KIND_COUNT:
         m = rule.search(sentence)
         if m:
@@ -442,6 +723,23 @@ def judge(sentence, policy, landing=None):
             if n is not None and n != policy['kinds']:
                 faults.append(f'says {n} kinds of time source have a client, and {policy["kinds"]} do')
             break
+    if HAS_CLIENT.search(sentence):
+        for m in FOREIGN_KIND.finditer(sentence):
+            if m.group(1) not in policy['kind_names'] and not denied(sentence, m):
+                faults.append(f'names a {m.group(1)} client, and the kinds with a client are '
+                              f'{", ".join(sorted(policy["kind_names"]))}')
+                break
+    m = SIGNS_ON.search(sentence)
+    if m and not denied(sentence, m):
+        n = counted(m)
+        if n is not None and n < floor:
+            faults.append(f'says it signs on {n} operators, and the floor refuses below {floor}')
+    m = SOURCES_ENOUGH.search(sentence)
+    if m and not denied(sentence, m):
+        n = counted(m)
+        if n is not None and n < floor:
+            faults.append(f'says {n} source{"s" if n != 1 else ""} {"are" if n != 1 else "is"} enough, and a source stands '
+                          f'at one operator, so fewer than the floor of {floor} operators can never be enough')
 
     if not policy['floor_lowerable']:
         for m in LOWERING.finditer(sentence):
@@ -453,10 +751,25 @@ def judge(sentence, policy, landing=None):
         plain = NEVER_HEARD.sub('who are strangers to us', sentence)
         for rule in VOUCHING:
             m = rule.search(plain)
-            if m and not negated(plain, m, 1):
+            if m and not denied(plain, m, 1):
                 faults.append('says outside evidence supports the width, and every receipt this code issues '
                               'rests on its own model')
                 break
+    m = RECEIPT_SIGNED_BY.search(sentence)
+    if m and not denied(sentence, m, 1):
+        faults.append('says a receipt is signed by an outside party, and a receipt is signed by the agent\'s own key: the '
+                      'outside signatures inside it are on the signers\' own answers (rule 2 of what this product may say)')
+    for m in NTS_EVIDENCE.finditer(sentence):
+        c0, c1 = clause_around(sentence, m.start(1))
+        clause = sentence[c0:c1]
+        # NTS has to be the subject of the clause the evidence word sits in: in that clause, or in
+        # the one before it with no other source named in this one.
+        if 'NTS' not in clause and OTHER_SOURCE.search(clause):
+            continue
+        if not denied(sentence, m, 1):
+            faults.append('presents NTS as evidence, and NTS can never be portable evidence: its keys are symmetric, so the '
+                          'machine holding one could compose the answer it then checks (rule 2 of what this product may say)')
+            break
 
     if policy['kinds'] >= 2:
         m = ONE_SOURCE.search(sentence)
@@ -468,14 +781,7 @@ def judge(sentence, policy, landing=None):
         if m and not negated(sentence, m) and not REFUSAL_HYPOTHETICAL.search(sentence):
             faults.append('speaks of a refusal receipt as a thing that exists, and there is no refusal receipt')
 
-    for m in CEILING.finditer(sentence):
-        groups = [g for g in m.groups() if g is not None]
-        number, unit = groups[0], groups[1]
-        try:
-            value = duration_ns(number, unit.lower())
-        except ValueError:
-            continue
-        before = sentence[:m.start()]
+    def whose(before):
         # Whose ceiling the figure is, read off the nearest subject before it in the sentence, and
         # off the whole sentence where nothing comes before it.
         agent_at = max((a.end() for a in AGENT.finditer(before)), default=-1)
@@ -483,6 +789,16 @@ def judge(sentence, policy, landing=None):
         if agent_at < 0 and shot_at < 0:
             agent_at = 0 if AGENT.search(sentence) else -1
             shot_at = 0 if ONE_SHOT.search(sentence) else -1
+        return agent_at, shot_at
+
+    for m in CEILING.finditer(sentence):
+        groups = [g for g in m.groups() if g is not None]
+        number, unit = groups[0], groups[1]
+        try:
+            value = duration_ns(number, unit.lower())
+        except ValueError:
+            continue
+        agent_at, shot_at = whose(sentence[:m.start()])
         if agent_at < 0 and shot_at < 0:
             faults.append(f'states a ceiling of {number} {unit} without saying whose; the agent refuses '
                           f'over {policy["agent_ns"] / 1e6:g} ms and the one-shot command over '
@@ -491,6 +807,18 @@ def judge(sentence, policy, landing=None):
             faults.append(f'puts the agent\'s ceiling at {number} {unit}, and it is {policy["agent_ns"] / 1e6:g} ms')
         elif shot_at > agent_at and value != policy['one_shot_ns']:
             faults.append(f'puts the one-shot ceiling at {number} {unit}, and it is {policy["one_shot_ns"] / 1e9:g} s')
+    m = INSIDE_CEILING.search(sentence)
+    if m and not denied(sentence, m):
+        try:
+            value = duration_ns(m.group(1), m.group(2).lower())
+        except ValueError:
+            value = None
+        agent_at, shot_at = whose(sentence[:m.start()])
+        agent_at, shot_at = (0, -1) if agent_at < 0 and shot_at < 0 else (agent_at, shot_at)
+        ceiling, label = ((policy['agent_ns'], f'{policy["agent_ns"] / 1e6:g} ms') if agent_at >= shot_at
+                          else (policy['one_shot_ns'], f'{policy["one_shot_ns"] / 1e9:g} s'))
+        if value is not None and value > ceiling:
+            faults.append(f'puts {m.group(1)} {m.group(2)} inside the ceiling, and the ceiling is {label}')
 
     if 'max-width' in sentence:
         for m in MAX_WIDTH_DEFAULT.finditer(sentence):
@@ -511,6 +839,8 @@ def judge(sentence, policy, landing=None):
     if landing is not None and re.search(r'\bfront page says four to six\b', sentence, re.I) \
             and 'four to six' not in landing:
         faults.append('says the front page claims four to six independent sources, and the front page does not')
+
+    faults += claimed(sentence)
     return faults
 
 
@@ -623,6 +953,50 @@ SEEDS = [
     ('max-width default', 'Left unset, max-width is thirty seconds.'),
     ('max-width default', 'max-width defaults to 30 s.'),
     ('max-width default', 'Out of the box max-width is 30 s.'),
+    ('max-width default', 'Unless you set max-width, the ceiling is a minute.'),
+    # From 2026-09-16: the sentences two independent test passes wrote that day and this check let
+    # through, one or more per class, and the classes it had no rule for at all.
+    ('operator floor stated wrongly', 'Three operators is all a round needs before we will sign.'),
+    ('operator floor stated wrongly', 'We will not sign unless five separate operators answer.'),
+    ('operator floor stated wrongly', 'TimeWitness accepts a quorum of three independent operators before it will sign.'),
+    ('operator floor can be lowered', 'The floor for independent operators was reduced to two in the latest release.'),
+    ('sources said to be enough', 'One good source is enough to bound the clock.'),
+    ('Roughtime operator count stated wrongly', 'Roughtime gives us four operators today.'),
+    ('Roughtime operator count stated wrongly', 'Roughtime is run by half a dozen operators we can reach.'),
+    ('kind count stated wrongly', 'Our agent disciplines the clock against five independent kinds of time source.'),
+    ('a client that does not ship', 'We ship clients for Roughtime, NTP, NTS and PTP.'),
+    ('a ceiling stated wrongly', 'The agent will happily report a bound of 300 milliseconds.'),
+    ('a ceiling stated wrongly', 'The Action refuses anything over ten seconds.'),
+    ('a ceiling stated wrongly', 'The agent holds itself to a quarter of a second, or half a second at worst.'),
+    ('a ceiling stated wrongly', 'Six hundred milliseconds is within the agent\'s accepted bound today.'),
+    ('a ceiling stated wrongly', 'The resident agent will happily sign a receipt with a bound as wide as five hundred milliseconds.'),
+    ('outside evidence supports the width', 'The outside signatures are what make the width believable.'),
+    ('outside evidence supports the width', 'Independent parties sign off on how wide the bound is.'),
+    ('outside evidence supports the width', 'Our own bound is independently verified by a neutral third party before it ships.'),
+    ('outside evidence supports the width', 'The agent\'s measured bound counts as outside, stranger-checkable evidence on its own.'),
+    ('a receipt signed by an outside party', 'Every receipt is signed by Roughtime.'),
+    ('a receipt signed by an outside party', 'Every receipt is countersigned by the Roughtime operators.'),
+    ('NTS as evidence', 'NTS timestamps give a stranger portable, verifiable evidence of the bound.'),
+    ('NTS as evidence', 'Because NTS authenticates the packet, its evidence is as portable as Roughtime\'s.'),
+    ('accuracy claimed', 'Our clock is accurate to the millisecond.'),
+    ('accuracy claimed', 'The agent reports UTC with nanosecond accuracy.'),
+    ('accuracy claimed', 'The agent\'s nanosecond reading is also its accuracy figure against UTC.'),
+    ('accuracy claimed', 'TimeWitness delivers accurate time to the nanosecond on every stamp.'),
+    ('another source narrows the bound', 'Adding another server narrows the bound.'),
+    ('another source narrows the bound', 'NTS tightens the interval because the packet is authenticated.'),
+    ('another source narrows the bound', 'More sources means a tighter interval every time.'),
+    ('enforcement', 'TimeWitness prevents a backdated build from being published.'),
+    ('enforcement', 'The agent stops a clock rollback attack before it can take effect.'),
+    ('enforcement', 'TimeWitness blocks tampering with the build pipeline in real time.'),
+    ('enforcement', 'A stamped build cannot be backdated afterwards.'),
+    ('enforcement', 'The receipt is tamper-proof.'),
+    ('averaging', 'TimeWitness averages the readings from all its sources to compute true time.'),
+    ('averaging', 'The clock model takes a simple mean of the source clocks to find the correct offset.'),
+    ('averaging', 'The agent takes the median of the nine answers as the time.'),
+    ('legal weight', 'TimeWitness receipts carry legal weight under eIDAS once they are countersigned.'),
+    ('legal weight', 'Using TimeWitness satisfies SEC 17a-4 recordkeeping requirements out of the box.'),
+    ('legal weight', 'Our receipts are admissible in court as certified legal timestamps.'),
+    ('legal weight', 'These receipts will hold up in court.'),
 ]
 
 # The sentences that replaced them and the sentences the surfaces carry that sit nearest a rule,
@@ -655,6 +1029,41 @@ HONEST = [
     'What is left unknown is how unevenly the round trip was split between the two directions, and that residual is at most half the round trip.',
     'Where only Roughtime is reachable it now refuses, and the 12 s it reached there on 2026-09-08 is from before the operator floor.',
     'Measured on 2026-09-08 against the three public Roughtime servers, two passes each, before the operator floor that now refuses a round of those three alone:',
+    # The sentences the surfaces carry nearest each claim refused on principle, from 2026-09-16.
+    # Each has to pass while the seed beside it in the list above is refused.
+    'The reading is at nanosecond resolution and the accuracy to UTC is in milliseconds.',
+    'Nanoseconds is the resolution of the local read and never the accuracy to UTC.',
+    'Milliseconds is the accuracy to UTC.',
+    'Nanosecond accuracy is a datacentre thing and is not something this product sells.',
+    'Bounded, not accurate.',
+    'Resolution is not accuracy.',
+    'A machine\'s recorded time looks precise and is not.',
+    'What that third kind buys is not a narrower bound, and this list says so before anything else.',
+    'The third kind narrowed nothing and the breakdown says so.',
+    'An authenticated corridor does not tighten the bound.',
+    'A round under the floor is refused.',
+    'It does not prevent anything: a refusal records that TimeWitness declined to sign, not that an action was stopped.',
+    'We do not claim to prevent that at runtime.',
+    'An agent that cannot reach its sources stops issuing receipts; it does not issue worse ones.',
+    'A refusal prevents nothing from being published.',
+    'An average of clocks is not a measurement and lets one liar move the answer.',
+    'Combined by Marzullo intersection and then inverse-square weighting, never averaged.',
+    'Sources are combined by Marzullo intersection and a weighted regression, never a plain average.',
+    'It does not establish legal weight, which comes from accreditation rather than engineering, and no regulation we have checked requires it.',
+    'Legal standing in this area comes from accreditation, meaning qualified trust service provider status under eIDAS, and not from engineering.',
+    'A private root is admissible and never presumed.',
+    'No regulation we have checked, including AI Act Article 12, SEC 17a-4 and FINRA 4511 and 6820, requires tamper-evidence, cryptographic proof or clock accuracy, so a compliance claim built on any of them would be false.',
+    'It carries no legal weight and no compliance claim.',
+    'NTS improves the clock and can never be portable evidence.',
+    'The receipt format refuses an NTS response in an evidence role outright.',
+    'Three time source clients exist in this repository, Roughtime, plain NTP and NTS, and only Roughtime signs anything a stranger can check.',
+    'The interval is our own claim and the outside evidence does not vouch for it.',
+    'The width is our own claim and the outside signatures bracket the moment rather than the width.',
+    'Our own bound is labelled inside the receipt as our claim, never as third-party evidence.',
+    'Most stratum-1 servers in the world are disciplined by GPS, and one spoofed constellation moves every operator that trusts it.',
+    'A Roughtime corridor, where one is carried and checked, is signed by a key the reader holds, and every other operator name is the signer\'s word.',
+    'Three operators publish the Roughtime servers we reach today.',
+    'The agent\'s width ceiling refuses any bound wider than two hundred and fifty milliseconds.',
 ]
 
 
