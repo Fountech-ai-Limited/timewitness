@@ -96,6 +96,8 @@ import json
 import os
 import re
 import sys
+import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -342,8 +344,49 @@ BLOCK_TAG = re.compile(r'</?(?:p|li|ul|ol|dl|dt|dd|h[1-6]|div|section|article|he
                        r'blockquote|figure|figcaption|pre|br|hr)\b[^>]*>', re.I)
 
 
+class Landed(urllib.request.HTTPRedirectHandler):
+    """Keeps every hop a fetch took, so the fetch can refuse the ones that changed the page.
+
+    `urlopen` follows a redirect and says nothing. Until 2026-09-16 nothing here compared where it
+    landed with what it asked for, so a site answering 302 on all five paths was read as one page
+    five times and the run exited 0 at 1,408 sentences with four fifths of the surface never
+    opened. The sentence floor cannot catch that, because the page it lands on is a real page well
+    over the floor.
+    """
+
+    def __init__(self):
+        self.hops = []
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        self.hops.append((req.full_url, newurl, code))
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def only_the_scheme(asked, landed):
+    """True where two URLs differ by nothing but http becoming https.
+
+    **The one redirect this check allows, and it is a deliberate call rather than an oversight.** An
+    upgrade to https on the same host and the same path cannot change which page is read, so it is
+    about the transport and not about the routing. Every other hop is refused, including a different
+    path, a different host, a query appended, and https falling back to http.
+    """
+    a, b = urllib.parse.urlsplit(asked), urllib.parse.urlsplit(landed)
+    return (a.scheme, b.scheme) == ('http', 'https') and a[1:] == b[1:]
+
+
 def served_text(url):
-    page = urllib.request.urlopen(url, timeout=30).read().decode('utf-8')
+    landed = Landed()
+    opener = urllib.request.build_opener(landed)
+    with opener.open(url, timeout=30) as response:
+        page = response.read().decode('utf-8')
+        final = response.geturl()
+    for asked, to, code in landed.hops:
+        if not only_the_scheme(asked, to):
+            raise Unreadable(f'{asked} answered {code} to {to}, so the page read was not the page '
+                             f'asked for. Only an upgrade of http to https on the same host and '
+                             f'path is followed here')
+    if final != url and not only_the_scheme(url, final):
+        raise Unreadable(f'{url} was asked for and {final} was read')
     body = re.sub(r'(?is)<(script|style)\b.*?</\1>', ' ', page)
     spoken = [html.unescape(next(g for g in m.groups() if g is not None)) for m in ATTRIBUTE_TEXT.finditer(body)]
     text = html.unescape(re.sub(r'<[^>]+>', ' ', BLOCK_TAG.sub('\n\n', body)))
@@ -1422,8 +1465,79 @@ def content_reader_reads_the_leaf():
     return faults
 
 
+def the_fetch_refuses_a_redirect():
+    """A local server answers 302 on every path, and the fetch has to refuse each one by name.
+
+    It is here rather than in a file beside it because the fault was in the one function nothing
+    tested: `served_text` is the only thing in this product that reads what a visitor is actually
+    given, and it followed a redirect in silence. The server below is that measurement made
+    repeatable, and the three cases after it are the ones a rewrite of this function would
+    otherwise break quietly.
+    """
+    import http.server
+    import threading
+
+    faults = []
+
+    class Answers(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == '/elsewhere':
+                body = b'<p>A real page, well over the sentence floor.</p>'
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif self.path == '/missing':
+                self.send_error(404)
+            else:
+                self.send_response(302)
+                self.send_header('Location', '/elsewhere')
+                self.end_headers()
+
+        def log_message(self, *_):
+            pass
+
+    server = http.server.HTTPServer(('127.0.0.1', 0), Answers)
+    base = f'http://127.0.0.1:{server.server_address[1]}'
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        for page in SITE_PAGES:
+            try:
+                served_text(base + page)
+                faults.append(f'{page} answered 302 to /elsewhere and was read as though it were {page}')
+            except Unreadable as e:
+                if '/elsewhere' not in str(e) or page not in str(e):
+                    faults.append(f'the refusal of {page} names neither the path asked for nor the '
+                                  f'one landed on: {e}')
+        # What was already right and stays right: a page that answers is read, and a 404 is an error
+        # rather than an empty page read as honest.
+        if 'real page' not in served_text(base + '/elsewhere'):
+            faults.append('a page that answers on the path asked for is no longer read')
+        try:
+            served_text(base + '/missing')
+            faults.append('a 404 no longer fails the fetch')
+        except urllib.error.HTTPError:
+            pass
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    # The one hop that is followed, and the shapes that look like it and are not.
+    allowed = ('http://timewitness.dev/cannot-prove', 'https://timewitness.dev/cannot-prove')
+    if not only_the_scheme(*allowed):
+        faults.append('an upgrade to https on the same host and path is meant to be followed')
+    for asked, to in [('http://timewitness.dev/', 'https://timewitness.dev/screen'),
+                      ('http://timewitness.dev/', 'https://www.timewitness.dev/'),
+                      ('https://timewitness.dev/', 'http://timewitness.dev/'),
+                      ('http://timewitness.dev/', 'https://timewitness.dev/?preview=1')]:
+        if only_the_scheme(asked, to):
+            faults.append(f'{asked} to {to} is more than an upgrade of the scheme and was allowed')
+    return faults
+
+
 def self_test(policy):
-    missed = content_reader_reads_the_leaf()
+    missed = content_reader_reads_the_leaf() + the_fetch_refuses_a_redirect()
     for rule, seed in SEEDS:
         faults = judge(seed, policy)
         if not faults:
