@@ -65,7 +65,8 @@ impl Running {
         }
     }
 
-    /// Send a packet and wait for an answer. `None` means none came inside `patience`.
+    /// Send a packet, and send it again rather than waiting once. `None` means no answer came at
+    /// all inside `tries` sends of `patience` each.
     ///
     /// **The two waits are different lengths on purpose, and the first version of this file used
     /// one.** It waited half a second either way, which was enough alone and not enough under a
@@ -77,28 +78,64 @@ impl Running {
     /// So a test expecting an answer waits a long time, because being slow is not being wrong. A
     /// test expecting silence waits a short time, because the server either replies to that packet
     /// or never will, so there is nothing a longer wait could catch.
-    fn ask_waiting(&self, packet: &[u8], patience: Duration) -> Option<Vec<u8>> {
-        let client = UdpSocket::bind("127.0.0.1:0").expect("a client port");
+    ///
+    /// **And asking once is not how anything asks over UDP, which is why this file stayed
+    /// intermittent after the wait was lengthened.** Under forty-eight processes burning a core
+    /// each, this binary failed 59 of 100 runs on 2026-09-16, every failure a test that expected an
+    /// answer and got none inside its wait. A counting transport put under `serve` in the same
+    /// conditions settled what was happening: the server received every datagram that reached it
+    /// and answered every one, never returned, and never dropped anything but the packet the rate
+    /// limit refused. What stretched was delivery. A request or a reply on the loopback took
+    /// seconds to arrive on a saturated machine, and a test that sends one datagram and calls a
+    /// late reply a failure is testing the machine's scheduler.
+    ///
+    /// So a test expecting an answer sends again inside its budget. `tries` is not free everywhere:
+    /// a resend is another packet against that address's share of the socket, so the caller sets it
+    /// to what the limit in force allows rather than to whatever feels safe.
+    fn ask_waiting(&self, packet: &[u8], patience: Duration, tries: u32) -> Option<Vec<u8>> {
+        self.ask_from("127.0.0.1:0", packet, patience, tries)
+    }
+
+    /// The same, from an address the caller names, so a test can ask as somebody else.
+    fn ask_from(
+        &self,
+        bind: &str,
+        packet: &[u8],
+        patience: Duration,
+        tries: u32,
+    ) -> Option<Vec<u8>> {
+        let client = UdpSocket::bind(bind).expect("a client port");
         client
             .set_read_timeout(Some(patience))
             .expect("a read timeout");
-        client.send_to(packet, self.address).expect("sent");
 
         let mut buffer = [0u8; 1500];
-        match client.recv_from(&mut buffer) {
-            Ok((len, _)) => Some(buffer[..len].to_vec()),
-            Err(_) => None,
+        for _ in 0..tries {
+            client.send_to(packet, self.address).expect("sent");
+            if let Ok((len, _)) = client.recv_from(&mut buffer) {
+                return Some(buffer[..len].to_vec());
+            }
         }
+        None
     }
 
-    /// Ask, expecting an answer.
+    /// Ask, expecting an answer. Six sends of five seconds, so half a minute in all.
+    ///
+    /// Generous because it is free. A server that answers spends microseconds here and never sees
+    /// the second send; the budget is only ever spent by a machine that has stopped scheduling
+    /// this process, and on one of those no fixed budget is enough anyway.
     fn ask(&self, packet: &[u8]) -> Option<Vec<u8>> {
-        self.ask_waiting(packet, Duration::from_secs(10))
+        self.ask_waiting(packet, Duration::from_secs(5), 6)
+    }
+
+    /// Ask once, expecting an answer, where sending again would spend a share the test is about.
+    fn ask_once(&self, packet: &[u8]) -> Option<Vec<u8>> {
+        self.ask_waiting(packet, Duration::from_secs(10), 1)
     }
 
     /// Ask, expecting silence.
     fn ask_expecting_nothing(&self, packet: &[u8]) -> Option<Vec<u8>> {
-        self.ask_waiting(packet, Duration::from_millis(300))
+        self.ask_waiting(packet, Duration::from_millis(300), 1)
     }
 }
 
@@ -162,23 +199,55 @@ fn an_address_over_its_share_gets_silence_and_the_server_keeps_running() {
     // 2026-09-15 that was enough to be a fresh address, so a client varying its port was never
     // limited. Now three asks from one address are one address asking three times: two inside
     // the share, the third silence.
-    assert!(server.ask(&request).is_some());
-    assert!(server.ask(&request).is_some());
+    //
+    // These two ask once each and that is the point of them: the share is two, so a resend would
+    // spend the share this test is measuring and the third ask would be silent for the wrong
+    // reason. Asking once is safe here, because the measurement of 2026-09-16 found the delay on
+    // the second loopback address rather than on this one.
+    assert!(server.ask_once(&request).is_some());
+    assert!(server.ask_once(&request).is_some());
     assert!(
         server.ask_expecting_nothing(&request).is_none(),
         "the third from one address is over the share whichever port it came from"
     );
+}
 
-    // Another address has its own share, and the server is still answering. The second loopback
-    // address is one every host this runs on has.
-    let other = UdpSocket::bind("127.0.0.2:0").expect("the second loopback address");
-    other
-        .set_read_timeout(Some(Duration::from_secs(10)))
+#[test]
+fn one_address_being_over_its_share_does_not_close_the_socket_to_anybody_else() {
+    // Split out of the test above on 2026-09-16, and the share is eight rather than two on purpose.
+    //
+    // The second loopback address is where delivery stretches on a busy Windows machine: measured
+    // that day, a reply to `127.0.0.2` arrived two to four seconds late in four runs out of six
+    // while `127.0.0.1` was answered in microseconds in every one. So this half needs room to ask
+    // again, and a share of two is two sends. A share of eight is eight, which is forty seconds of
+    // budget, and the property being tested is unchanged: one address over its share, another
+    // still answered.
+    let share = 8;
+    let server = Running::start(share);
+    let request = build_request(&[4u8; 32], &server.public_key);
+
+    // Put `127.0.0.1` well over its share. Three times the share rather than one more than it, so
+    // a datagram going astray on a busy machine cannot leave this address inside its share and the
+    // next assertion answered. The replies are read and thrown away as they come.
+    let flooder = UdpSocket::bind("127.0.0.1:0").expect("a client port");
+    flooder
+        .set_read_timeout(Some(Duration::from_millis(200)))
         .expect("a read timeout");
-    other.send_to(&request, server.address).expect("sent");
     let mut buffer = [0u8; 1500];
+    for _ in 0..(share * 3) {
+        flooder.send_to(&request, server.address).expect("sent");
+        let _ = flooder.recv_from(&mut buffer);
+    }
     assert!(
-        other.recv_from(&mut buffer).is_ok(),
+        server.ask_expecting_nothing(&request).is_none(),
+        "this address is well over its share whichever port it sends from"
+    );
+
+    // The second loopback address is one every host this runs on has, and it has its own share.
+    assert!(
+        server
+            .ask_from("127.0.0.2:0", &request, Duration::from_secs(5), share)
+            .is_some(),
         "one address being over does not close the socket to anybody else"
     );
 }
