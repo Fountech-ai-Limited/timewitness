@@ -654,6 +654,61 @@ mod tests {
         assert_eq!(read.head_is_signed_by_the_key_it_names(), Some(true));
     }
 
+    /// A public key of small order, and a signature that checks against it under the cofactorless
+    /// equation.
+    ///
+    /// The key is the neutral point, encoded as y = 1 with the sign bit clear, which is the first
+    /// of the eight points of small order on this curve. The commitment is the base point and the
+    /// scalar is one. Verification without the strict check asks whether [s]B equals R + [k]A; the
+    /// neutral point takes [k]A to itself whatever the message hashes to, so the question becomes
+    /// whether [1]B equals B, which it does, for every message anybody ever puts in front of it.
+    ///
+    /// `verify_strict` refuses a key of small order outright, which is why this file calls it. The
+    /// test below is what says so, rather than the comment above the call.
+    const SMALL_ORDER_KEY: [u8; 32] = {
+        let mut bytes = [0u8; 32];
+        bytes[0] = 1;
+        bytes
+    };
+
+    const SIGNATURE_THAT_CHECKS_AGAINST_IT: [u8; 64] = {
+        let mut bytes = [0u8; 64];
+        // The base point, compressed: 0x58 and then 0x66 thirty-one times.
+        bytes[0] = 0x58;
+        let mut i = 1;
+        while i < 32 {
+            bytes[i] = 0x66;
+            i += 1;
+        }
+        // The scalar one, little-endian.
+        bytes[32] = 1;
+        bytes
+    };
+
+    #[test]
+    fn a_head_signed_by_a_malleable_small_order_key_does_not_check() {
+        // What this holds. `verify` and `verify_strict` disagree on exactly one thing, and it is
+        // this: a key of small order gives one head more than one valid signature, and one of them
+        // can be written by somebody who has never held the signing key. A log head is the thing
+        // every entry under it rests on, so a second valid spelling of its signature is a second
+        // valid history.
+        //
+        // Swap `verify_strict` for `verify` in `head_is_signed_by_the_key_it_names` and this test
+        // goes green with Some(true), which is the whole reason it exists: the suite was green
+        // either way before it.
+        let signing = SigningKey::from_bytes(&[7u8; 32]);
+        let mut log = signed(vec![entry(1, 100, None, "one")], &signing);
+        let head = log.head.as_mut().expect("a head");
+        head.signed_by = SMALL_ORDER_KEY;
+        head.signature = SIGNATURE_THAT_CHECKS_AGAINST_IT;
+
+        assert_eq!(
+            log.head_is_signed_by_the_key_it_names(),
+            Some(false),
+            "a head signed by a key of small order has more than one valid signature and is not              signed in any sense worth the word"
+        );
+    }
+
     #[test]
     fn a_head_signed_over_a_different_log_does_not_check() {
         // The property a head is for. Everything about this file is well-formed: the entries hash
