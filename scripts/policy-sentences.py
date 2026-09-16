@@ -95,6 +95,21 @@ party, "they certify how far from UTC it could have been", names nothing this re
 honest register, the words that make a mention honest, is a list a writer could ride: "comes from
 accreditation" beside a claim passes the claim.
 
+The claims on the site's two content files that copy the approved wording are held the other way
+round from 2026-09-16, and not here. Every string those two files hand a reader has to cite an
+approved claim through the `claimsUsed` binding the file carries, or be written down as not being
+one with a reason, and `scripts/blocks-cite.mjs` in the site repository refuses the build
+otherwise; the binding's own copy of each claim's status is held to the list it was copied from at
+the product root, which neither repository can see. That is a closed world: about twenty claims,
+each with its conditions written beside it, and a string outside it is refused whatever it says.
+On those two files the rules above are therefore the second net and not the first. What neither
+net reads is whether a bound block says what its claim says, and that residue is a human read over
+the blocks the site check lists, which is a smaller read than every sentence on every surface.
+The README, the limitation list, the verifier page, the Action and its summary carry no binding,
+so on those the rules above are all that reads a claim, with the limits stated in the paragraph
+before this one, and the open-world shape of those rules is why a cold set of fresh sentences
+scored 28 of 45 against them on 2026-09-16 and why no longer list will close that gap.
+
 Figures are the other way round and have been since 2026-09-16: deny by default, every quantity on
 every surface read or refused by name. Until that day this half was allow by default too and nobody
 had noticed, because the file's own docstring said so in a sentence that read as a boundary rather
@@ -149,8 +164,12 @@ SENTENCE_FLOOR = 5
 # `install.commandNote.text`, which the front page prints under the install command, was not read: a
 # dishonest sentence planted there exited 0 with the count unmoved at 1618, while the same sentence
 # one key over exited 1. Two keys hold objects that are editorial in full and are named here rather
-# than matched: `claimsUsed` is the register of which claim each block drew on, and `doNotSay` is the
-# list of what not to say, so it is made of wrong sentences on purpose.
+# than matched: `claimsUsed` is the binding of each served block to the approved claim it drew on,
+# and `doNotSay` is the list of what not to say, so it is made of wrong sentences on purpose. Neither
+# is served and neither is read here, and until 2026-09-16 that made this line the only place in
+# either tree that knew the binding existed. It is checked now, by `scripts/blocks-cite.mjs` in the
+# site repository, which refuses a served string the binding does not name; this line goes on
+# saying only that the binding is not copy.
 NOT_SERVED = re.compile(r'^\$|^src$|^id$|Note$|^provenance$|^departsFromSource$|^carriedLimit$|^note_?src$')
 NOT_SERVED_OBJECTS = {'claimsUsed', 'doNotSay'}
 
