@@ -120,8 +120,9 @@ them of every stamp there will ever be, and all three went through untouched. A 
 1 of what this product may say lives, and it is also where the line was drawn on 2026-09-09: prose
 may be forward-looking and a number may not, because a reader will try to reproduce a number and
 cannot try to reproduce a plan. A figure now has to be read by a rule, or refused for being said of
-every stamp, or carrying the conditions it was measured under in its own sentence, or excused by
-name in `scripts/policy-figures.json` with a reason written out. The walk, and what it deliberately
+every stamp, or written down in `scripts/figures.json` with the conditions it was measured under and
+said with a conditions word in its own sentence, or excused by name in `scripts/policy-figures.json`
+with a reason written out. The walk, and what it deliberately
 does not do, is at the block above `SEEDS`. It says how many figures it found and how each was
 answered, so a growing excuse list is visible on a green run rather than only in a diff.
 `tests/check-messaging-figures.py` at the product root is the other half and holds figures to the
@@ -1355,9 +1356,11 @@ def surfaces(files, site, floor=SENTENCE_FLOOR):
 #      sentence carries, because a reading taken once is not a property of a product, and it is the
 #      class the second and third sentences above belong to. A ceiling the code states is exempt: it
 #      is legitimately true of every stamp, and it reaches this test already answered by 1.
-#   3. Its conditions are in its own sentence. Rule 1 asks for the conditions a figure was measured
-#      under and whose it is, so a figure sitting beside its date, its machine, its round count, its
-#      artefact or its attribution has met the rule the product holds itself to.
+#   3. It is in `scripts/figures.json` with the conditions it was measured under, its evidence and
+#      whose it is, and its own sentence carries a conditions word and whatever phrase its entry
+#      asks for. Until 2026-09-16 this answer was the word alone, and a word is not a check:
+#      "Measured, receipts come in under 12 ms" passed on it. The register is the same file the
+#      site's figure check reads, so there is one answer to where a figure came from, not two.
 #   4. It is excused by name in `policy-figures.json`, with a reason.
 #
 # Anything else is a failure naming the figure, the sentence and the surface.
@@ -1379,7 +1382,8 @@ SCALE = (r'(ns|nanoseconds?|us|' + MICRO + r's|microseconds?|ms|milliseconds?|s|
 # time service", "a leap second" and "an hour apart" are prose, and reading them as figures would
 # bury the numbers that matter under a hundred that do not.
 FIGURE = re.compile(r'(?<![\w.$-])(?:(\d+(?:\.\d+)?)\s?' + SCALE
-                    + r'|((?:half|a quarter of) an?|' + WORD + r'(?:-' + WORD + r')?)[\s-]' + SCALE
+                    + r'|((?:half|a quarter of) an?|' + WORD + r' hundred(?: and ' + WORD + r'(?:-' + WORD + r')?)?|'
+                    + WORD + r'(?:-' + WORD + r')?)[\s-]' + SCALE
                     + r')(?![\w-])', re.I)
 
 # A number after one of these names a document or a version and is not a quantity, whatever follows
@@ -1413,6 +1417,88 @@ CONDITIONS = re.compile(
     re.I)
 
 FIGURES_EXCUSED = ROOT / 'scripts' / 'policy-figures.json'
+
+# The register of figures with the conditions each was measured under and whose it is. Until
+# 2026-09-16 the third answer above asked only whether a word from `CONDITIONS` sat in the sentence,
+# so "Measured, receipts come in under 12 ms" passed on the one word and 347 of the 476 figures on
+# the surfaces passed that way. A word is not a check. The register is: a figure answered by its
+# conditions has to be a figure somebody wrote down, with the conditions and the evidence, in the
+# same file the site's own figure check reads, so an invented number needs an entry in a reviewed
+# diff before any sentence can carry it. An entry can also name what a sentence quoting it has to
+# say, which is how a figure that is somebody else's, or a receipt since replaced, stays said as
+# what it is.
+FIGURES_REGISTER = ROOT / 'scripts' / 'figures.json'
+
+SCALE_NS = {'ns': 1, 'nanosecond': 1, 'nanoseconds': 1, 'us': 10**3, MICRO + 's': 10**3,
+            'microsecond': 10**3, 'microseconds': 10**3, 'ms': 10**6, 'millisecond': 10**6,
+            'milliseconds': 10**6, 's': 10**9, 'sec': 10**9, 'secs': 10**9, 'second': 10**9,
+            'seconds': 10**9, 'min': 60 * 10**9, 'mins': 60 * 10**9, 'minute': 60 * 10**9,
+            'minutes': 60 * 10**9, 'hour': 3600 * 10**9, 'hours': 3600 * 10**9,
+            'day': 86400 * 10**9, 'days': 86400 * 10**9}
+
+
+def quantity(number, unit):
+    """What a figure says, as one comparable value: nanoseconds for a duration, or a percentage."""
+    unit = unit.strip().lower()
+    value = number_of(number)
+    if unit in ('percent', 'per cent', '%'):
+        return ('percent', round(value * 1000))
+    return ('ns', round(value * SCALE_NS[unit]))
+
+
+def register():
+    """The figure register, keyed by what each figure says.
+
+    An entry short of a figure, a unit, whose it is, its conditions or its evidence stops the run,
+    for the same reason a short excuse does: an entry that does not say where a figure came from is
+    the word check again with a file around it.
+    """
+    if not FIGURES_REGISTER.is_file():
+        raise Unreadable(f'{FIGURES_REGISTER.name} is not beside this script, so no figure can be '
+                         f'answered by its conditions. A missing register is not an empty one')
+    return read_register(json.loads(FIGURES_REGISTER.read_text(encoding='utf-8')))
+
+
+def read_register(data):
+    """The same register, from what has already been parsed, so the self-test can hand it a bad one."""
+    out = {}
+    for n, entry in enumerate(data.get('allowed') or [], 1):
+        for field in ('figure', 'unit', 'whose', 'conditions', 'evidence'):
+            if not entry.get(field):
+                raise Unreadable(f'{FIGURES_REGISTER.name}: entry {n} has no {field}, and an entry short '
+                                 f'of one says nothing about where its figure came from')
+        figures = entry['figure'] if isinstance(entry['figure'], list) else [entry['figure']]
+        for figure in figures:
+            for part in str(figure).split(' to '):
+                try:
+                    key = quantity(part, entry['unit'])
+                except (KeyError, ValueError):
+                    raise Unreadable(f'{FIGURES_REGISTER.name}: entry {n} gives {part} {entry["unit"]}, '
+                                     f'which is not a figure this file can read')
+                out.setdefault(key, []).append(entry)
+    if not out:
+        raise Unreadable(f'{FIGURES_REGISTER.name} lists no figure, so it answers nothing')
+    return out
+
+
+def in_register(text, sentence, known):
+    """Whether a figure is in the register, and said the way its entry asks. Gives back the entry
+    that answers it, or None and the reason."""
+    number, unit = re.match(r'(.+?) (per cent|\S+)$', text).groups()
+    try:
+        entries = known.get(quantity(number, unit), [])
+    except (KeyError, ValueError):
+        entries = []
+    if not entries:
+        return None, f'{FIGURES_REGISTER.name} has no entry for it'
+    lower = sentence.lower()
+    for entry in entries:
+        said = entry.get('saidWith') or []
+        if not said or any(phrase.lower() in lower for phrase in said):
+            return entry, ''
+    wanted = ' or '.join(f'"{phrase}"' for entry in entries for phrase in entry.get('saidWith') or [])
+    return None, (f'{FIGURES_REGISTER.name} has it as {entries[0]["whose"]}, and a sentence quoting it has '
+                  f'to say {wanted}')
 
 
 def excuses():
@@ -1482,14 +1568,15 @@ def surface_of(where):
     return where
 
 
-def unclaimed(read_from, policy, landing, excused):
+def unclaimed(read_from, policy, landing, excused, known=None):
     """Every figure on every surface, answered or refused by name.
 
     Gives back the failures and the count of each way a figure was answered, which is printed on a
     green run so a later one sees the excuse list growing rather than having to diff it.
     """
+    known = register() if known is None else known
     faults = []
-    counts = {'found': 0, 'read by a rule': 0, 'carrying its conditions': 0, 'excused': 0}
+    counts = {'found': 0, 'read by a rule': 0, 'in the register': 0, 'excused': 0}
     for where, sentence in read_from:
         found = figures_of(sentence)
         if not found:
@@ -1513,16 +1600,20 @@ def unclaimed(read_from, policy, landing, excused):
                               f'is a reading taken under conditions rather than a property of the '
                               f'product (rule 1 of what this product may say):\n    "{sentence[:220]}"')
                 continue
+            # A conditions word is necessary and no longer enough. The figure has to be one the
+            # register writes down, said the way its entry asks.
+            why = 'no conditions in its own sentence'
             if CONDITIONS.search(sentence):
-                counts['carrying its conditions'] += 1
-                continue
+                entry, why = in_register(text, sentence, known)
+                if entry is not None:
+                    counts['in the register'] += 1
+                    continue
             if excuse:
                 excuse['used'] += 1
                 counts['excused'] += 1
                 continue
-            faults.append(f'{where}: gives {text} with no rule reading it, no conditions in its own '
-                          f'sentence and no entry in {FIGURES_EXCUSED.name}, so nothing here has '
-                          f'checked it:\n    "{sentence[:220]}"')
+            faults.append(f'{where}: gives {text} with no rule reading it, {why}, and no entry in '
+                          f'{FIGURES_EXCUSED.name}, so nothing here has checked it:\n    "{sentence[:220]}"')
     return faults, counts
 
 
@@ -1865,6 +1956,64 @@ def every_figure_is_read(policy):
         refused, _ = unclaimed([('a made-up surface', honest)], policy, None, [])
         if refused:
             faults.append(f'an honest figure was refused ({refused[0].splitlines()[0]}): {honest}')
+    # A conditions word bolted onto a figure nobody measured. Each of these passed on
+    # the word alone until 2026-09-16, bar the one starting "Ordinarily", and each is refused now
+    # because 12 ms is in no register.
+    for prefix in ('Measured on an ordinary desktop,', 'On an ordinary desktop,', 'Ordinarily,',
+                   'On a GitHub runner,', 'Over sixteen polling rounds,', 'At thirty-six minutes of uptime,',
+                   'Measured,', 'On a desktop,'):
+        probe = f'{prefix} receipts come in under 12 ms.'
+        if not unclaimed([('a made-up surface', probe)], policy, None, [])[0]:
+            faults.append(f'an invented figure passed on its conditions word: {probe}')
+    # Somebody else's figure written as ours, refused by what its entry says rather than by the word.
+    public = 'Between 5 and 50 ms over the public internet, measured by us.'
+    refused = unclaimed([('a made-up surface', public)], policy, None, [])[0]
+    if not refused or 'public research' not in refused[0]:
+        faults.append(f'a public research figure written as ours was not refused by name: {public}')
+    # The width of a receipt since replaced, and a round count given a width nobody read.
+    for stale in ('Our bound was 149.8 ms on the receipt we ship as a fixture.',
+                  'Sixteen polling rounds gets you under a hundred milliseconds of error.'):
+        if not unclaimed([('a made-up surface', stale)], policy, None, [])[0]:
+            faults.append(f'a figure no register holds as said passed: {stale}')
+    # The honest sentences of a cold set written from the product's rules alone and frozen at sha256
+    # e4c2a62 before the figure walk was opened, all twelve, named, through both halves of this file.
+    cold = {
+        'C33': 'The receipt committed at `crates/verify/tests/data/a-real-stamp/receipt.cbor` gives 153.875 ms of half width, taken on an ordinary desktop on 2026-09-09 at 21:41 over sixteen polling rounds.',
+        'C34': 'Measured on an ordinary desktop on 2026-09-09 at 22:17, at thirty-six minutes of uptime and a thirty-two second cadence, the agent read 128.7 ms, 128.8 ms and 129.1 ms.',
+        'C35': "Of that 153.875 ms, 38.011 ms is the model's own regression residual doubled by the coverage factor and 35.081 ms is what the sources overlap on, read off `timewitness verify` on that receipt.",
+        'C36': 'Public research puts a well disciplined clock at 5 to 50 ms over the public internet with no owned hardware, and none of that has been measured by us.',
+        'C37': 'The shipped default is sixteen polling rounds.',
+        'C38': 'The agent disciplines the clock against four to six independent sources.',
+        'C39': 'The receipt names nine servers behind six operators and nine were kept.',
+        'C40': 'The simulated network in `crates/clock/tests/common/mod.rs` gives 26.6 ms at synchronisation and 234.6 ms at fifteen minutes, which is the arithmetic of the model rather than a reading from a real path.',
+        'C41': 'Nanoseconds is the resolution of the local read and milliseconds is the accuracy to UTC in the design.',
+        'C42': 'A machine reaching three operators is under the shipped floor of four and is refused.',
+        'C43': 'Install it with one line in a workflow file.',
+        'C44': 'The adversarial plan holds twenty property attacks and five compound campaigns.',
+    }
+    for name, honest in cold.items():
+        refused = judge(honest, policy) + unclaimed([('a made-up surface', honest)], policy, None, [])[0]
+        if refused:
+            faults.append(f'honest sentence {name} of the cold set was refused ({refused[0].splitlines()[0]}): {honest}')
+    # A register entry that does not say where its figure came from stops the run.
+    for missing in ('figure', 'unit', 'whose', 'conditions', 'evidence'):
+        entry = {'figure': '12', 'unit': 'ms', 'whose': 'ours', 'conditions': 'a desktop on a day',
+                 'evidence': 'a file'}
+        del entry[missing]
+        try:
+            read_register({'allowed': [entry]})
+            faults.append(f'a register entry with no {missing} was read as an entry')
+        except Unreadable:
+            pass
+    # And the register is what answers: the same invented sentence passes once an entry holds it.
+    invented = 'Measured, receipts come in under 12 ms.'
+    held = read_register({'allowed': [{'figure': '12', 'unit': 'ms', 'whose': 'ours',
+                                       'conditions': 'for the self-test', 'evidence': 'for the self-test'}]})
+    if unclaimed([('a made-up surface', invented)], policy, None, [], held)[0]:
+        faults.append('a figure the register holds was refused, so the register is not what answers')
+    # A spelled hundred is read whole, so two hundred milliseconds is not a hundred.
+    if [t for t, _, _ in figures_of('a liar two hundred milliseconds out')] != ['two hundred milliseconds']:
+        faults.append('two hundred milliseconds was not read as one figure')
     # The excuse itself, watched covering the sentence it names and nothing beside it.
     entry = [{'figures': {'12 milliseconds', 'ninety-nine percent'}, 'surfaces': {'a made-up surface'},
               'sentence': probes[0], 'reason': 'for the self-test', 'used': 0}]
@@ -2244,6 +2393,7 @@ def main(argv):
     try:
         read_from, landing = surfaces(files, site, SENTENCE_FLOOR if whole_tree else 1)
         excused = excuses()
+        known = register()
     except (Unreadable, OSError, ValueError) as e:
         print(f'policy sentences: a surface could not be read: {e}', file=sys.stderr)
         return 2
@@ -2251,7 +2401,7 @@ def main(argv):
     for where, sentence in read_from:
         for fault in judge(sentence, policy, landing):
             problems.append(f'{where}: {fault}:\n    "{sentence[:220]}"')
-    figure_faults, figures = unclaimed(read_from, policy, landing, excused)
+    figure_faults, figures = unclaimed(read_from, policy, landing, excused, known)
     problems += figure_faults
     problems += stale_excuses(excused, {surface_of(w) for w, _ in read_from})
     for p in problems:
@@ -2266,9 +2416,13 @@ def main(argv):
     where = 'and no site, said on purpose' if site is None else f'and the site at {site}'
     print(f'policy sentences: {len(read_from)} sentences over {len(files)} files {where} agree with the '
           f'shipped policy ({said})')
-    print(f'policy sentences: {figures["found"]} figures, {figures["read by a rule"]} read by a rule, '
-          f'{figures["carrying its conditions"]} carrying their conditions, {figures["excused"]} '
-          f'excused in {FIGURES_EXCUSED.name}, and none unread')
+    # Three answers and three numbers. Until 2026-09-16 the middle one was "carrying their
+    # conditions", which read as though every one of those figures had been checked when what had
+    # been checked was the presence of a word.
+    print(f'policy sentences: {figures["found"]} figures, answered three ways: {figures["read by a rule"]} '
+          f'read by a rule against the code, {figures["in the register"]} found in {FIGURES_REGISTER.name} '
+          f'with a conditions word in their own sentence, and {figures["excused"]} excused by name in '
+          f'{FIGURES_EXCUSED.name}')
     return 0
 
 
