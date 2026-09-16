@@ -357,10 +357,30 @@ def site_strings(node, key=''):
 
 # What a served page says to a reader who is not shown the page: the description a search result
 # quotes, the alt a screen reader speaks, a title or label a pointer shows.
-ATTRIBUTE_TEXT = re.compile(r'<meta\b[^>]*\b(?:name|property)="(?:description|og:description|twitter:description)"[^>]*'
-                            r'\bcontent="([^"]*)"|<meta\b[^>]*\bcontent="([^"]*)"[^>]*'
-                            r'\b(?:name|property)="(?:description|og:description|twitter:description)"|'
-                            r'\b(?:alt|title|aria-label)="([^"]*)"|<title\b[^>]*>([^<]*)</title>', re.I)
+#
+# The lists are not written here. They are in `scripts/reader-contract.json` beside this file, which
+# `scripts/pictures-say.mjs` in the site repository reads too, because until 2026-09-16 each check
+# kept its own and they differed by one word. `aria-description` was in the picture reader and not in
+# this one, so a rule-breaking sentence in that attribute was refused inside a picture and passed on
+# the page around it. `tests/check-messaging-figures.py` at the product root holds the two to the
+# contract, since it is the only one of the three that can see both repositories.
+CONTRACT = json.loads((ROOT / 'scripts' / 'reader-contract.json').read_text(encoding='utf-8'))
+
+
+def _alternatives(names):
+    return '|'.join(re.escape(n) for n in names)
+
+
+META_NAMES = _alternatives(CONTRACT['metaNames'])
+# Single quotes as well as double. Next.js emits double, so the single-quoted form was latent rather
+# than absent, and a check that is right only about the markup one generator happens to emit is a
+# check about that generator.
+QUOTED = r'(?:"([^"]*)"|\'([^\']*)\')'
+ATTRIBUTE_TEXT = re.compile(r'<meta\b[^>]*\b(?:name|property)=[\'"](?:' + META_NAMES + r')[\'"][^>]*'
+                            r'\bcontent=' + QUOTED + r'|<meta\b[^>]*\bcontent=' + QUOTED + r'[^>]*'
+                            r'\b(?:name|property)=[\'"](?:' + META_NAMES + r')[\'"]|'
+                            r'(?<![\w-])(?:' + _alternatives(CONTRACT['attributes']) + r')\s*=\s*' + QUOTED
+                            + (r'|<title\b[^>]*>([^<]*)</title>' if CONTRACT['pageTitle'] else ''), re.I)
 
 
 # A block element ends a sentence the way a blank line does in a content file, so the three items
@@ -368,8 +388,7 @@ ATTRIBUTE_TEXT = re.compile(r'<meta\b[^>]*\b(?:name|property)="(?:description|og
 # space, and "signed evidence from independent outside parties of when it was taken Our own bound is
 # labelled inside the receipt as our claim" was read as one sentence and refused, because the outside
 # party of item three and the bound of the sentence after the list sat in one clause.
-BLOCK_TAG = re.compile(r'</?(?:p|li|ul|ol|dl|dt|dd|h[1-6]|div|section|article|header|footer|nav|aside|main|table|tr|td|th|'
-                       r'blockquote|figure|figcaption|pre|br|hr)\b[^>]*>', re.I)
+BLOCK_TAG = re.compile(r'</?(?:' + _alternatives(CONTRACT['blockElements']) + r')\b[^>]*>', re.I)
 
 
 class Landed(urllib.request.HTTPRedirectHandler):
@@ -415,6 +434,17 @@ def served_text(url):
                              f'path is followed here')
     if final != url and not only_the_scheme(url, final):
         raise Unreadable(f'{url} was asked for and {final} was read')
+    return page_text(page)
+
+
+def page_text(page):
+    """Everything a page gives a reader, by the contract beside this file.
+
+    The words on it, with a block element ending a sentence the way a blank line does, and then the
+    strings a reader is given without seeing the page: the description a search result quotes, the
+    alt and the labels a screen reader speaks, the page title. Split out from the fetch on
+    2026-09-16 so the self-test can hand it a page rather than stand a server up for one.
+    """
     body = re.sub(r'(?is)<(script|style)\b.*?</\1>', ' ', page)
     spoken = [html.unescape(next(g for g in m.groups() if g is not None)) for m in ATTRIBUTE_TEXT.finditer(body)]
     text = html.unescape(re.sub(r'<[^>]+>', ' ', BLOCK_TAG.sub('\n\n', body)))
@@ -1420,10 +1450,16 @@ def surface_of(where):
     """The name an excuse writes for a surface.
 
     A served page is named by its path, so one entry covers the content file a page is built from
-    and the page itself without the excuse having to carry the host it was served on.
+    and the page itself without the excuse having to carry the host it was served on. A file handed
+    in from outside this tree is named by its file name alone: the site repository's picture check
+    writes the words inside its pictures to a temporary file and hands it here, and a temporary
+    directory is a different string every run, so the whole path can never be written down.
     """
     if where.startswith('http'):
         return urllib.parse.urlparse(where).path.rstrip('/') or '/'
+    full = Path(where)
+    if full.is_absolute() and ROOT not in full.parents:
+        return full.name
     return where
 
 
@@ -1741,6 +1777,45 @@ def content_reader_reads_the_leaf():
             faults.append(f'a string under {key} was read, and that object is editorial in full')
     if [s for _, s in site_strings({'install': {'commandNote': {'text': seed, 'src': 'x', 'id': 'y'}}})] != [seed]:
         faults.append('install.commandNote.text is not read, and the front page prints it')
+    return faults
+
+
+def every_attribute_a_reader_is_given_is_read(policy):
+    """Whether a page is read through the contract, on each string a reader is given without seeing it.
+
+    Until 2026-09-16 the lists were written out here and again in the site repository's picture
+    reader, and they differed by `aria-description`: a rule-breaking sentence in that one attribute
+    was refused inside a picture and passed on the page around it. So each attribute the contract
+    names is watched carrying a sentence this file refuses, one at a time and nowhere else on the
+    page, and the page is watched being refused for it.
+    """
+    faults = []
+    seed = 'Our clock is accurate to the microsecond.'
+    # Written out rather than read off the contract, because a test that iterates the list it is
+    # checking goes quiet when the list shrinks. These four are the ones a screen reader speaks and
+    # `aria-description` is the one a real fault used, so dropping any of them from the contract has
+    # to fail here rather than silently stop being tested.
+    for attribute in ('alt', 'title', 'aria-label', 'aria-description', 'aria-roledescription'):
+        if attribute not in CONTRACT['attributes']:
+            faults.append(f'the contract no longer names {attribute}, which a reader is given without '
+                          f'seeing the page')
+    for attribute in CONTRACT['attributes']:
+        page = f'<html><body><p>The agent holds a bound.</p><img {attribute}="{seed}"></body></html>'
+        if not [f for s in sentences(page_text(page)) for f in judge(s, policy)]:
+            faults.append(f'a page carrying a refused sentence in {attribute} and nowhere else passed')
+    for name in CONTRACT['metaNames']:
+        page = f'<html><head><meta name="{name}" content="{seed}"></head><body><p>A bound.</p></body></html>'
+        if not [f for s in sentences(page_text(page)) for f in judge(s, policy)]:
+            faults.append(f'a page carrying a refused sentence in the {name} meta tag and nowhere else passed')
+    if CONTRACT['pageTitle']:
+        page = f'<html><head><title>{seed}</title></head><body><p>A bound.</p></body></html>'
+        if not [f for s in sentences(page_text(page)) for f in judge(s, policy)]:
+            faults.append('a page carrying a refused sentence in its title and nowhere else passed')
+    # A block element still ends a sentence, so two list items are two sentences and the clause of
+    # one does not reach into the other.
+    run_on = page_text('<ul><li>signed evidence from outside parties</li><li>our own bound</li></ul>')
+    if len(sentences(run_on)) < 2:
+        faults.append('two list items were read as one sentence, so a block element is not ending one')
     return faults
 
 
@@ -2079,6 +2154,7 @@ def the_score_refuses_a_fitted_set(policy):
 
 def self_test(policy):
     missed = (content_reader_reads_the_leaf() + the_fetch_refuses_a_redirect()
+              + every_attribute_a_reader_is_given_is_read(policy)
               + every_figure_is_read(policy) + the_score_refuses_a_fitted_set(policy))
     for rule, seed in SEEDS:
         faults = judge(seed, policy)

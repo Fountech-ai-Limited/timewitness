@@ -13,7 +13,8 @@
     "a field of the committed receipt, rendered as it stands": "The figure is one number out of the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor, printed on the page as the receipt states it, with no sentence around it to carry conditions. Its conditions are the receipt itself and the paragraphs beside it on the page. tests/check-messaging-figures.py at the product root holds this figure to that file and scripts/three-surfaces.sh holds the page to the tree, so changing the number breaks both of those as well as this entry, which quotes it in full.",
     "the wording of a message the product shows": "The figure is inside a line the running product prints to whoever is using it, quoted on the page as an example of what they will see. It states what the product does next rather than anything measured about a clock, so there are no conditions to give.",
     "a fact about the page rather than about time": "The figure describes the page a reader is looking at, how long an animation runs or how often it repeats, and says nothing about a clock, a bound or a receipt. There is no measurement behind it and nothing for a reader to reproduce beyond watching the page.",
-    "the conditions are in the table line this figure sits in": "The page puts the figure in a value field and the conditions in the note beside it, which is one line of a table a reader sees whole and this check reads as two strings. The content reader yields each string on its own, so the conditions are on the page and one field away rather than absent. That is a shortcoming of the reader rather than of the copy, and these entries go the moment the reader hands a table line over in one piece."
+    "the conditions are in the table line this figure sits in": "The page puts the figure in a value field and the conditions in the note beside it, which is one line of a table a reader sees whole and this check reads as two strings. The content reader yields each string on its own, so the conditions are on the page and one field away rather than absent. That is a shortcoming of the reader rather than of the copy, and these entries go the moment the reader hands a table line over in one piece.",
+    "a share of a drawing rather than a duration": "The figure is a proportion of the picture it sits in, how much of a bar or a bracket one part fills, and it is there so the drawing adds up. It measures the drawing and never a clock, so there are no conditions it could carry."
   },
   "excused": [
     {
@@ -480,6 +481,87 @@
         "/how-a-receipt-works"
       ],
       "sentence": "10.000 us the local read",
+      "reason": "a field of the committed receipt, rendered as it stands"
+    },
+    {
+      "figures": [
+        "153.875 ms"
+      ],
+      "surfaces": [
+        "picture-strings.txt"
+      ],
+      "sentence": "153.875 ms wide",
+      "reason": "a field of the committed receipt, rendered as it stands"
+    },
+    {
+      "figures": [
+        "2 s"
+      ],
+      "surfaces": [
+        "picture-strings.txt"
+      ],
+      "sentence": "2 s",
+      "reason": "a field of the committed receipt, rendered as it stands"
+    },
+    {
+      "figures": [
+        "35.081 ms"
+      ],
+      "surfaces": [
+        "picture-strings.txt"
+      ],
+      "sentence": "35.081 ms",
+      "reason": "a field of the committed receipt, rendered as it stands"
+    },
+    {
+      "figures": [
+        "50 %"
+      ],
+      "surfaces": [
+        "picture-strings.txt"
+      ],
+      "sentence": "50%",
+      "reason": "a share of a drawing rather than a duration"
+    },
+    {
+      "figures": [
+        "153.875 ms",
+        "35.081 ms"
+      ],
+      "surfaces": [
+        "picture-strings.txt"
+      ],
+      "sentence": "A bracket spans our bound, 153.875 ms wide, which is our own claim: the sources overlap on 35.081 ms of its half width and the rest is our model.",
+      "reason": "a field of the committed receipt, rendered as it stands"
+    },
+    {
+      "figures": [
+        "eight second"
+      ],
+      "surfaces": [
+        "picture-strings.txt"
+      ],
+      "sentence": "An eight-second loop.",
+      "reason": "a fact about the page rather than about time"
+    },
+    {
+      "figures": [
+        "35.081 ms"
+      ],
+      "surfaces": [
+        "picture-strings.txt"
+      ],
+      "sentence": "The sources overlap on 35.081 ms of its half width; the rest is our model.",
+      "reason": "a field of the committed receipt, rendered as it stands"
+    },
+    {
+      "figures": [
+        "2 s"
+      ],
+      "surfaces": [
+        "picture-strings.txt"
+      ],
+      "sentence": "They pin the moment to 2 s and do not vouch for the width.",
       "reason": "a field of the committed receipt, rendered as it stands"
     }
   ]
