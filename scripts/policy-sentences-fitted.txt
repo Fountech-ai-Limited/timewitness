@@ -1,0 +1,27 @@
+# Every set of sentences that has been measured against scripts/policy-sentences.py, by sha256.
+#
+# The reason this file exists. Five rebuilds of that script in two days each reported a jump, and
+# the property it was aimed at moved by two sentences. The measurements disagreed with the property
+# because each set was folded into the script the moment its misses became rules, so the next
+# measurement was taken on material the script had already been shaped around. A number taken that
+# way is not evidence of anything and it reads exactly like a number that is.
+#
+# So: fitted is a set whose misses are now rules in that file, and it may never score it again.
+# scored is a set that has been read against the file without being folded in; it may be used
+# again, and the script says out loud that it is not cold. --score refuses a fitted set outright,
+# at exit 2, which is this script's code for nothing having been checked.
+#
+# A set never leaves this list, and its state only ever moves from scored to fitted. The check does
+# not rest on this list alone: --score also refuses any set holding a sentence that appears word for
+# word in the script's own seeds or in its honest sentences, which catches a set that was folded in
+# and never written down here.
+#
+# sha256 of the file                                                state   frozen      name
+aa1da9675a0580fd06df335e6e2c13255aee1ee0cb2de66c50f4daf654d7c20a  fitted  2026-09-16  blind-set-4-tests.txt
+2d33dd07e40fc00759e494d9f9aa77d88843caff003076cb23b31676b7a1ffe4  fitted  2026-09-16  blind-set-5.txt
+780d6ba6c93859b17c26f0f58dc29b21e4ca045f39a76934bb66136877665886  scored  2026-09-16  blind-set-6.txt
+52e9511c74521c7eb43fc59838612f7cfc750e7e23a7cf42ebb720a9b1f8e868  scored  2026-09-16  blind-set-7.txt
+3897c751a50983bfbeeff4f6472041b6827dfeef083a2b66cba2d2fa6ddda138  fitted  2026-09-16  fresh-set-1.txt
+609a9ceaaa0031d523cb7c18430f25fe6d3cd35ad67c713f4d977d16f0120f54  fitted  2026-09-16  fresh-set-2.txt
+93a578f4239c88a9b016aa217159c0a8a9d7ab4f836ff6202c8bb3f821ddb65f  fitted  2026-09-16  fresh-set-3.txt
+22bb5858ffa8aae9d39b39224ba2c2bb207da5366d74961fb269ecbf716ce366  fitted  2026-09-16  own-set.txt

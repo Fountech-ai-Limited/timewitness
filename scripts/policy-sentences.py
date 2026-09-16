@@ -13,7 +13,17 @@ policy off the code and asks each sentence whether it contradicts it.
     python3 scripts/policy-sentences.py --no-site       this tree alone, said on purpose
     python3 scripts/policy-sentences.py --site <url>    this tree, and the pages a running site serves
     python3 scripts/policy-sentences.py --self-test     seeds per rule and per shape, each watched refused
+    python3 scripts/policy-sentences.py --score FILE    what this refuses of a set it has not been fitted to
     python3 scripts/policy-sentences.py FILE...         only the files named, for a copy of an old tree
+
+**The only number anybody may quote about this file comes from `--score` on a set whose sha256 was
+frozen before this file was opened.** `--self-test` proves each seed is refused by the rule it is
+there for, which is a different property and is not a score: the seeds are the material this file was
+built around, so they say nothing about a sentence nobody here has seen. Five rebuilds in two days
+each reported a jump, because each set became a seed the moment its misses became rules and the next
+number was taken on material this file had already been shaped around.
+`scripts/policy-sentences-fitted.txt` carries every set that has measured this one, and `--score`
+refuses a fitted one outright.
 
 Exit 0 where nothing contradicts the policy, 1 where something does, with the file and the sentence
 named, and 2 where the policy could not be read off the code or a surface could not be read. A fact
@@ -91,10 +101,12 @@ meta description, every alt, title and aria-label, and the page title. Until 202
 stripped attributes, so the sentence that called our width outside-vouched passed in an alt.
 """
 
+import hashlib
 import html
 import json
 import os
 import re
+import shutil
 import sys
 import urllib.error
 import urllib.parse
@@ -1536,8 +1548,199 @@ def the_fetch_refuses_a_redirect():
     return faults
 
 
+FITTED = ROOT / 'scripts' / 'policy-sentences-fitted.txt'
+
+# Written out rather than escaped inline, so a line of a set built here cannot be mangled by the
+# quoting of whatever wrote it.
+NEWLINE = chr(10)
+
+
+def fitted_sets():
+    """Every set that has measured this file, by sha256, read off the manifest beside it."""
+    if not FITTED.is_file():
+        raise Unreadable(f'{FITTED.name} is not beside this script, so nothing can say whether a set '
+                         f'has already been folded in')
+    known = {}
+    for line in FITTED.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts = line.split(None, 3)
+        if len(parts) != 4 or parts[1] not in ('fitted', 'scored'):
+            raise Unreadable(f'{FITTED.name}: "{line[:70]}" is not a sha256, fitted or scored, a date '
+                             f'and a name')
+        known[parts[0].lower()] = {'state': parts[1], 'frozen': parts[2], 'name': parts[3]}
+    return known
+
+
+def marked(text):
+    """The sentences of a set, each with what it is meant to do.
+
+    A line opening `- ` has to be refused and a line opening `+ ` has to pass. `~ ` is a line the set
+    excluded by name with its reason above it, and `#` is a comment. Anything else is not a set.
+    """
+    wanted = []
+    for number, line in enumerate(text.splitlines(), 1):
+        body = line.strip()
+        if not body or body.startswith('#') or body.startswith('~'):
+            continue
+        if body[:2] not in ('- ', '+ '):
+            raise Unreadable(f'line {number} opens with neither "- " nor "+ " nor "~ ": {body[:60]}')
+        wanted.append((body[0] == '-', body[2:].strip(), number))
+    if not wanted:
+        raise Unreadable('no sentence in it is marked to be refused or to pass, so there is nothing '
+                         'to score')
+    return wanted
+
+
+def score(path, policy):
+    """What this file makes of a set it has not been fitted to, and a refusal where it has.
+
+    Exit 2 where the set is already in this file, by the manifest or by a sentence appearing in the
+    seeds word for word, because a number taken on material this file was shaped around is not a
+    measurement and reads exactly like one.
+    """
+    file = Path(path)
+    if not file.is_file():
+        raise Unreadable(f'{path} is not there')
+    raw = file.read_bytes()
+    sha = hashlib.sha256(raw).hexdigest()
+    known = fitted_sets()
+    seen = known.get(sha)
+
+    if seen and seen['state'] == 'fitted':
+        print(f'policy sentences: {file.name} is {seen["name"]} in {FITTED.name}, fitted on '
+              f'{seen["frozen"]}. Its misses are rules in this file, so a number taken on it now '
+              f'measures nothing. Freeze a set this file has not been shaped around.', file=sys.stderr)
+        return 2
+
+    wanted = marked(raw.decode('utf-8'))
+    seeds = {s.strip() for _, s in SEEDS}
+    honest = {s.strip() for s in HONEST}
+
+    # A sentence this file already holds word for word, and the two halves are not the same fault.
+    #
+    # A line the set marks to be refused, appearing in the seeds, means the set was written with this
+    # file open: the seeds are sentences real faults took, not sentences anybody would arrive at from
+    # the rules. That set is not cold and nothing it scores means anything, so it is refused.
+    #
+    # A line the set marks honest, appearing in the honest sentences, is ordinary: both were written
+    # from the same rules, and two people quoting one document land on the same words. Two of the
+    # three overlaps on 2026-09-16 were the rule about NTS never being portable evidence and the one
+    # about a private root being admissible and never presumed, both quoted from the source. So the
+    # line is taken out of the count rather than the set being thrown away, and it is named, which
+    # keeps the number honest without wasting a cold set on a coincidence.
+    fitted_lines = [(n, s) for refuse, s, n in wanted if refuse and s in seeds]
+    if fitted_lines:
+        for number, sentence in fitted_lines:
+            print(f'policy sentences: line {number} of {file.name} is a seed of this file, word for '
+                  f'word: "{sentence[:90]}". A set holding a seed was written with this file open, '
+                  f'whatever the manifest says.', file=sys.stderr)
+        return 2
+
+    shared = [(n, s) for refuse, s, n in wanted if not refuse and s in honest]
+    for number, sentence in shared:
+        print(f'policy sentences: line {number} is in this file word for word and is out of the '
+              f'count: "{sentence[:90]}"')
+    excluded = {n for n, _ in shared}
+    wanted = [(refuse, s, n) for refuse, s, n in wanted if n not in excluded]
+    if not wanted:
+        print(f'policy sentences: every sentence in {file.name} is already in this file, so there '
+              f'is nothing here it has not been shaped around', file=sys.stderr)
+        return 2
+
+    if seen:
+        print(f'policy sentences: {file.name} is {seen["name"]}, which has scored this file before, '
+              f'on {seen["frozen"]}. It is not cold and the number below is weaker than a first '
+              f'reading of it.')
+
+    missed = []
+    right = 0
+    for refuse, sentence, number in wanted:
+        faults = judge(sentence, policy)
+        if bool(faults) == refuse:
+            right += 1
+        else:
+            missed.append((refuse, number, sentence, faults))
+
+    for refuse, number, sentence, faults in missed:
+        if refuse:
+            print(f'policy sentences: line {number} passed and had to be refused: "{sentence[:150]}"',
+                  file=sys.stderr)
+        else:
+            print(f'policy sentences: line {number} was refused and is honest ({"; ".join(faults)}): '
+                  f'"{sentence[:150]}"', file=sys.stderr)
+
+    refusable = sum(1 for refuse, _, _ in wanted if refuse)
+    caught = sum(1 for refuse, sentence, _ in wanted if refuse and judge(sentence, policy))
+    print(f'policy sentences: {caught} of {refusable} refused, {right} of {len(wanted)} right, on '
+          f'{file.name} at sha256 {sha[:16]}. Record that sha in {FITTED.name} before this file is '
+          f'changed on the strength of it.')
+    return 0 if not missed else 1
+
+
+def the_score_refuses_a_fitted_set(policy):
+    """A set this file has already been shaped around cannot be used to say how good it is.
+
+    Watched rather than assumed, on material built here: a set carrying one of this file's own seeds,
+    and a set whose sha is in the manifest as fitted. Both have to come back 2, which is this file's
+    code for nothing having been checked, and never 0 or 1 with a number beside it.
+    """
+    import tempfile
+
+    faults = []
+    known = fitted_sets()
+    if not known:
+        faults.append(f'{FITTED.name} names no set at all, so nothing is being refused')
+    if not any(s['state'] == 'fitted' for s in known.values()):
+        faults.append(f'{FITTED.name} marks nothing fitted, and every set this file was built '
+                      f'around is fitted')
+
+    print('policy sentences: the two refusals below are this check watching --score turn away a set '
+          'it has been fitted to. They are what a green run looks like.')
+    work = Path(tempfile.mkdtemp(prefix='tw-score-'))
+    try:
+        seed = SEEDS[0][1].strip()
+        carries = work / 'carries-a-seed.txt'
+        carries.write_text(NEWLINE.join([
+            '# a set with one sentence taken out of this file',
+            f'- {seed}',
+            '- TimeWitness is accurate to the nanosecond.',
+            '+ The bound is what the receipt carries, beside the reading.',
+            '',
+        ]), encoding='utf-8')
+        if score(str(carries), policy) != 2:
+            faults.append('a set holding a seed of this file was scored rather than refused')
+
+        # The manifest's own half, on a set that is fitted and holds no seed word for word.
+        fitted_sha = next(sha for sha, s in known.items() if s['state'] == 'fitted')
+        original = FITTED.read_bytes()
+        stand_in = work / 'a-fitted-set.txt'
+        stand_in.write_text(NEWLINE.join([
+            '# a set standing in for one this file has been shaped around',
+            '- TimeWitness is accurate to the nanosecond.',
+            '+ The bound is what the receipt carries, beside the reading.',
+            '',
+        ]), encoding='utf-8')
+        import hashlib as _h
+        sha = _h.sha256(stand_in.read_bytes()).hexdigest()
+        try:
+            row = f'{sha}  fitted  2026-09-16  a-fitted-set.txt' + NEWLINE
+            FITTED.write_bytes(original + row.encode())
+            if score(str(stand_in), policy) != 2:
+                faults.append('a set named fitted in the manifest was scored rather than refused')
+        finally:
+            FITTED.write_bytes(original)
+        if not fitted_sha:
+            faults.append('the manifest holds no fitted sha to read')
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return faults
+
+
 def self_test(policy):
-    missed = content_reader_reads_the_leaf() + the_fetch_refuses_a_redirect()
+    missed = (content_reader_reads_the_leaf() + the_fetch_refuses_a_redirect()
+              + the_score_refuses_a_fitted_set(policy))
     for rule, seed in SEEDS:
         faults = judge(seed, policy)
         if not faults:
@@ -1553,6 +1756,11 @@ def self_test(policy):
             return 1
     print(f'policy sentences: {len(SEEDS)} seeds, each refused by its own rule, {len(HONEST)} honest sentences passed, and the '
           f'content reader prunes a note and reads the object under a note-shaped key')
+    # Said here because those two numbers look like a score and are not one. They are the material
+    # this file was built around, so they say nothing about a sentence nobody here has seen. The
+    # only number that says anything about that is --score on a set frozen before this was opened.
+    print('policy sentences: that is not a score. It is this file refusing its own material, which '
+          'it was shaped to refuse. Use --score on a set frozen before this file was opened.')
     return 0
 
 
@@ -1567,7 +1775,22 @@ def main(argv):
               f'max-width to {policy["action_ns"]} ns, and they are meant to be one number', file=sys.stderr)
         return 1
     if '--self-test' in argv:
+        if '--score' in argv:
+            print('policy sentences: --self-test and --score are two different questions and one '
+                  'command answering both is how they got confused. Run them separately.', file=sys.stderr)
+            return 2
         return self_test(policy)
+
+    if '--score' in argv:
+        where = argv.index('--score') + 1
+        if where >= len(argv):
+            print('policy sentences: --score takes the set to score', file=sys.stderr)
+            return 2
+        try:
+            return score(argv[where], policy)
+        except (Unreadable, OSError, UnicodeDecodeError) as e:
+            print(f'policy sentences: that set could not be read: {e}', file=sys.stderr)
+            return 2
 
     site = None
     files = [a for a in argv if not a.startswith('--')]
