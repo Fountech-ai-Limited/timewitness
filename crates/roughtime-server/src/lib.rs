@@ -46,9 +46,13 @@ use timewitness_core::evidence::EvidenceError;
 /// The largest packet this server will read off the socket.
 ///
 /// A Roughtime request is at least 1024 bytes of message and a little framing, and nothing in the
-/// draft makes one usefully larger. Reading into a fixed buffer means an oversized datagram is
-/// truncated and then fails the encoding check, which is the same silence any other bad packet
-/// gets.
+/// draft makes one usefully larger. What happens to a datagram larger than this depends on the
+/// platform, and until 2026-09-16 this comment described one of them as though it were both.
+/// Linux cuts the datagram down to the buffer and hands it over, so it fails the encoding check
+/// and gets the same silence any other bad packet gets. Windows throws the whole datagram away and
+/// returns os error 10040 from the receive in its place, so the loop sees an error and no
+/// datagram. [`serve`] treats that error as the datagram it stands for; see
+/// [`a_failed_receive`].
 pub const MAX_DATAGRAM: usize = 1500;
 
 /// How long a delegation is made for by default.
@@ -126,6 +130,15 @@ pub enum Dropped {
     /// There is no address on this one because a receive that failed did not bring one. See the
     /// note on [`serve`] about what a failed receive is and is not evidence of.
     CouldNotReceive(String),
+    /// A datagram arrived that was larger than any request, and the platform threw it away
+    /// rather than hand it over.
+    ///
+    /// Windows reports one of those as an error on the receive, os error 10040, in place of the
+    /// datagram; the address went with it, which is why there is none here. Linux cuts the
+    /// datagram down to the buffer and hands it over, where it fails the encoding check and is
+    /// [`Dropped::NotOurs`] like any other bad packet. Added 2026-09-16, the evening the first
+    /// fix to `serve` shipped, because that fix counted one of these as a fault of the socket.
+    Oversize(String),
     /// The response was built and the socket would not send it to that address.
     ///
     /// Dropped and counted rather than returned, from 2026-09-15. Until then one failed send ended
@@ -146,6 +159,12 @@ impl core::fmt::Display for Dropped {
             Dropped::CouldNotSend(d) => write!(f, "the socket would not send the response: {d}"),
             Dropped::CouldNotReceive(d) => {
                 write!(f, "a datagram was lost before it could be read: {d}")
+            }
+            Dropped::Oversize(d) => {
+                write!(
+                    f,
+                    "a datagram larger than any request was thrown away unread: {d}"
+                )
             }
         }
     }
@@ -528,19 +547,96 @@ const FAULT_WAIT: Duration = Duration::from_millis(20);
 /// Reaching this by sending would mean a flood sustained for twenty seconds that never once let a
 /// datagram through, and the answer to a flood is not in this function. One packet must never
 /// reach it, and before 2026-09-16 one packet did.
+///
+/// That argument has one exception and it was found the same evening: a packet the platform
+/// throws away before the loop sees it is a packet that never becomes a datagram. On Windows an
+/// oversize datagram is exactly that, and a flood of nothing else reached this ceiling in 20.8 s
+/// on the real command. [`a_failed_receive`] is where each error kind is asked whether it is a
+/// datagram in disguise, and that is the function to read before touching this number.
 const FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT: u32 = 1024;
 
-/// Whether a receive error means nothing was waiting rather than that something went wrong.
+/// The Windows error for a datagram larger than the buffer it was to be read into.
 ///
-/// Three kinds and they are not faults at all. `WouldBlock` and `TimedOut` are the read timeout
-/// expiring, which is how [`serve`] gets to look at `keep_going`, and `Interrupted` is a signal
-/// arriving while the thread sat in the receive. In all three the socket is working and there was
-/// simply nothing to read.
-fn nothing_was_waiting(kind: io::ErrorKind) -> bool {
-    matches!(
-        kind,
-        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
-    )
+/// WSAEMSGSIZE. The platform discards the datagram and returns this in its place, so the datagram
+/// is consumed and the loop is told about it by an error rather than by a length. The standard
+/// library files it under no kind of its own, which is why it is matched on the number.
+#[cfg(windows)]
+const A_DATAGRAM_TOO_BIG_FOR_THE_BUFFER: i32 = 10040;
+
+/// What a failed receive is evidence of.
+///
+/// Three answers, and the second is the one that was missing until 2026-09-16.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FailedReceive {
+    /// Nothing was waiting: the read timeout expired or a signal arrived. The socket is working.
+    NothingWaiting,
+    /// A datagram arrived and the platform threw it away rather than hand it over. It counts as a
+    /// datagram received, because it is one, and it is refused as [`Dropped::Oversize`].
+    DatagramThrownAway,
+    /// No datagram reached this loop. Counted towards the give-up ceiling.
+    Fault,
+}
+
+/// Ask a failed receive what it is evidence of.
+///
+/// # Every kind that ends in the fault counter, and whether a remote sender can put it there
+///
+/// The give-up ceiling is safe only while every fault a remote sender can cause is followed by a
+/// datagram that resets the run. So each kind that reaches [`FailedReceive::Fault`] is asked one
+/// question here: can somebody on the network cause it once per packet with no datagram reaching
+/// this loop? Written beside the kind, because the first fix to this loop argued the answer was
+/// no for all of them and one of them was yes.
+///
+/// - `WouldBlock`, `TimedOut`, `Interrupted`: not faults at all. The read timeout expiring is how
+///   [`serve`] gets to look at `keep_going`, and a signal arriving mid-receive is the process's
+///   own business. Both put the run back to nought.
+/// - os error 10040 on Windows, the datagram too big for the buffer: **yes, and that is this
+///   row.** The sender's packet arrived, Windows discarded it and returned the error in its place,
+///   so the loop saw a fault and never a datagram, and a flood of nothing else walked the counter
+///   to the ceiling at the loop's own pace. It is now [`FailedReceive::DatagramThrownAway`],
+///   which resets the run exactly as the datagram would have. Linux never raises it on a receive,
+///   because POSIX truncates and hands the datagram over.
+/// - `ConnectionReset`, os error 10054 on Windows, and its relations `NetworkUnreachable`,
+///   `HostUnreachable`, `ConnectionRefused` and `NetworkDown`, os errors 10051, 10065, 10061 and
+///   10050: **not by a UDP sender.** Each is the host passing on an ICMP message about a datagram
+///   this server sent, delivered on the next receive, and this server sends only in answer to a
+///   datagram it received, so each ordinarily follows the receive that reset the run. Windows
+///   does not check that the ICMP message answers a datagram this socket actually sent, so a
+///   forged ICMP unreachable naming this socket's port would raise one with no datagram behind
+///   it. That takes a raw socket and the port rather than a UDP packet, it is the one kind left
+///   that could walk the counter, and it is recorded rather than defended against here.
+///   Linux does not surface ICMP on an unconnected UDP socket without `IP_RECVERR`, which this
+///   socket does not set.
+/// - `InvalidInput`, `NotConnected`, `Unsupported` and the bad-descriptor family: **no.** These
+///   are about how the socket was made or called, they cannot be caused from the network, and
+///   they are the socket faults the ceiling exists for, because they fail instantly for ever.
+/// - `OutOfMemory`, os error 10055 on Windows: **not per packet.** Buffer exhaustion on the
+///   host, which a flood can contribute to and which clears on its own; it is counted and it is
+///   waited out at [`FAULT_WAIT`] a time.
+/// - Anything else the platform invents: counted, and it is the kind nobody thought of, which is
+///   why the ceiling is a length of time and not a list.
+fn a_failed_receive(error: &io::Error) -> FailedReceive {
+    match error.kind() {
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted => {
+            FailedReceive::NothingWaiting
+        }
+        _ if a_datagram_was_thrown_away(error) => FailedReceive::DatagramThrownAway,
+        _ => FailedReceive::Fault,
+    }
+}
+
+/// Whether this receive error stands for a datagram the platform discarded as too big.
+///
+/// Only Windows reports one. Everywhere else an oversize datagram is cut down to the buffer and
+/// handed over as an ordinary receive, so the answer is no before the error is looked at.
+#[cfg(windows)]
+fn a_datagram_was_thrown_away(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(A_DATAGRAM_TOO_BIG_FOR_THE_BUFFER)
+}
+
+#[cfg(not(windows))]
+fn a_datagram_was_thrown_away(_error: &io::Error) -> bool {
+    false
 }
 
 /// What [`serve`] does about the `n`th receive fault in a row.
@@ -610,6 +706,13 @@ fn after_a_fault(consecutive: u32) -> AfterAFault {
 /// nought, and the wait is what keeps that ceiling out of a remote client's reach; see the note on
 /// the constant.
 ///
+/// **A datagram the platform throws away is still a datagram.** The paragraph above was written on
+/// the morning of 2026-09-16 and was wrong by the evening: on Windows a datagram larger than
+/// [`MAX_DATAGRAM`] is discarded and the receive returns os error 10040 instead of it, so the
+/// packet arrived and the loop saw only a fault. A flood of nothing else took the real command
+/// off the air in 20.8 s. [`a_failed_receive`] now asks every error kind whether it is a datagram
+/// in disguise, and that one is: it resets the run and is watched as [`Dropped::Oversize`].
+///
 /// # Errors
 ///
 /// Only what [`FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT`] describes: the socket gave back nothing but
@@ -642,8 +745,16 @@ where
                 faults = 0;
                 got
             }
-            Err(e) if nothing_was_waiting(e.kind()) => {
+            Err(e) if a_failed_receive(&e) == FailedReceive::NothingWaiting => {
                 faults = 0;
+                continue;
+            }
+            Err(e) if a_failed_receive(&e) == FailedReceive::DatagramThrownAway => {
+                // A datagram arrived and was too big to be a request. That is a received datagram
+                // refused, so it resets the run the way any datagram does, and it is watched under
+                // its own name rather than as a fault of the socket.
+                faults = 0;
+                watch(None, &Dropped::Oversize(e.to_string()));
                 continue;
             }
             Err(e) => {
@@ -1179,14 +1290,80 @@ mod tests {
 
     #[test]
     fn the_three_kinds_that_mean_nothing_was_waiting_are_not_faults() {
-        assert!(
-            !nothing_was_waiting(io::ErrorKind::ConnectionReset),
+        let reset = io::Error::new(io::ErrorKind::ConnectionReset, "os error 10054");
+        assert_eq!(
+            a_failed_receive(&reset),
+            FailedReceive::Fault,
             "a reset is a lost datagram rather than a quiet socket, so it is counted"
         );
+        for kind in [
+            io::ErrorKind::TimedOut,
+            io::ErrorKind::WouldBlock,
+            io::ErrorKind::Interrupted,
+        ] {
+            assert_eq!(
+                a_failed_receive(&io::Error::new(kind, "quiet")),
+                FailedReceive::NothingWaiting
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_datagram_too_big_for_the_buffer_is_a_datagram_and_not_a_fault() {
+        let too_big = io::Error::from_raw_os_error(A_DATAGRAM_TOO_BIG_FOR_THE_BUFFER);
+        assert_eq!(
+            a_failed_receive(&too_big),
+            FailedReceive::DatagramThrownAway,
+            "Windows threw the datagram away and reported it; the datagram still arrived"
+        );
+        assert_eq!(
+            a_failed_receive(&io::Error::from_raw_os_error(10054)),
+            FailedReceive::Fault,
+            "and a reset by number is still a fault"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_run_of_oversize_datagrams_longer_than_the_ceiling_does_not_end_the_loop() {
+        // The fault of the evening of 2026-09-16, as arithmetic rather than a minute on a socket:
+        // more thrown-away datagrams in a row than the ceiling allows faults, and then an honest
+        // request. Before the fix the loop returned at the ceiling and the request was never read.
+        let server = a_server();
+        let request = build_request(&[0x54u8; 32], &server.public_key());
+        let next: SocketAddr = "203.0.113.13:2002".parse().unwrap();
+        let rounds = FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT + 8;
+        let mut script: Vec<io::Result<(Vec<u8>, SocketAddr)>> = (0..rounds)
+            .map(|_| {
+                Err(io::Error::from_raw_os_error(
+                    A_DATAGRAM_TOO_BIG_FOR_THE_BUFFER,
+                ))
+            })
+            .collect();
+        script.push(Ok((request, next)));
+        let (outcome, sent, dropped) = serve_script(script, i32::try_from(rounds).unwrap() + 4);
+
         assert!(
-            nothing_was_waiting(io::ErrorKind::TimedOut)
-                && nothing_was_waiting(io::ErrorKind::WouldBlock)
-                && nothing_was_waiting(io::ErrorKind::Interrupted)
+            outcome.is_ok(),
+            "a thousand oversize datagrams are a thousand datagrams, not a socket fault: {outcome:?}"
+        );
+        assert_eq!(
+            sent,
+            vec![next],
+            "and the honest request after them was answered"
+        );
+        assert_eq!(
+            dropped.len() as u32,
+            rounds,
+            "every one of them was counted"
+        );
+        assert!(
+            dropped
+                .iter()
+                .all(|(from, why)| from.is_none() && matches!(why, Dropped::Oversize(_))),
+            "each under its own name, with no address, because Windows kept the address with the \
+             datagram"
         );
     }
 

@@ -9,12 +9,12 @@
 //! configuration and cannot collide with another copy of itself.
 
 use std::net::{SocketAddr, UdpSocket};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use timewitness_core::evidence::roughtime::{build_request, check, pack_blob};
-use timewitness_roughtime_server::{serve, LongTermKey, RateLimit, Reading, Server};
+use timewitness_roughtime_server::{serve, Dropped, LongTermKey, RateLimit, Reading, Server};
 
 const NOW: u64 = 1_800_000_000;
 
@@ -23,6 +23,12 @@ struct Running {
     address: SocketAddr,
     public_key: [u8; 32],
     stop: Arc<AtomicBool>,
+    /// Set when `serve` came back before anybody asked it to stop, which is the one way the loop
+    /// can fail a test in this file without a single assertion about a packet noticing.
+    returned_early: Arc<AtomicBool>,
+    /// How many datagrams the platform threw away as too big for the buffer. Only Windows
+    /// reports one of those as an error; everywhere else the datagram is cut down and handed over.
+    oversize: Arc<AtomicU64>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -40,7 +46,11 @@ impl Running {
         let mut limit = RateLimit::new(per_window, Duration::from_secs(60));
 
         let stop = Arc::new(AtomicBool::new(false));
+        let returned_early = Arc::new(AtomicBool::new(false));
+        let oversize = Arc::new(AtomicU64::new(0));
         let watching = Arc::clone(&stop);
+        let early = Arc::clone(&returned_early);
+        let counting = Arc::clone(&oversize);
         let thread = std::thread::spawn(move || {
             let _ = serve(
                 &socket,
@@ -53,16 +63,33 @@ impl Running {
                     })
                 },
                 || !watching.load(Ordering::Relaxed),
-                |_, _| {},
+                |_, dropped| {
+                    if matches!(dropped, Dropped::Oversize(_)) {
+                        counting.fetch_add(1, Ordering::Relaxed);
+                    }
+                },
             );
+            if !watching.load(Ordering::Relaxed) {
+                early.store(true, Ordering::Relaxed);
+            }
         });
 
         Self {
             address,
             public_key,
             stop,
+            returned_early,
+            oversize,
             thread: Some(thread),
         }
+    }
+
+    fn returned_early(&self) -> bool {
+        self.returned_early.load(Ordering::Relaxed)
+    }
+
+    fn oversize_seen(&self) -> u64 {
+        self.oversize.load(Ordering::Relaxed)
     }
 
     /// Send a packet, and send it again rather than waiting once. `None` means no answer came at
@@ -344,4 +371,74 @@ fn a_client_that_asks_and_walks_away_does_not_stop_the_server() {
         server.ask(&request).is_some(),
         "one client closing its socket does not stop the server answering anybody else"
     );
+}
+
+#[test]
+fn a_flood_of_oversize_datagrams_for_a_minute_does_not_stop_the_server() {
+    // The second fault of 2026-09-16, found the evening the first was fixed, and the packet the
+    // first fix's own argument missed.
+    //
+    // `serve` gives up when the socket hands back nothing but faults for over twenty seconds, and
+    // the argument that kept that ceiling out of a client's reach was that every fault a client can
+    // cause needs a packet, and a packet is a datagram on the next receive, which puts the run back
+    // to nought. On Windows a datagram larger than the receive buffer is thrown away by the
+    // platform and `recv_from` returns os error 10040 in its place. The packet arrived and the loop
+    // never saw a datagram, so each one was a fault and nothing between them reset the run. About
+    // a thousand of them, at the loop's own pace of fifty a second, and the real
+    // `timewitness roughtime-serve` exited 1 after 20.8 s on this desktop with nothing else sent.
+    //
+    // Linux cuts an oversize datagram down to the buffer and hands it over, so there it arrives as
+    // an ordinary bad packet and this test never reaches the path. It still runs everywhere, and
+    // the count at the end says which of the two happened.
+    //
+    // A minute rather than the twenty-one seconds the ceiling takes, because the property is that
+    // no length of this flood reaches it, and a test that stops at the ceiling is testing the
+    // ceiling's arithmetic rather than the loop.
+    let server = Running::start(60);
+    let address = server.address;
+
+    let flood = std::thread::spawn(move || {
+        let sender = UdpSocket::bind("127.0.0.1:0").expect("a client port");
+        let big = [0u8; 4000];
+        let started = Instant::now();
+        let mut sent: u64 = 0;
+        while started.elapsed() < Duration::from_secs(60) {
+            for _ in 0..200 {
+                if sender.send_to(&big, address).is_ok() {
+                    sent += 1;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        sent
+    });
+    let sent = flood.join().expect("the flood ran its minute");
+    assert!(sent > 100_000, "the flood barely sent anything: {sent}");
+
+    assert!(
+        !server.returned_early(),
+        "a minute of oversize datagrams and nothing else made serve give up on its socket"
+    );
+
+    let request = build_request(&[0x46; 32], &server.public_key);
+    assert!(
+        server.ask(&request).is_some(),
+        "an honest client is answered after the flood"
+    );
+
+    if cfg!(windows) {
+        assert!(
+            server.oversize_seen() > 1_000,
+            "on Windows every one of those datagrams is reported as too big and thrown away, so \
+             more than a thousand of them were counted: {}",
+            server.oversize_seen()
+        );
+    } else {
+        assert_eq!(
+            server.oversize_seen(),
+            0,
+            "this platform cuts an oversize datagram down and hands it over, so none is counted as \
+             thrown away"
+        );
+    }
 }

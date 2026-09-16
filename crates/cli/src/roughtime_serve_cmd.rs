@@ -235,7 +235,7 @@ pub fn run(args: &Args) -> Outcome {
     }
 }
 
-/// Which of the six refusals this is, for counting rather than for reading.
+/// Which of the seven refusals this is, for counting rather than for reading.
 fn kind_of(dropped: &Dropped) -> u8 {
     match dropped {
         Dropped::NotOurs(_) => 0,
@@ -244,6 +244,7 @@ fn kind_of(dropped: &Dropped) -> u8 {
         Dropped::CouldNotAnswer(_) => 3,
         Dropped::CouldNotSend(_) => 4,
         Dropped::CouldNotReceive(_) => 5,
+        Dropped::Oversize(_) => 6,
     }
 }
 
