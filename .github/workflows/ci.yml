@@ -25,6 +25,12 @@ jobs:
           # The whole history. Three of the repository checks read every commit, and at the default
           # depth of one they see a single commit and do nothing in the place they were put to run.
           fetch-depth: 0
+          # The commits that were written, rather than the merge GitHub builds to try them out. On a
+          # pull request the default is that merge, whose author and committer are both GitHub's own
+          # identities, and `scripts/repo-hygiene.sh` reads every commit's author and committer and
+          # refuses one that is not ours. So the default checkout failed the run on a branch whose
+          # own commits were all clean, which is a check reporting on a commit nobody wrote.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install the toolchain
         run: |
