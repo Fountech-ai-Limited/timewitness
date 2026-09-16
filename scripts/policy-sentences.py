@@ -93,8 +93,24 @@ claim word in the same clause with no comma, "a stranger who trusts none of us c
 servers' word that the bound is correct", is read as a denial. A pronoun standing for an outside
 party, "they certify how far from UTC it could have been", names nothing this reads. And each rule's
 honest register, the words that make a mention honest, is a list a writer could ride: "comes from
-accreditation" beside a claim passes the claim. A figure it has no rule for is not checked here;
-`tests/check-messaging-figures.py` at the product root holds figures to the artefacts they came from.
+accreditation" beside a claim passes the claim.
+
+Figures are the other way round and have been since 2026-09-16: deny by default, every quantity on
+every surface read or refused by name. Until that day this half was allow by default too and nobody
+had noticed, because the file's own docstring said so in a sentence that read as a boundary rather
+than as a hole. "Ninety-nine percent of receipts come in under 12 milliseconds" invented a figure
+this product has never measured, "TimeWitness bounds every stamp at 153.875 ms" and "Every stamp
+carries an error bound of 128.7 ms" took real readings off one desktop on one afternoon and said
+them of every stamp there will ever be, and all three went through untouched. A number is where rule
+1 of what this product may say lives, and it is also where the line was drawn on 2026-09-09: prose
+may be forward-looking and a number may not, because a reader will try to reproduce a number and
+cannot try to reproduce a plan. A figure now has to be read by a rule, or refused for being said of
+every stamp, or carrying the conditions it was measured under in its own sentence, or excused by
+name in `scripts/policy-figures.json` with a reason written out. The walk, and what it deliberately
+does not do, is at the block above `SEEDS`. It says how many figures it found and how each was
+answered, so a growing excuse list is visible on a green run rather than only in a diff.
+`tests/check-messaging-figures.py` at the product root is the other half and holds figures to the
+artefacts they came from; this one holds them to having been read at all.
 
 Served pages are read as text and as the attributes a reader is given without seeing the page: the
 meta description, every alt, title and aria-label, and the page title. Until 2026-09-15 served mode
@@ -668,6 +684,7 @@ ATTRIBUTED = re.compile(r'\bresearch\b|\bquot\w+\b|\bpublished\b|\bsomebody else
                         r'\bfor (?:ordinary|other people\'s|anybody else\'s) machines|\bpresented as ours\b', re.I)
 SIMULATED = re.compile(r'\bsimulat\w*|\bharness\b|\barithmetic of the model\b|\btest wrote\b|\bknown true offset\b', re.I)
 # Roughtime called a standard. Held to the standing the client's own head says the document has.
+CORRIDOR = re.compile(r'\bnarrowest interval a Roughtime corridor can state\b', re.I)
 ROUGHTIME_STANDARD = re.compile(r'\bRoughtime\b[^.;,]{0,40}?\b(RFC)\b(?!\s*\d)|'
                                 r'\bRoughtime\b[^.;,]{0,40}?\b((?:is|as|being|became|now) (?:an? |the )?(?:IETF |internet |published |full |'
                                 r'ratified |finished |final |proposed )?(?:RFC|standard))\b', re.I)
@@ -945,10 +962,25 @@ def claimed(sentence):
     return faults
 
 
-def judge(sentence, policy, landing=None):
-    """What is wrong with one sentence against the policy, or nothing."""
+def judge(sentence, policy, landing=None, read=None):
+    """What is wrong with one sentence against the policy, or nothing.
+
+    `read` is how this says which figures it actually looked at. Pass a list and every rule that
+    takes a number in appends the span it read, so `unclaimed` below can tell a figure that was
+    checked from one nothing here has a rule for. A caller that does not pass one gets the same
+    faults it always did.
+    """
     faults = []
     floor, rt = policy['floor'], policy['roughtime_operators']
+
+    def span(start, end):
+        """This rule read the numbers between these two places in the sentence."""
+        if read is not None:
+            read.append((start, end))
+
+    def took(m):
+        """This rule read the numbers inside this match."""
+        span(m.start(), m.end())
 
     if ROUGHTIME_ONLY.search(sentence):
         if rt < floor and PRESENT_SECONDS.search(sentence) and not HISTORY.search(sentence):
@@ -969,6 +1001,7 @@ def judge(sentence, policy, landing=None):
                 n = counted(m)
                 if n is None:
                     continue
+                took(m)
                 floor_at.add(m.start(1))
                 if n != floor:
                     faults.append(f'puts the operator floor at {n}, and it is {floor}')
@@ -983,6 +1016,7 @@ def judge(sentence, policy, landing=None):
                 n = int(number_of(count))
             except ValueError:
                 continue
+            took(m)
             if n != policy['roughtime_servers']:
                 faults.append(f'puts {n} published Roughtime servers where there are {policy["roughtime_servers"]}')
             break
@@ -991,6 +1025,7 @@ def judge(sentence, policy, landing=None):
             c0, c1 = clause_around(sentence, m.start(1))
             if n is None or m.start(1) in floor_at or re.search(r'\bfloor\b|\bminimum\b|\bquorum\b', sentence[c0:c1], re.I):
                 continue
+            took(m)
             if n != rt:
                 faults.append(f'puts {n} operators behind the published Roughtime servers, and there are {rt}')
             break
@@ -998,6 +1033,7 @@ def judge(sentence, policy, landing=None):
         m = rule.search(sentence)
         if m:
             n = counted(m)
+            took(m)
             if n is not None and n != policy['kinds']:
                 faults.append(f'says {n} kinds of time source have a client, and {policy["kinds"]} do')
             break
@@ -1010,11 +1046,13 @@ def judge(sentence, policy, landing=None):
     m = SIGNS_ON.search(sentence)
     if m and not denied(sentence, m):
         n = counted(m)
+        took(m)
         if n is not None and n < floor:
             faults.append(f'says it signs on {n} operators, and the floor refuses below {floor}')
     m = SOURCES_ENOUGH.search(sentence)
     if m and not denied(sentence, m):
         n = counted(m)
+        took(m)
         if n is not None and n < floor:
             faults.append(f'says {n} source{"s" if n != 1 else ""} {"are" if n != 1 else "is"} enough, and a source stands '
                           f'at one operator, so fewer than the floor of {floor} operators can never be enough')
@@ -1080,6 +1118,7 @@ def judge(sentence, policy, landing=None):
                 faults.append(f'calls Roughtime a standard, and the specification this code implements is {policy["roughtime_standing"]}')
     for figure, where in FOREIGN_FIGURES:
         for m in figure.finditer(sentence):
+            took(m)
             c0, c1 = clause_around(sentence, m.start())
             clause = sentence[c0:c1]
             if OURS_MEASURED.search(clause) or (OURS_SUBJECT.search(clause) and not ATTRIBUTED.search(sentence)
@@ -1087,6 +1126,8 @@ def judge(sentence, policy, landing=None):
                 faults.append(f'writes {m.group().strip()} as ours, and it is somebody else\'s figure for {where}, quoted from public '
                               'research and never measured by this product (rule 1 of what this product may say)')
                 break
+    for m in SIMULATED_FIGURES.finditer(sentence):
+        took(m)
     m = SIMULATED_FIGURES.search(sentence)
     if m and not SIMULATED.search(sentence):
         faults.append(f'gives {m.group()} as a reading, and it is the arithmetic of the simulated harness at '
@@ -1115,6 +1156,7 @@ def judge(sentence, policy, landing=None):
     for m in CEILING.finditer(sentence):
         groups = [g for g in m.groups() if g is not None]
         number, unit = groups[0], groups[1]
+        took(m)
         try:
             value = duration_ns(number, unit.lower())
         except ValueError:
@@ -1130,6 +1172,7 @@ def judge(sentence, policy, landing=None):
             faults.append(f'puts the one-shot ceiling at {number} {unit}, and it is {policy["one_shot_ns"] / 1e9:g} s')
     m = INSIDE_CEILING.search(sentence)
     if m and not denied(sentence, m):
+        took(m)
         try:
             value = duration_ns(m.group(1), m.group(2).lower())
         except ValueError:
@@ -1141,11 +1184,34 @@ def judge(sentence, policy, landing=None):
         if value is not None and value > ceiling:
             faults.append(f'puts {m.group(1)} {m.group(2)} inside the ceiling, and the ceiling is {label}')
 
+    # The narrowest corridor a Roughtime server can state is the one-shot ceiling, and the two
+    # figures a sentence says it with are that width and its radius, half of it either side. Said
+    # in the clause the phrase sits in, or in the one before it, which is how the Action's own
+    # input describes it: "the widest interval this agent will sign for, in nanoseconds, so two
+    # seconds, which is the narrowest interval a Roughtime corridor can state".
+    parts = clauses(sentence)
+    for n, (c0, c1) in enumerate(parts):
+        if not CORRIDOR.search(sentence[c0:c1]):
+            continue
+        scope = [parts[n - 1]] if n else []
+        for a, b in scope + [(c0, c1)]:
+            for m in re.finditer(r'\b(' + AMOUNT + r') ?' + UNIT + r'\b', sentence[a:b], re.I):
+                span(a + m.start(), a + m.end())
+                try:
+                    value = duration_ns(m.group(1), m.group(2).lower())
+                except (ValueError, KeyError):
+                    continue
+                if value not in (policy['one_shot_ns'], policy['one_shot_ns'] // 2):
+                    faults.append(f'puts the narrowest interval a Roughtime corridor can state at '
+                                  f'{m.group(1)} {m.group(2)}, and it is {policy["one_shot_ns"] / 1e9:g} s, '
+                                  f'a radius of {policy["one_shot_ns"] / 2e9:g} s either side')
+
     if 'max-width' in sentence:
         for m in MAX_WIDTH_DEFAULT.finditer(sentence):
             groups = [g for g in m.groups() if g is not None]
             number = groups[0]
             unit = groups[1] if len(groups) > 1 else 'seconds'
+            took(m)
             try:
                 if duration_ns(number, unit) != policy['one_shot_ns']:
                     faults.append(f'gives max-width a default of {number} {unit}, and it is '
@@ -1154,6 +1220,8 @@ def judge(sentence, policy, landing=None):
             except ValueError:
                 continue
         stated = re.search(r'max-width default (\d+) ns', sentence)
+        if stated:
+            took(stated)
         if stated and int(stated.group(1)) != policy['one_shot_ns']:
             faults.append(f'gives max-width a default of {stated.group(1)} ns, and it is {policy["one_shot_ns"]} ns')
 
@@ -1214,6 +1282,205 @@ def surfaces(files, site, floor=SENTENCE_FLOOR):
             found = [s for text in strings for s in sentences(text)]
             out += [(f'{base.name}/{name}', s) for s in enough(f'{base.name}/{name}', found, SENTENCE_FLOOR)]
     return out, landing
+
+
+# ---------------------------------------------------------------------------------------------
+# Every figure on a surface is read, or it is refused. Nothing passes because nobody wrote a rule.
+#
+# The rules above are allow by default, and that is right for a proposition: a sentence nobody has a
+# rule for is usually just a sentence. It is wrong for a number. Rule 1 of what this product may say
+# is entirely about numbers, and on 2026-09-16 three sentences went straight through this file:
+# "Ninety-nine percent of receipts come in under 12 milliseconds", which invents a figure nobody
+# measured, and "TimeWitness bounds every stamp at 153.875 ms" and "Every stamp carries an error
+# bound of 128.7 ms", which take a reading from one desktop on one afternoon and say it of every
+# stamp there will ever be. None of the three broke a rule here, because none of the three had one.
+#
+# So a figure is deny by default. Every quantity on every surface is found, and each one is answered
+# in one of four ways, in this order:
+#
+#   1. A rule above read it. The ceiling, the floor, the counts, the three figures that are somebody
+#      else's and the two the simulated harness produced all take a number in and hold it to
+#      something. `judge` records the span each rule read, so this is what the rules did rather than
+#      a second list of what they might have done.
+#   2. It is said of every stamp, every receipt or every machine. That is refused whatever else the
+#      sentence carries, because a reading taken once is not a property of a product, and it is the
+#      class the second and third sentences above belong to. A ceiling the code states is exempt: it
+#      is legitimately true of every stamp, and it reaches this test already answered by 1.
+#   3. Its conditions are in its own sentence. Rule 1 asks for the conditions a figure was measured
+#      under and whose it is, so a figure sitting beside its date, its machine, its round count, its
+#      artefact or its attribution has met the rule the product holds itself to.
+#   4. It is excused by name in `policy-figures.json`, with a reason.
+#
+# Anything else is a failure naming the figure, the sentence and the surface.
+#
+# What this does not do. It does not check that a figure is the right number; the artefacts say that,
+# and `tests/check-messaging-figures.py` at the product root holds figures to them. And it reads the
+# shipped surfaces rather than a sentence handed to `--score`, because 2 and 3 are questions about a
+# page and 4 is a list keyed to one, so a set of sentences nobody has published is neither.
+
+# The micro sign is written as an escape so this file stays printable ASCII, which
+# `scripts/repo-hygiene.sh` holds every tracked file to.
+MICRO = '\u00b5'
+
+SCALE = (r'(ns|nanoseconds?|us|' + MICRO + r's|microseconds?|ms|milliseconds?|s|secs?|seconds?|mins?|minutes?|'
+         r'hours?|days?|percent|per cent|%)')
+
+# A quantity is a number somebody could try to reproduce: a count in digits or in words carrying a
+# unit of measurement, or a half or a quarter of one. The bare article is not a quantity. "a second
+# time service", "a leap second" and "an hour apart" are prose, and reading them as figures would
+# bury the numbers that matter under a hundred that do not.
+FIGURE = re.compile(r'(?<![\w.$-])(?:(\d+(?:\.\d+)?)\s?' + SCALE
+                    + r'|((?:half|a quarter of) an?|' + WORD + r'(?:-' + WORD + r')?)[\s-]' + SCALE
+                    + r')(?![\w-])', re.I)
+
+# A number after one of these names a document or a version and is not a quantity, whatever follows
+# it. RFC 3161 is not three thousand of anything.
+NOT_A_QUANTITY = re.compile(r'(?:RFC|SLSA|ISO|IEEE|Article|SEC|FINRA|v|version|port|sha256)\s*$', re.I)
+
+# A figure said of everything. A reading is taken under conditions and holds for the moment it was
+# taken; the same number said of every stamp is a different claim and no measurement supports it.
+#
+# What is quantified decides whether this is the fault. A run's own readings are quantified honestly
+# all the time, "refused every reading from 11 s to 69 s", and that is one run being described. The
+# fault is the product's output quantified: every stamp, every receipt, every bound, every machine.
+# So the nouns here are the ones a claim about the product is made of, and `readings` and `runs`,
+# which name the measurement rather than the product, are deliberately not among them.
+UNIVERSAL = re.compile(r'\b(?:every|each|all|any|whatever the|no matter which)\s+'
+                       r'(?:\w+\s+){0,2}?(?:stamps?|receipts?|bounds?|widths?|intervals?|machines?|'
+                       r'builds?|clocks?|agents?|users?|customers?|installs?|deployments?)\b|'
+                       r'\balways\b|\bevery time\b|\bin every case\b', re.I)
+
+# The conditions rule 1 asks for beside a figure: when it was read, off what, on what, at what
+# settings, or whose it is.
+CONDITIONS = re.compile(
+    r'\b20\d\d-\d\d-\d\d\b|\b\d{1,2}:\d{2}\b|'
+    r'\bmeasur\w*|\breadings?\b|\bread off\b|\bread with\b|\btaken\b|\brecorded\b|'
+    r'\bover (?:two|three|four|\d+) passes\b|\bon those runs\b|\bon one run\b|'
+    r'\bordinary\b|\bdesktop\b|\bthis machine\b|\bsame machine\b|\brunners?\b|'
+    r'\brounds?\b|\bcadence\b|\buptime\b|\bpolling\b|\bat those settings\b|'
+    r'\bsimulat\w*|\bharness\b|\barithmetic of the model\b|'
+    r'\bresearch\b|\bquot\w+|\bpublished\b|\bsomebody else|\bnot ours\b|'
+    r'[\w.-]+/[\w./-]+|\bfixture\b|\bthe receipt committed\b|\bcommitted at\b',
+    re.I)
+
+FIGURES_EXCUSED = ROOT / 'scripts' / 'policy-figures.json'
+
+
+def excuses():
+    """The figures excused by name, read off the committed list.
+
+    An entry names the figures it covers, the surfaces it covers them on, the sentence it covers
+    them in, and a reason. It covers nothing else on any of the four. An entry short of any of them,
+    or naming a reason the file does not write out, is a failure of this check rather than an excuse:
+    an excuse with no reason beside it is the same thing as no check at all, which is what this whole
+    block is here to stop.
+    """
+    if not FIGURES_EXCUSED.is_file():
+        raise Unreadable(f'{FIGURES_EXCUSED.name} is not beside this script, so nothing says which '
+                         f'figures are excused and why. A missing list is not an empty one')
+    return read_excuses(json.loads(FIGURES_EXCUSED.read_text(encoding='utf-8')))
+
+
+def read_excuses(data):
+    """The same list, from what has already been parsed, so the self-test can hand it a bad one."""
+    reasons = data.get('reasons') or {}
+    for name, body in reasons.items():
+        if not isinstance(body, str) or len(body.split()) < 8:
+            raise Unreadable(f'{FIGURES_EXCUSED.name}: the reason "{name}" is not written out')
+    out = []
+    for n, entry in enumerate(data.get('excused') or [], 1):
+        for field in ('figures', 'surfaces', 'sentence', 'reason'):
+            if not entry.get(field):
+                raise Unreadable(f'{FIGURES_EXCUSED.name}: entry {n} has no {field}, and an entry '
+                                 f'short of one of the four excuses nothing')
+        if entry['reason'] not in reasons:
+            raise Unreadable(f'{FIGURES_EXCUSED.name}: entry {n} gives the reason '
+                             f'"{entry["reason"]}", which the file does not write out')
+        out.append({'figures': {f.strip().lower() for f in entry['figures']},
+                    'surfaces': set(entry['surfaces']),
+                    'sentence': words_of(entry['sentence']),
+                    'reason': entry['reason'],
+                    'used': 0})
+    return out
+
+
+def figures_of(sentence):
+    """Every quantity in one sentence, as (what it says, where it starts, where it ends)."""
+    found = []
+    for m in FIGURE.finditer(sentence):
+        if NOT_A_QUANTITY.search(sentence[max(0, m.start() - 12):m.start()]):
+            continue
+        number = m.group(1) if m.group(1) is not None else m.group(3)
+        unit = m.group(2) if m.group(2) is not None else m.group(4)
+        found.append((f'{number.strip()} {unit.strip()}'.lower(), m.start(), m.end()))
+    return found
+
+
+def surface_of(where):
+    """The name an excuse writes for a surface.
+
+    A served page is named by its path, so one entry covers the content file a page is built from
+    and the page itself without the excuse having to carry the host it was served on.
+    """
+    if where.startswith('http'):
+        return urllib.parse.urlparse(where).path.rstrip('/') or '/'
+    return where
+
+
+def unclaimed(read_from, policy, landing, excused):
+    """Every figure on every surface, answered or refused by name.
+
+    Gives back the failures and the count of each way a figure was answered, which is printed on a
+    green run so a later one sees the excuse list growing rather than having to diff it.
+    """
+    faults = []
+    counts = {'found': 0, 'read by a rule': 0, 'carrying its conditions': 0, 'excused': 0}
+    for where, sentence in read_from:
+        found = figures_of(sentence)
+        if not found:
+            continue
+        read = []
+        judge(sentence, policy, landing, read=read)
+        surface = surface_of(where)
+        for text, start, end in found:
+            counts['found'] += 1
+            if any(a <= start and end <= b for a, b in read):
+                counts['read by a rule'] += 1
+                continue
+            excuse = next((e for e in excused if text in e['figures'] and surface in e['surfaces']
+                           and e['sentence'] == sentence), None)
+            # Said of everything is read in the figure's own clause. A sentence can describe the
+            # algorithm over every interval in one clause and quote a reading in the next, and
+            # holding the whole sentence to it refused a dozen honest ones on the first run.
+            c0, c1 = clause_around(sentence, start)
+            if UNIVERSAL.search(sentence[c0:c1]) and not excuse:
+                faults.append(f'{where}: says {text} of every stamp, receipt or machine, and a figure '
+                              f'is a reading taken under conditions rather than a property of the '
+                              f'product (rule 1 of what this product may say):\n    "{sentence[:220]}"')
+                continue
+            if CONDITIONS.search(sentence):
+                counts['carrying its conditions'] += 1
+                continue
+            if excuse:
+                excuse['used'] += 1
+                counts['excused'] += 1
+                continue
+            faults.append(f'{where}: gives {text} with no rule reading it, no conditions in its own '
+                          f'sentence and no entry in {FIGURES_EXCUSED.name}, so nothing here has '
+                          f'checked it:\n    "{sentence[:220]}"')
+    return faults, counts
+
+
+def stale_excuses(excused, surfaces_read):
+    """An entry that matched nothing, on a run that read every surface it names.
+
+    Held only where all of an entry's surfaces were read, so a `--no-site` run does not report the
+    entries covering a served page and a served run does not report the ones covering a file.
+    """
+    return [f'{FIGURES_EXCUSED.name}: the entry excusing {", ".join(sorted(e["figures"]))} on '
+            f'{", ".join(sorted(e["surfaces"]))} matched nothing, so the sentence it was written for '
+            f'has gone or changed and the excuse is standing over nothing'
+            for e in excused if e['used'] == 0 and e['surfaces'] <= surfaces_read]
 
 
 # Seeds, each the sentence a fault took on a served or shipped surface before 2026-09-15 or a
@@ -1474,6 +1741,78 @@ def content_reader_reads_the_leaf():
             faults.append(f'a string under {key} was read, and that object is editorial in full')
     if [s for _, s in site_strings({'install': {'commandNote': {'text': seed, 'src': 'x', 'id': 'y'}}})] != [seed]:
         faults.append('install.commandNote.text is not read, and the front page prints it')
+    return faults
+
+
+def every_figure_is_read(policy):
+    """Whether a figure nothing has a rule for is refused, watched on the three that were not.
+
+    The three sentences below went through this file untouched at `c3a23c8`, which is what the walk
+    over figures was written for, so they are watched being refused rather than assumed to be. The
+    excuse list is watched too, on both halves of what makes it an excuse rather than a hole: an
+    entry short of a reason stops the run outright, and one that covers a sentence the surfaces no
+    longer carry is reported rather than left standing.
+    """
+    faults = []
+    probes = [
+        'Ninety-nine percent of receipts come in under 12 milliseconds.',
+        'TimeWitness bounds every stamp at 153.875 ms.',
+        'Every stamp carries an error bound of 128.7 ms.',
+        'Measured on 2026-09-09 on an ordinary desktop, every stamp is 128.7 ms wide.',
+    ]
+    for probe in probes:
+        refused, _ = unclaimed([('a made-up surface', probe)], policy, None, [])
+        if not refused:
+            faults.append(f'a figure nothing has a rule for passed: {probe}')
+    # An honest sentence of the same shape has to pass, or this is refusing figures rather than
+    # unread ones.
+    for honest in ('Measured 2026-09-09 at 21:41 on an ordinary desktop at sixteen rounds: 153.875 ms.',
+                   'The agent refuses any interval wider than 250 ms.'):
+        refused, _ = unclaimed([('a made-up surface', honest)], policy, None, [])
+        if refused:
+            faults.append(f'an honest figure was refused ({refused[0].splitlines()[0]}): {honest}')
+    # The excuse itself, watched covering the sentence it names and nothing beside it.
+    entry = [{'figures': {'12 milliseconds', 'ninety-nine percent'}, 'surfaces': {'a made-up surface'},
+              'sentence': probes[0], 'reason': 'for the self-test', 'used': 0}]
+    if unclaimed([('a made-up surface', probes[0])], policy, None, entry)[0]:
+        faults.append('an excused figure was refused in the sentence its entry quotes')
+    if not unclaimed([('another surface', probes[0])], policy, None, entry)[0]:
+        faults.append('an excuse covered a surface it does not name')
+    entry[0]['used'] = 0
+    if not unclaimed([('a made-up surface', 'Ninety-nine percent of receipts come in under 12 milliseconds today.')],
+                     policy, None, entry)[0]:
+        faults.append('an excuse covered a sentence it does not quote')
+    if not stale_excuses(entry, {'a made-up surface'}):
+        faults.append('an entry that matched nothing on a surface it names was not reported')
+    if stale_excuses(entry, {'another surface'}):
+        faults.append('an entry was called stale on a run that did not read the surface it names')
+    # An excuse with no reason beside it is the same failure as a skipped check, so it stops the run
+    # rather than being skipped over.
+    whole = {'reasons': {'for the self-test': 'A reason written out at the length this file asks for.'},
+             'excused': [{'figures': ['1 ms'], 'surfaces': ['x'], 'sentence': 'One.',
+                          'reason': 'for the self-test'}]}
+    for missing in ('figures', 'surfaces', 'sentence', 'reason'):
+        short = json.loads(json.dumps(whole))
+        del short['excused'][0][missing]
+        try:
+            read_excuses(short)
+            faults.append(f'an entry with no {missing} was read as an excuse')
+        except Unreadable:
+            pass
+    unwritten = json.loads(json.dumps(whole))
+    unwritten['excused'][0]['reason'] = 'a reason nobody wrote out'
+    try:
+        read_excuses(unwritten)
+        faults.append('an entry naming a reason the file does not write out was read as an excuse')
+    except Unreadable:
+        pass
+    thin = json.loads(json.dumps(whole))
+    thin['reasons']['for the self-test'] = 'Because.'
+    try:
+        read_excuses(thin)
+        faults.append('a reason of one word was read as a reason')
+    except Unreadable:
+        pass
     return faults
 
 
@@ -1740,7 +2079,7 @@ def the_score_refuses_a_fitted_set(policy):
 
 def self_test(policy):
     missed = (content_reader_reads_the_leaf() + the_fetch_refuses_a_redirect()
-              + the_score_refuses_a_fitted_set(policy))
+              + every_figure_is_read(policy) + the_score_refuses_a_fitted_set(policy))
     for rule, seed in SEEDS:
         faults = judge(seed, policy)
         if not faults:
@@ -1809,6 +2148,7 @@ def main(argv):
 
     try:
         read_from, landing = surfaces(files, site, SENTENCE_FLOOR if whole_tree else 1)
+        excused = excuses()
     except (Unreadable, OSError, ValueError) as e:
         print(f'policy sentences: a surface could not be read: {e}', file=sys.stderr)
         return 2
@@ -1816,6 +2156,9 @@ def main(argv):
     for where, sentence in read_from:
         for fault in judge(sentence, policy, landing):
             problems.append(f'{where}: {fault}:\n    "{sentence[:220]}"')
+    figure_faults, figures = unclaimed(read_from, policy, landing, excused)
+    problems += figure_faults
+    problems += stale_excuses(excused, {surface_of(w) for w, _ in read_from})
     for p in problems:
         print('policy sentences: ' + p, file=sys.stderr)
     said = (f'floor {policy["floor"]}, {policy["roughtime_operators"]} Roughtime operators, agent '
@@ -1828,6 +2171,9 @@ def main(argv):
     where = 'and no site, said on purpose' if site is None else f'and the site at {site}'
     print(f'policy sentences: {len(read_from)} sentences over {len(files)} files {where} agree with the '
           f'shipped policy ({said})')
+    print(f'policy sentences: {figures["found"]} figures, {figures["read by a rule"]} read by a rule, '
+          f'{figures["carrying its conditions"]} carrying their conditions, {figures["excused"]} '
+          f'excused in {FIGURES_EXCUSED.name}, and none unread')
     return 0
 
 
