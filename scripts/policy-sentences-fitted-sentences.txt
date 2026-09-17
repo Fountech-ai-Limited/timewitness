@@ -5,11 +5,11 @@
 # one word. The words are written beside it because a print alone can say whether a sentence is the
 # same and never whether it is a version of one, and on 2026-09-17 one space deleted per line, every
 # item numbered, a trailing clause and two sentences joined each gave a fitted set a fresh print.
-# `--score` reads a line as a version of a fitted sentence where the letters match once spaces and
-# punctuation are gone, or where the letters are nine tenths alike, and refuses a set where more than
-# one in ten of the sentences it marks to be refused are versions of fitted ones. A line carrying the
-# print and the set alone is a sentence whose words are not written here; it is matched by its print,
-# and a version of it is not seen.
+# `--score` reads a line as a light rewrite of a recorded sentence by the closed list in
+# policy-sentences.py above `EDITS_IN_A_LONG_SENTENCE`, the same for the seeds and the honest
+# sentences held in that file, and refuses a set where more than one in ten of the sentences it marks
+# to be refused are such rewrites. A line carrying the print and the set alone is a sentence whose
+# words are not written here; it is matched by its print, and a version of it is not seen.
 #
 # Every set marked fitted in policy-sentences-fitted.txt has its sentences here and every name here is
 # marked fitted there; either without the other is refused by name. A set's lines are added in the same
