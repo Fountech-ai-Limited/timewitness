@@ -254,8 +254,11 @@ fn no_source_may_present_an_interval_narrower_than_the_floor() {
             .width()
     }
 
+    // A nanosecond is the floor's minimum, which is the resolution the arithmetic is carried in;
+    // nought was used here until 2026-09-17, when `Policy::fault` began refusing a floor that lets
+    // a source claim a point.
     let floored = width_at(40 * NANOS_PER_MILLI);
-    let unfloored = width_at(0);
+    let unfloored = width_at(1);
     assert!(
         floored > unfloored,
         "the source interval floor changes nothing: {floored} ns against {unfloored} ns"

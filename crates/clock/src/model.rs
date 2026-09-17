@@ -187,7 +187,10 @@ impl ClockModel {
         granularity: Nanos,
     ) -> Self {
         let mono = clock.now();
-        let scheduling_allowance = granularity.max(policy.scheduling_floor);
+        // The platform's measurement is an input the policy validator never sees, so it is held to
+        // the same range here: never below the floor, and never past the widest any term is carried
+        // as, which the ceiling then refuses rather than the adds overflowing on the way to it.
+        let scheduling_allowance = granularity.max(policy.scheduling_floor).clamp(0, WIDEST);
         Self {
             policy,
             clock,
@@ -668,23 +671,14 @@ impl ClockModel {
             .saturating_add(scheduling)
             .saturating_add(safety_margin);
 
-        // The interval is the intersection plus the widening on each side, so its width is known
-        // before either end is placed. Refusing here rather than after means a term carried at
-        // `WIDEST` is refused as too wide rather than overflowing on the way to being measured.
-        let width = sync
-            .intersection
-            .width()
-            .saturating_add(widen.saturating_mul(2));
-        if width > self.policy.max_bound_width {
-            return Err(Refusal::new(Validity::BoundTooWide {
-                width,
-                ceiling: self.policy.max_bound_width,
-            }));
-        }
-
         let drift = signed_ppm_over(sync.frequency_ppm.unwrap_or(0.0), elapsed);
-        let lo = sync.intersection.lo + drift - widen;
-        let hi = sync.intersection.hi + drift + widen;
+        let (lo, hi, width) = place(
+            &sync.intersection,
+            drift,
+            widen,
+            self.policy.max_bound_width,
+        )
+        .map_err(Refusal::new)?;
         let point = (sync.offset + drift).clamp(lo, hi);
 
         let raw = self.origin.raw_at(now);
@@ -794,16 +788,45 @@ impl ClockModel {
         while self.history.len() > self.policy.history_capacity {
             self.history.pop_front();
         }
+        // The window drops what is older than it and never what the fit needs. It kept two points
+        // until 2026-09-17, one short of a fit, so a window shorter than a couple of polls, or a gap
+        // in the sources longer than the window, emptied the regression and took the residual out
+        // of the width. The capacity above is held to the same minimum by `Policy::fault`.
         let newest = point.at;
         let window = self.policy.regression_window;
+        let keep = self.policy.regression_min_points;
         while let Some(front) = self.history.front() {
-            if newest.since(front.at) > window && self.history.len() > 2 {
+            if newest.since(front.at) > window && self.history.len() > keep {
                 self.history.pop_front();
             } else {
                 break;
             }
         }
     }
+}
+
+/// The ends of the interval and its width, or the refusal where the width is past the ceiling.
+///
+/// The width is the intersection plus the widening on each side, so it is known before either end is
+/// placed, and it is measured first. Placing the ends first and measuring afterwards was the order
+/// until 2026-09-17, and with a term carried at `WIDEST` it overflowed on the way to being refused.
+/// The width is summed saturating so that the comparison is reached whatever the terms; the ends are
+/// placed only once the width is under a ceiling `Policy::fault` holds to `WIDEST`, so they cannot
+/// overflow. The unit test below drives this with a widening the validator would never allow, which
+/// is how the order is pinned rather than assumed.
+fn place(
+    intersection: &OffsetInterval,
+    drift: Nanos,
+    widen: Nanos,
+    ceiling: Nanos,
+) -> Result<(Nanos, Nanos, Nanos), Validity> {
+    let width = intersection.width().saturating_add(widen.saturating_mul(2));
+    if width > ceiling {
+        return Err(Validity::BoundTooWide { width, ceiling });
+    }
+    let lo = intersection.lo + drift - widen;
+    let hi = intersection.hi + drift + widen;
+    Ok((lo, hi, width))
 }
 
 /// Whether the surviving sources would disagree about a leap second that is near enough to matter.
@@ -1030,6 +1053,31 @@ mod tests {
         }
         assert_eq!(scaled(1_000, 2.0), 2_000);
         assert_eq!(scaled(1_000, 1e300), WIDEST);
+    }
+
+    #[test]
+    fn a_width_past_the_ceiling_is_refused_before_either_end_is_placed() {
+        // A widening the validator would never let through, one short of the integer's ceiling.
+        // Measured first it is refused as too wide; placed first it overflows the low end.
+        let intersection = OffsetInterval::new(-10 * NANOS_PER_MILLI, 10 * NANOS_PER_MILLI);
+        let ceiling = Policy::default().max_bound_width;
+        match place(&intersection, 0, i128::MAX - 1, ceiling) {
+            Err(Validity::BoundTooWide { width, ceiling: c }) => {
+                assert_eq!(width, i128::MAX);
+                assert_eq!(c, ceiling);
+            }
+            other => panic!("expected a refusal as too wide, got {other:?}"),
+        }
+        // And an honest widening is placed on both sides of the intersection.
+        let (lo, hi, width) = place(&intersection, 5, 1_000, ceiling).expect("inside the ceiling");
+        assert_eq!(
+            (lo, hi, width),
+            (
+                -10 * NANOS_PER_MILLI + 5 - 1_000,
+                10 * NANOS_PER_MILLI + 5 + 1_000,
+                20 * NANOS_PER_MILLI + 2_000
+            )
+        );
     }
 
     #[test]

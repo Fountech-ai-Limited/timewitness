@@ -31,7 +31,22 @@ pub const FREQUENCY_FLOOR_PPM: f64 = 15.0;
 /// built from add up inside the integer they are carried in rather than overflowing it.
 pub const WIDEST: Nanos = i64::MAX as Nanos;
 
+/// The largest rate any field may state, in parts per million: a million, which is the whole clock.
+///
+/// A rate past this says the oscillator can be more than entirely wrong, which is not a rate. It is
+/// held here so that every allowance a legal policy can produce is a finite number well inside
+/// [`WIDEST`], and [`WIDEST`] is reached only by an input the validator did not see, which is what
+/// makes it the second net rather than a value a policy can ask for.
+pub const WIDEST_RATE_PPM: f64 = 1_000_000.0;
+
 /// How the model runs.
+///
+/// Every field is public, so a policy can be built by struct update from the default and nothing that
+/// makes one can be relied on to have looked at it. [`Policy::fault`] is what looks at it, and the
+/// model asks it before every synchronisation and every read. The rule it applies is one rule said
+/// of every field: a value the arithmetic cannot stand behind is refused, and never narrows the bound
+/// or overflows the integer it is carried in. The field documentation below says what each field is
+/// for; the ranges are stated once, in `fault`, so the two cannot drift apart.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Policy {
     /// How many sources have to answer before a majority means anything.
@@ -222,6 +237,12 @@ pub struct Policy {
     pub leap_divergence_ceiling: Nanos,
 
     /// How far back the regression looks.
+    ///
+    /// A window shorter than a few polls does not empty the fit. The model keeps
+    /// `regression_min_points` points whatever the window says, because a fit that has been starved
+    /// below what it needs has no residual, and no residual is a narrower bound rather than a more
+    /// honest one. Until 2026-09-17 it kept two, which is one short of a fit, so a window of thirty-one
+    /// seconds at a thirty-two second cadence halved the width in silence.
     pub regression_window: Nanos,
 
     /// How many points the regression needs before it will estimate a frequency at all.
@@ -238,15 +259,39 @@ impl Policy {
     ///
     /// Every field is public, so a policy can be built by struct update from the default and nothing
     /// that makes one can be relied on to have looked at it. The model asks this itself, before it
-    /// synchronises and before it reads, and refuses with the answer.
+    /// synchronises and before it reads, and refuses with the answer. The model holds its own copy of
+    /// the policy, so nothing a caller does to its copy afterwards reaches the arithmetic.
+    ///
+    /// Until the morning of 2026-09-17 this looked at the coverage factor and the three rates and at
+    /// nothing else, and the same afternoon a cold set found that a negative safety margin narrowed
+    /// the bound, a safety margin at the integer's floor inverted the interval and panicked, and a
+    /// history capacity of nought took the residual out of the width. Each of those is one field of
+    /// the same class, so this now says one thing of every field rather than three things of four.
     ///
     /// The coverage factor has to be a number no smaller than one. Below one it carries less than a
     /// single standard error into the bound, and at nought or below, or not a number, it used to take
     /// the model's own residual out of the width altogether. Each rate in parts per million has to be
-    /// a number and must not be negative, and that includes negative nought, because a caller who
-    /// wrote a minus sign meant something the arithmetic cannot honour. Nought itself is allowed: the
-    /// tests switch a term off with it to see the others, and a nought written on purpose is a choice
-    /// about what to allow for rather than a number that went wrong.
+    /// a number, must not be negative, and that includes negative nought, because a caller who wrote
+    /// a minus sign meant something the arithmetic cannot honour, and must not be more than
+    /// [`WIDEST_RATE_PPM`], because a rate past the whole clock is not a rate. Nought itself is
+    /// allowed: the tests switch a term off with it to see the others, and a nought written on
+    /// purpose is a choice about what to allow for rather than a number that went wrong.
+    ///
+    /// Each allowance in nanoseconds, the holdover allowance, the safety margin and the scheduling
+    /// floor, is a term added to the width, so it must not be negative and must not be more than
+    /// [`WIDEST`], which is what keeps a handful of terms inside the integer they are summed in. Each
+    /// floor on what a source may claim, the source interval floor and the weight floor, is at least
+    /// a nanosecond, which is the resolution the arithmetic is carried in and narrower than any
+    /// interval a real source can support; a floor of nought lets a source hand the model a point.
+    /// Each ceiling and each window, the bound ceiling, the holdover ceiling, the regression window
+    /// and the leap divergence ceiling, is at least a nanosecond and at most [`WIDEST`]: a ceiling of
+    /// nought refuses everything and says nothing, and a ceiling past the widest term lets a term the
+    /// arithmetic could not compute through. The leap smear window may be nought, because nought is
+    /// the honest window where every source steps, and it must not be negative, because a negative
+    /// window never arms the guard. The regression needs at least three points, because two fit a
+    /// line exactly and leave no residual, and the history has to be able to hold that many. A source
+    /// window holds at least one sample, and at least one source and one operator have to answer,
+    /// because a floor of nought is not a floor.
     #[must_use]
     pub fn fault(&self) -> Option<String> {
         if !self.coverage_factor.is_finite() || self.coverage_factor < 1.0 {
@@ -268,6 +313,63 @@ impl Policy {
                 return Some(format!(
                     "{name} is {value} and has to be a number that is not negative"
                 ));
+            }
+            if value > WIDEST_RATE_PPM {
+                return Some(format!(
+                    "{name} is {value} parts per million and a rate past a million is more than the \
+                     whole clock"
+                ));
+            }
+        }
+        let allowances = [
+            ("holdover_allowance", self.holdover_allowance),
+            ("safety_margin", self.safety_margin),
+            ("scheduling_floor", self.scheduling_floor),
+            ("leap_smear_window", self.leap_smear_window),
+        ];
+        for (name, value) in allowances {
+            if !(0..=WIDEST).contains(&value) {
+                return Some(format!(
+                    "{name} is {value} ns and has to be between nought and {WIDEST} ns, because it is \
+                     added to the width"
+                ));
+            }
+        }
+        let at_least_a_nanosecond = [
+            ("source_interval_floor", self.source_interval_floor),
+            ("weight_floor", self.weight_floor),
+            ("max_bound_width", self.max_bound_width),
+            ("max_holdover", self.max_holdover),
+            ("regression_window", self.regression_window),
+            ("leap_divergence_ceiling", self.leap_divergence_ceiling),
+        ];
+        for (name, value) in at_least_a_nanosecond {
+            if !(1..=WIDEST).contains(&value) {
+                return Some(format!(
+                    "{name} is {value} ns and has to be between one and {WIDEST} ns"
+                ));
+            }
+        }
+        if self.regression_min_points < 3 {
+            return Some(format!(
+                "regression_min_points is {} and a residual needs at least three points",
+                self.regression_min_points
+            ));
+        }
+        if self.history_capacity < self.regression_min_points {
+            return Some(format!(
+                "history_capacity is {} and cannot hold the {} points the regression needs",
+                self.history_capacity, self.regression_min_points
+            ));
+        }
+        let at_least_one = [
+            ("samples_per_source", self.samples_per_source),
+            ("min_sources", self.min_sources),
+            ("min_operators", self.min_operators),
+        ];
+        for (name, value) in at_least_one {
+            if value < 1 {
+                return Some(format!("{name} is {value} and has to be at least one"));
             }
         }
         None
@@ -331,9 +433,10 @@ pub fn signed_ppm_over(ppm: f64, elapsed: Nanos) -> Nanos {
         return 0;
     }
     // Held inside the same ceiling as an allowance, so a correction cannot carry an interval past
-    // what the integer holds.
+    // what the integer holds. The cast saturates, and the clamp is applied to the integer rather than
+    // the float because the ceiling has no exact float: as a float it rounds up to one past itself.
     let product = ppm * (elapsed as f64) / 1_000_000.0;
-    product.clamp(-(WIDEST as f64), WIDEST as f64) as Nanos
+    (product as Nanos).clamp(-WIDEST, WIDEST)
 }
 
 #[cfg(test)]
@@ -364,6 +467,164 @@ mod tests {
         assert_eq!(ppm_over(-5.0, second), WIDEST);
         assert_eq!(ppm_over(1e300, second), WIDEST);
         assert_eq!(ppm_over(-0.0, second), 0);
+    }
+
+    #[test]
+    fn a_signed_correction_is_held_inside_the_same_ceiling_as_an_allowance() {
+        // Past the ceiling the float would saturate to the integer's own ceiling on the cast, which
+        // is far wider than any allowance and overflows the moment it is added to an end.
+        let second = NANOS_PER_SEC;
+        assert_eq!(signed_ppm_over(1e300, second), WIDEST);
+        assert_eq!(signed_ppm_over(-1e300, second), -WIDEST);
+        assert_eq!(signed_ppm_over(f64::NAN, second), 0);
+        assert_eq!(signed_ppm_over(-2.0, 1_000 * second), -2 * NANOS_PER_MILLI);
+    }
+
+    #[test]
+    fn every_field_outside_its_range_is_named_by_the_fault() {
+        // One value per field on the wrong side of its own range, and the fault has to name the
+        // field. The full set, at every edge and in combination, is `tests/a_bad_policy.rs`.
+        let d = Policy::default();
+        let bad: Vec<(&str, Policy)> = vec![
+            (
+                "frequency_floor_ppm",
+                Policy {
+                    frequency_floor_ppm: WIDEST_RATE_PPM + 1.0,
+                    ..d
+                },
+            ),
+            (
+                "holdover_allowance",
+                Policy {
+                    holdover_allowance: -1,
+                    ..d
+                },
+            ),
+            (
+                "safety_margin",
+                Policy {
+                    safety_margin: WIDEST + 1,
+                    ..d
+                },
+            ),
+            (
+                "scheduling_floor",
+                Policy {
+                    scheduling_floor: i128::MIN,
+                    ..d
+                },
+            ),
+            (
+                "leap_smear_window",
+                Policy {
+                    leap_smear_window: -1,
+                    ..d
+                },
+            ),
+            (
+                "source_interval_floor",
+                Policy {
+                    source_interval_floor: 0,
+                    ..d
+                },
+            ),
+            (
+                "weight_floor",
+                Policy {
+                    weight_floor: 0,
+                    ..d
+                },
+            ),
+            (
+                "max_bound_width",
+                Policy {
+                    max_bound_width: 0,
+                    ..d
+                },
+            ),
+            (
+                "max_holdover",
+                Policy {
+                    max_holdover: -1,
+                    ..d
+                },
+            ),
+            (
+                "regression_window",
+                Policy {
+                    regression_window: 0,
+                    ..d
+                },
+            ),
+            (
+                "leap_divergence_ceiling",
+                Policy {
+                    leap_divergence_ceiling: 0,
+                    ..d
+                },
+            ),
+            (
+                "regression_min_points",
+                Policy {
+                    regression_min_points: 2,
+                    ..d
+                },
+            ),
+            (
+                "history_capacity",
+                Policy {
+                    history_capacity: 2,
+                    ..d
+                },
+            ),
+            (
+                "samples_per_source",
+                Policy {
+                    samples_per_source: 0,
+                    ..d
+                },
+            ),
+            (
+                "min_sources",
+                Policy {
+                    min_sources: 0,
+                    ..d
+                },
+            ),
+            (
+                "min_operators",
+                Policy {
+                    min_operators: 0,
+                    ..d
+                },
+            ),
+        ];
+        for (field, policy) in bad {
+            let fault = policy
+                .fault()
+                .unwrap_or_else(|| panic!("{field} out of range was not refused"));
+            assert!(fault.contains(field), "{field}: {fault}");
+        }
+        // The edges themselves are legal.
+        let edges = Policy {
+            holdover_allowance: WIDEST,
+            safety_margin: 0,
+            source_interval_floor: 1,
+            weight_floor: 1,
+            max_bound_width: WIDEST,
+            max_holdover: 1,
+            regression_window: 1,
+            leap_smear_window: 0,
+            leap_divergence_ceiling: 1,
+            regression_min_points: 3,
+            history_capacity: 3,
+            samples_per_source: 1,
+            min_sources: 1,
+            min_operators: 1,
+            frequency_span_ppm: WIDEST_RATE_PPM,
+            ..d
+        };
+        assert_eq!(edges.fault(), None);
     }
 
     #[test]

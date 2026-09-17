@@ -29,6 +29,7 @@ mod common;
 use common::{Path, World};
 
 use timewitness_clock::monotonic::TestClock;
+use timewitness_clock::policy::WIDEST_RATE_PPM;
 use timewitness_clock::{ClockModel, MonotonicClock, Policy};
 use timewitness_core::time::{Nanos, NANOS_PER_MILLI, NANOS_PER_SEC};
 use timewitness_core::{Bound, MonotonicNanos, Validity};
@@ -132,18 +133,22 @@ fn a_two_second_baseline_reports_no_rate() {
 #[test]
 fn the_fit_this_refuses_really_is_a_large_one() {
     // Without this the test above passes on a model that never claims a rate at all, which would be
-    // a different and worse product. Widening the band until the fit clears it shows what the fit
-    // was actually saying: a rate two orders of magnitude past anything a crystal does.
-    let credulous = Policy {
-        frequency_span_ppm: 1e9,
-        ..shipping_policy()
-    };
-    let stamp = a_two_second_run(credulous).model.read().unwrap();
-    let rate = stamp
-        .frequency_ppm
-        .expect("a band this wide accepts any fit");
+    // a different and worse product. The magnitude the model refused to stand behind is what the
+    // fit was actually saying, and the model reports it: a rate two orders of magnitude past
+    // anything a crystal does. Until 2026-09-17 this read it through a band of a thousand million
+    // parts per million, which no policy may set now that a rate is held to the whole clock.
+    let fit = a_two_second_run(shipping_policy())
+        .model
+        .fit()
+        .expect("the run synchronised");
     assert!(
-        rate.abs() > 1_000.0,
+        fit.frequency_ppm.is_none(),
+        "the shipping policy claimed {:?}",
+        fit.frequency_ppm
+    );
+    let rate = fit.unclaimed_frequency_ppm;
+    assert!(
+        rate > 1_000.0,
         "the fit over two seconds came out at {rate} parts per million, which is not the noise \
          this rule exists to catch"
     );
@@ -155,11 +160,20 @@ fn refusing_a_rate_never_narrows_the_interval() {
     // the model did before this rule existed; the other refuses it and carries the magnitude as
     // width. The refusing interval has to contain the believing one at every elapsed time, or the
     // rule has quietly taken a real error out of the bound.
+    // The believing band is the widest the validator allows, the whole clock, and at that band the
+    // fit here separates it only at one standard error, so the coverage factor comes down to one
+    // as well. That makes the believing interval narrower on the residual too, which is the
+    // direction that makes containment harder to satisfy rather than easier.
     let refusing = a_two_second_run(shipping_policy());
     let believing = a_two_second_run(Policy {
-        frequency_span_ppm: 1e9,
+        frequency_span_ppm: WIDEST_RATE_PPM,
+        coverage_factor: 1.0,
         ..shipping_policy()
     });
+    assert!(
+        believing.model.read().unwrap().frequency_ppm.is_some(),
+        "the believing policy has to claim the rate, or there is nothing to compare"
+    );
 
     let mut compared = 0;
     for step in [
