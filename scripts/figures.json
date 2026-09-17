@@ -1,9 +1,9 @@
 {
  "$source": "the product's own first rule about numbers: quote a figure with the conditions it was measured under and with whose it is, or do not quote it",
- "$rule": "One register of figures with the conditions each was measured under and whose it is, read by two checks. scripts/policy-sentences.py in this repository holds every figure on a shipped surface that is answered by its conditions to an entry here, and to the entry's saidWith phrase where it has one. scripts/figures-stated.mjs in the site repository holds every figure with a time unit on a served page to an entry here marked servedOnSite. A number that is not here is refused by both rather than shipping. From 2026-09-17 an entry also says what its figure is of, one of $subjects, and a sentence naming the figure as something else is refused; an entry that is ours has evidence that resolves, a path in this repository, a run or build id, or a commit this repository holds; and an entry marked superseded is refused where a sentence says it has not been replaced or quotes it as today's.",
+ "$rule": "One register of figures with the conditions each was measured under and whose it is, read by two checks. scripts/policy-sentences.py in this repository holds every figure on a shipped surface that is answered by its conditions to an entry here, and to the entry's saidWith phrase where it has one. scripts/figures-stated.mjs in the site repository holds every figure with a time unit on a served page to an entry here marked servedOnSite. A number that is not here is refused by both rather than shipping. From 2026-09-17 an entry also says what its figure is of, one of $subjects, and a sentence naming the figure as something else is refused; an entry marked superseded is refused where a sentence says it has not been replaced or quotes it as today's. From the afternoon of 2026-09-17 every entry, whatever its whose says, names evidence that carries the figure and that the check can read: a receipt in this repository whose field for the entry's subject is the figure, a file in this repository that states the figure, or, for a figure that is somebody else's, the document it is quoted from; an entry of a measurement names its owner, the machine and the path, from $owners, and a sentence giving it another is refused; an entry marked constant is refused where a sentence calls it measured; an entry marked history or superseded is refused where a sentence says it in the present.",
  "$written": "2026-09-10, in the site repository. Before it, the front page carried a made-up 12.4 ms with the conditions of a public research figure attached, and nothing would have told anybody so. Moved into this repository on 2026-09-16, so that the check on the site and the check on this repository's own surfaces read one register rather than two, and extended with every figure this repository's surfaces quote.",
  "$subjects": {
-  "$rule": "What a figure in this register is of, and the words a sentence may use to say so. Every entry names one. A sentence quoting a figure is read for the nearest of these words to it in its own clause, the one directly after it (\"35.081 ms of the sources overlapping\") first and otherwise the nearest before it (\"the residual falls from 13.522 ms\"), and that word has to be one the entry's subject is named by. A sentence that names no subject near the figure is not held to one, because a list of readings names what they are once, at its head. A subject named by nothing is not held to this at all: it is a setting, a condition or an illustration, and a sentence about it can call it anything but a measured part of a bound. The words under neutral are read past.",
+  "$rule": "What a figure in this register is of, and the words a sentence may use to say so. Every entry names one. A sentence quoting a figure is read for the nearest of these words to it in its own clause, the one directly after it (\"35.081 ms of the sources overlapping\") first and otherwise the nearest before it (\"the residual falls from 13.522 ms\"), and that word has to be one the entry's subject is named by. A sentence that names no subject near the figure is not held to one, because a list of readings names what they are once, at its head. A subject named by nothing is not held to this at all: it is a setting, a condition or an illustration, and a sentence about it can call it anything but a measured part of a bound. The words under neutral are read past. Each measured subject names the receipt field it is read off, so an entry whose evidence is a receipt is held to that field and to nothing else in the receipt.",
   "neutral": [
    "half width",
    "half widths",
@@ -20,13 +20,15 @@
     "wide",
     "interval",
     "intervals"
-   ]
+   ],
+   "receiptField": "width"
   },
   "half the committed receipt": {
    "what": "half the width of the committed receipt, either side of the reading",
    "namedBy": [
     "either side"
-   ]
+   ],
+   "receiptField": "half"
   },
   "the sources overlapping": {
    "what": "the sources overlapping, one part of a width breakdown",
@@ -35,46 +37,53 @@
     "overlapping",
     "overlap",
     "overlaps"
-   ]
+   ],
+   "receiptField": "intersection_half_ns"
   },
   "the model's residual": {
    "what": "the model's own residual, one part of a width breakdown",
    "namedBy": [
     "residual"
-   ]
+   ],
+   "receiptField": "model_residual_ns"
   },
   "the oscillator": {
    "what": "the oscillator since the last exchange, one part of a width breakdown",
    "namedBy": [
     "oscillator"
-   ]
+   ],
+   "receiptField": "oscillator_holdover_ns"
   },
   "the widest round trip": {
    "what": "the widest source round trip halved, reported beside a breakdown",
    "namedBy": [
     "round trip",
     "round trips"
-   ]
+   ],
+   "receiptField": "network_half_ns"
   },
   "the local read": {
    "what": "the local read, one part of a width breakdown",
    "namedBy": [
     "local read"
-   ]
+   ],
+   "receiptField": "scheduling_ns"
   },
   "the safety margin": {
    "what": "the fixed safety margin, one part of a width breakdown",
    "namedBy": [
     "safety margin",
     "margin"
-   ]
+   ],
+   "receiptField": "safety_margin_ns"
   },
   "the outside signatures gap": {
    "what": "the gap two outside signatures enclose on a receipt",
    "namedBy": [
     "bracket",
     "gap"
-   ]
+   ],
+   "receiptField": "bracket"
   },
   "a ceiling": {
    "what": "a ceiling a policy or a verifier sets, a setting rather than a measurement",
@@ -94,6 +103,36 @@
    "namedBy": []
   }
  },
+ "$owners": {
+  "$rule": "Whose a measured figure is, on two axes: the machine it was taken on and the path it was taken through. Every entry of a measurement names both. A sentence quoting the figure is read, in the figure's own clause, for the words naming each owner, and a word naming another owner on either axis refuses it, naming the entry, the word and the owner. Until 2026-09-17 the three most quoted figures, the committed receipt's, the agent's and the runner's, could be swapped between a desktop and a runner and between the agent and the one-shot command on every surface.",
+  "machine": {
+   "an ordinary desktop": [
+    "desktop",
+    "laptop"
+   ],
+   "a GitHub-hosted runner": [
+    "runner",
+    "runners",
+    "GitHub-hosted",
+    "hosted runner",
+    "install-check"
+   ]
+  },
+  "path": {
+   "the resident agent": [
+    "resident agent",
+    "agent",
+    "uptime",
+    "cadence"
+   ],
+   "the one-shot command": [
+    "one-shot",
+    "stamp command",
+    "the Action",
+    "Action at"
+   ]
+  }
+ },
  "allowed": [
   {
    "figure": "153.875",
@@ -102,7 +141,11 @@
    "conditions": "an ordinary desktop on an ordinary connection, 2026-09-09 at 21:41, sixteen polling rounds, nine public servers of three kinds behind six operators",
    "evidence": "the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor in the timewitness repository, read through timewitness verify",
    "servedOnSite": true,
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": "76.937",
@@ -111,16 +154,24 @@
    "conditions": "the half width of the 153.875 ms interval above, either side of the reading",
    "evidence": "the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor, read through timewitness verify",
    "servedOnSite": true,
-   "of": "half the committed receipt"
+   "of": "half the committed receipt",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": "211.3",
    "unit": "ms",
    "whose": "ours",
    "conditions": "a GitHub-hosted runner, 2026-09-09 at 12:09 UTC, sixteen polling rounds, Roughtime and plain NTP answering",
-   "evidence": "run 34349361290 of the consumer proof repository",
+   "evidence": "the receipt committed at crates/verify/tests/data/a-runner-receipt-2026-09-09/receipt.hex, taken by run 34349361290 of the consumer proof repository and read through timewitness verify",
    "servedOnSite": true,
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "a GitHub-hosted runner",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": "16.219",
@@ -129,16 +180,25 @@
    "conditions": "a GitHub-hosted runner, 2026-09-08, four polling rounds, Roughtime alone",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today. Kept as history: from 2026-09-09 a round of Roughtime alone is three operators, under the shipped floor of four, and is refused",
    "servedOnSite": true,
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "a GitHub-hosted runner",
+    "path": "the one-shot command"
+   },
+   "history": true
   },
   {
    "figure": "287.147",
    "unit": "ms",
    "whose": "ours",
    "conditions": "a GitHub-hosted runner in the public repository Fountech-ai-Limited/timewitness-install-check, 2026-09-14, sixteen polling rounds, the Action at v0",
-   "evidence": "release build-34810453918 of that repository, whose receipt verifies with no account",
+   "evidence": "the receipt committed at crates/verify/tests/data/a-runner-receipt-2026-09-14/receipt.hex, the asset of release build-34810453918 of that repository, read through timewitness verify",
    "servedOnSite": true,
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "a GitHub-hosted runner",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": "12.0",
@@ -147,7 +207,12 @@
    "conditions": "an ordinary desktop, 2026-09-08, sixteen polling rounds, the three public Roughtime servers",
    "evidence": "README.md, the paragraph on polling rounds, from two passes at each round setting on that desktop at 12:54 and 12:56",
    "servedOnSite": true,
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   },
+   "history": true
   },
   {
    "figure": "250.000",
@@ -156,7 +221,12 @@
    "conditions": "a fixed safety margin in the width breakdown, a constant rather than a measurement",
    "evidence": "the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor, printed part by part by timewitness verify",
    "servedOnSite": true,
-   "of": "the safety margin"
+   "of": "the safety margin",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   },
+   "constant": true
   },
   {
    "figure": "10.000",
@@ -165,7 +235,12 @@
    "conditions": "the local read term in the width breakdown of the same receipt",
    "evidence": "the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor, printed part by part by timewitness verify",
    "servedOnSite": true,
-   "of": "the local read"
+   "of": "the local read",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   },
+   "constant": true
   },
   {
    "figure": "35.081",
@@ -174,7 +249,11 @@
    "conditions": "the sources overlapping, halved, in the width breakdown of the same receipt",
    "evidence": "the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor, printed part by part by timewitness verify",
    "servedOnSite": true,
-   "of": "the sources overlapping"
+   "of": "the sources overlapping",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": "38.011",
@@ -183,7 +262,11 @@
    "conditions": "the model's own residual in the width breakdown of the same receipt",
    "evidence": "the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor, printed part by part by timewitness verify",
    "servedOnSite": true,
-   "of": "the model's residual"
+   "of": "the model's residual",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": "3.586",
@@ -192,7 +275,11 @@
    "conditions": "the oscillator since the last sync, in the width breakdown of the same receipt",
    "evidence": "the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor, printed part by part by timewitness verify",
    "servedOnSite": true,
-   "of": "the oscillator"
+   "of": "the oscillator",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": "72.433",
@@ -201,16 +288,22 @@
    "conditions": "the widest source round trip halved, reported by the verifier and already inside the first line rather than added to it",
    "evidence": "the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor, printed by timewitness verify",
    "servedOnSite": true,
-   "of": "the widest round trip"
+   "of": "the widest round trip",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": "30",
    "unit": "s",
    "whose": "ours",
-   "conditions": "the widest interval the GitHub Action will sign for, a choice about what a Roughtime-only runner can honestly do rather than a measurement. The same two characters appear on /screen/all as the retry interval of a failed state, which is an interface fixture; this register keys on the number and the unit, so a reader checking this entry should read both",
-   "evidence": "the max-width input in action.yml",
+   "conditions": "the widest interval the GitHub Action would sign for until 2026-09-15, a choice about what a Roughtime-only runner could honestly do rather than a measurement, and history since: the ceiling is 2 s now. The same two characters appear on /screen/all as the retry interval of a failed state, which is an interface fixture; this register keys on the number and the unit, so a reader checking this entry should read both",
+   "evidence": "docs/what-timewitness-cannot-prove.md, the sentence saying the ceiling was 30 s until 2026-09-15",
    "servedOnSite": true,
-   "of": "a ceiling"
+   "of": "a ceiling",
+   "constant": true,
+   "history": true
   },
   {
    "figure": "250",
@@ -219,14 +312,15 @@
    "conditions": "the widest interval the shipped agent policy will sign for, a setting rather than a measurement",
    "evidence": "Policy::default max_bound_width in crates/clock/src/policy.rs",
    "servedOnSite": true,
-   "of": "a ceiling"
+   "of": "a ceiling",
+   "constant": true
   },
   {
    "figure": "234.6",
    "unit": "ms",
    "whose": "ours, from a simulated network",
    "conditions": "the model's own arithmetic at fifteen minutes since the last synchronisation, run through crates/clock/tests/common/mod.rs, whose first line is 'A simulated network with a known true offset'. Not a reading from a real path",
-   "evidence": "crates/clock/tests/common/mod.rs, the harness whose first line says it is a simulated network, and the harness names itself on the surface that quotes it",
+   "evidence": "crates/clock/src/policy.rs, the frequency_span_ppm documentation, which states the figures run on 2026-09-07 through crates/clock/tests/common/mod.rs, the harness whose first line says it is a simulated network",
    "servedOnSite": true,
    "of": "the whole interval",
    "saidWith": [
@@ -239,7 +333,7 @@
    "unit": "ms",
    "whose": "ours, from a simulated network",
    "conditions": "the same harness at the moment of synchronising",
-   "evidence": "crates/clock/tests/common/mod.rs, the harness whose first line says it is a simulated network, and the harness names itself on the surface that quotes it",
+   "evidence": "crates/clock/src/policy.rs, the frequency_span_ppm documentation, which states the figures run on 2026-09-07 through crates/clock/tests/common/mod.rs, the harness whose first line says it is a simulated network",
    "servedOnSite": true,
    "of": "the whole interval",
    "saidWith": [
@@ -252,7 +346,7 @@
    "unit": "ms",
    "whose": "public research, quoted",
    "conditions": "the public internet with no hardware of our own",
-   "evidence": "never measured by us, and never written as ours",
+   "evidence": "docs/what-timewitness-cannot-prove.md, the paragraph that quotes the three public research figures and says none has been measured by us",
    "requiresNearby": "quoted from public research",
    "servedOnSite": true,
    "saidWith": [
@@ -265,7 +359,7 @@
    "unit": "ms",
    "whose": "public research, quoted",
    "conditions": "a good local network against a stratum-1 source",
-   "evidence": "never measured by us, and never written as ours",
+   "evidence": "docs/what-timewitness-cannot-prove.md, the paragraph that quotes the three public research figures and says none has been measured by us",
    "requiresNearby": "quoted from public research",
    "servedOnSite": true,
    "saidWith": [
@@ -278,7 +372,7 @@
    "unit": "microseconds",
    "whose": "public research, quoted",
    "conditions": "a cloud instance with a hypervisor clock",
-   "evidence": "never measured by us, and never written as ours",
+   "evidence": "docs/what-timewitness-cannot-prove.md, the paragraph that quotes the three public research figures and says none has been measured by us",
    "requiresNearby": "quoted from public research",
    "servedOnSite": true,
    "saidWith": [
@@ -293,14 +387,18 @@
    "conditions": "the gap the two outside signatures enclose on the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor: a drand round saying not earlier and an RFC 3161 token saying not later. It pins the moment from outside and it is not the width of the bound",
    "evidence": "the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor, printed by timewitness verify",
    "servedOnSite": true,
-   "of": "the outside signatures gap"
+   "of": "the outside signatures gap",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": "42",
    "unit": "s",
    "whose": "nobody's, an interface fixture",
    "conditions": "the settling figure on the /screen/all state gallery, made up to lay out what a settling screen looks like. The route banner on that page says so before the figures",
-   "evidence": "product-fixtures.json states[].data.settlingSeconds, and its own provenance field says it is not a measurement",
+   "evidence": "content/product-fixtures.json in the site repository, states[].data.settlingSeconds, whose own provenance field says it is not a measurement",
    "servedOnSite": true,
    "of": "a setting or a condition"
   },
@@ -315,7 +413,12 @@
    "whose": "ours",
    "conditions": "an ordinary desktop, 2026-09-08 at 12:54 and 12:56, Roughtime alone, two passes each at one, three, four and thirty-two polling rounds. History: a Roughtime-only round has been refused by the operator floor since 2026-09-09",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today, the paragraph on polling rounds",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   },
+   "history": true
   },
   {
    "figure": "16.439",
@@ -323,7 +426,12 @@
    "whose": "ours",
    "conditions": "a stamp on an ordinary desktop, 2026-09-08 at 11:08, four polling rounds, Roughtime alone. History, as above",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   },
+   "history": true
   },
   {
    "figure": "16.424",
@@ -338,7 +446,11 @@
     "replaced at"
    ],
    "of": "the whole interval",
-   "superseded": true
+   "superseded": true,
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": [
@@ -349,7 +461,11 @@
    "whose": "ours",
    "conditions": "an ordinary desktop on an ordinary connection, 2026-09-09 at 14:52, sixteen polling rounds, Roughtime and plain NTP, three passes",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": "176.7",
@@ -364,7 +480,11 @@
     "replaced at"
    ],
    "of": "the whole interval",
-   "superseded": true
+   "superseded": true,
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": [
@@ -376,7 +496,11 @@
    "whose": "ours",
    "conditions": "an ordinary desktop on an ordinary connection, 2026-09-09 at 20:28, sixteen polling rounds, all three kinds of source, three passes, nine servers answering",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": "149.8",
@@ -391,7 +515,11 @@
     "replaced at"
    ],
    "of": "the whole interval",
-   "superseded": true
+   "superseded": true,
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": [
@@ -403,7 +531,11 @@
    "whose": "ours",
    "conditions": "an ordinary desktop on an ordinary connection, 2026-09-09 at 21:39, sixteen polling rounds, all three kinds with the independence rule in, three passes",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": "153.9",
@@ -411,7 +543,11 @@
    "whose": "ours",
    "conditions": "the 153.875 ms of the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor on 2026-09-09 at 21:41, written to one decimal place",
    "evidence": "the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor, read through timewitness verify",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": [
@@ -423,7 +559,11 @@
    "whose": "ours",
    "conditions": "the sources overlapping, as half width, on three committed receipts in turn: 21:41 with the independence rule, 20:32 with all three kinds, and 15:05 with two kinds, all 2026-09-09, sixteen polling rounds",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today, read off timewitness verify on each receipt",
-   "of": "the sources overlapping"
+   "of": "the sources overlapping",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": [
@@ -434,7 +574,11 @@
    "whose": "ours",
    "conditions": "the oscillator term in the width breakdown of the 20:32 and 15:05 receipts of 2026-09-09, which is how long after the last exchange each stamp was taken",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today",
-   "of": "the oscillator"
+   "of": "the oscillator",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": [
@@ -446,7 +590,11 @@
    "whose": "ours",
    "conditions": "an ordinary desktop on an ordinary connection, 2026-09-09 at 22:17, three readings through the resident agent with the independence rule in, thirty-six minutes of uptime, thirty-two second polling cadence",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today, the agent paragraph",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   }
   },
   {
    "figure": [
@@ -458,7 +606,11 @@
    "whose": "ours",
    "conditions": "an ordinary desktop on an ordinary connection, 2026-09-09 at 21:04, three readings through the resident agent with all three kinds and before the independence rule, thirty-six minutes of uptime, thirty-two second cadence",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today, the agent paragraph",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   }
   },
   {
    "figure": [
@@ -470,7 +622,11 @@
    "whose": "ours",
    "conditions": "an ordinary desktop on an ordinary connection, 2026-09-09 at 16:27, three readings through the resident agent with two kinds, thirty-six minutes of uptime, thirty-two second cadence",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today, the agent paragraph",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   }
   },
   {
    "figure": [
@@ -482,7 +638,11 @@
    "whose": "ours",
    "conditions": "an ordinary desktop on an ordinary connection, 2026-09-09, three runs of the one-shot command twelve minutes before the 16:27 agent readings, sixteen polling rounds, two kinds",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today, the agent paragraph",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": "155",
@@ -490,7 +650,11 @@
    "whose": "ours",
    "conditions": "about 155 ms, the round figure for the sixteen-round readings on an ordinary desktop on 2026-09-09 where the sources that narrow the bound are reachable, written with the word about",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the one-shot command"
+   }
   },
   {
    "figure": [
@@ -501,7 +665,7 @@
    "unit": "ms",
    "whose": "ours, from a simulated network",
    "conditions": "the model's own residual as half width at five minutes, at the thirty-minute window, and from forty minutes to two hours, 2026-09-10, thirty-two second cadence, through the simulated harness. Not a reading from a real path",
-   "evidence": "crates/clock/tests/common/mod.rs, the harness whose first line says it is a simulated network",
+   "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today, the figures run on 2026-09-10 through crates/clock/tests/common/mod.rs, the harness whose first line says it is a simulated network",
    "of": "the model's residual",
    "saidWith": [
     "simulated",
@@ -517,7 +681,11 @@
    "whose": "ours",
    "conditions": "half width through a resident agent on an ordinary desktop, 2026-09-10, against the nine published servers, one reading every three minutes, at five and at thirty-two minutes of uptime",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today, the paragraph on leaving the agent running",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   }
   },
   {
    "figure": [
@@ -531,7 +699,11 @@
    "whose": "ours",
    "conditions": "uptime marks of a fresh resident agent on an ordinary Windows desktop, 2026-09-10, nine published servers, thirty-two second cadence, 250 ms ceiling, one reading every five seconds for twelve minutes, two runs",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today, the paragraph on a fresh agent refusing",
-   "of": "a setting or a condition"
+   "of": "a setting or a condition",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   }
   },
   {
    "figure": [
@@ -542,7 +714,11 @@
    "whose": "ours",
    "conditions": "the widest reading of each of two runs on an ordinary Windows desktop, 2026-09-10, three to twelve minutes of uptime, one reading every five seconds, 250 ms ceiling",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today, the paragraph on refusals after settling",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   }
   },
   {
    "figure": "254.047",
@@ -550,7 +726,11 @@
    "whose": "ours",
    "conditions": "the one refused reading of forty, on the same desktop the morning of 2026-09-10, five to eight minutes of uptime, against the 250 ms ceiling",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today, the paragraph on refusals after settling",
-   "of": "the whole interval"
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   }
   },
   {
    "figure": [
@@ -561,7 +741,11 @@
    "whose": "ours",
    "conditions": "one legitimate ask of the resident agent alone and behind twenty silent sockets, an ordinary Windows desktop, before the agent answered callers on threads of their own on 2026-09-10",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today, the paragraph on the caller cap",
-   "of": "a time to answer"
+   "of": "a time to answer",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   }
   },
   {
    "figure": [
@@ -582,8 +766,9 @@
    "unit": "s",
    "whose": "ours, a setting",
    "conditions": "the polling cadence the resident agent ships with, a setting rather than a measurement",
-   "evidence": "Policy::default in crates/clock/src/policy.rs",
-   "of": "a setting or a condition"
+   "evidence": "crates/agent/src/serve.rs, the cadence the resident agent ships with",
+   "of": "a setting or a condition",
+   "constant": true
   },
   {
    "figure": "1800",
@@ -591,7 +776,8 @@
    "whose": "ours, a setting",
    "conditions": "the regression window, also written as thirty minutes or half an hour, a setting rather than a measurement",
    "evidence": "Policy::regression_window in crates/clock/src/policy.rs",
-   "of": "a setting or a condition"
+   "of": "a setting or a condition",
+   "constant": true
   },
   {
    "figure": "2",
@@ -599,7 +785,8 @@
    "whose": "ours, a setting",
    "conditions": "the ceiling on the one-shot command the Action runs, and before 2026-09-10 how long the agent waited for a token before looking at a caller. Settings rather than measurements",
    "evidence": "action.yml max-width, and docs/what-timewitness-cannot-prove.md, the section on what is built today",
-   "of": "a ceiling"
+   "of": "a ceiling",
+   "constant": true
   },
   {
    "figure": "1",
@@ -607,7 +794,8 @@
    "whose": "ours, a setting",
    "conditions": "the narrowest interval the verifier accepts before refusing a receipt as too narrow to be honest, a setting rather than a measurement",
    "evidence": "docs/verifier.md, the table of what the verifier refuses",
-   "of": "a ceiling"
+   "of": "a ceiling",
+   "constant": true
   },
   {
    "figure": "15",

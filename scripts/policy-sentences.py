@@ -132,7 +132,12 @@ with a reason written out. The walk, and what it deliberately
 does not do, is at the block above `SEEDS`. It says how many figures it found and how each was
 answered, so a growing excuse list is visible on a green run rather than only in a diff.
 `tests/check-messaging-figures.py` at the product root is the other half and holds figures to the
-artefacts they came from; this one holds them to having been read at all.
+artefacts they came from; this one holds them to having been read at all. From the afternoon of
+2026-09-17 the register is held to its own evidence too: every entry names a receipt or a file in
+this repository that states its figure, a receipt being decoded and read at the field the entry's
+subject names, and an entry of a measurement names the machine and the path it was taken through,
+so a desktop receipt given to a runner, a constant called measured, a history figure said in the
+present and somebody else's figure said as measured by us are each refused naming the entry.
 
 Served pages are read as text and as the attributes a reader is given without seeing the page: the
 meta description, every alt, title and aria-label, and the page title. Until 2026-09-15 served mode
@@ -1467,7 +1472,7 @@ def register():
 
 
 def read_subjects(data):
-    """What a figure may be of, and the words that name each, read off the register."""
+    """What a figure may be of, the words that name each, and the receipt field each is read off."""
     subjects = data.get('$subjects')
     if not isinstance(subjects, dict):
         raise Unreadable(f'{FIGURES_REGISTER.name} has no $subjects, so nothing says what any figure is of')
@@ -1482,42 +1487,279 @@ def read_subjects(data):
     return named, neutral
 
 
-# Evidence that resolves. A path is read against this repository, a run or a build is a number the
-# host issued, and a commit is one this repository holds.
-EVIDENCE_PATH = re.compile(r'(?<![\w/.-])((?:[\w-]+/)+[\w.-]*|[\w-]+\.(?:md|yml|yaml|rs|json|cbor|sh|py|mjs|toml))(?![\w-])')
-EVIDENCE_RUN = re.compile(r'\b(?:run|build)[ -]\d{8,}\b', re.I)
-EVIDENCE_COMMIT = re.compile(r'\b[0-9a-f]{7,40}\b')
+def read_owners(data):
+    """Who a figure is of: the machine it was taken on and the path it was taken through.
+
+    Two axes, because a desktop reading and a runner reading are different machines and a resident
+    agent reading and a one-shot reading are different paths on the same machine, and on 2026-09-17
+    a cold set swapped each of the four between the three most quoted figures and every swap passed.
+    """
+    owners = data.get('$owners')
+    if not isinstance(owners, dict):
+        raise Unreadable(f'{FIGURES_REGISTER.name} has no $owners, so nothing says whose machine or path any figure is')
+    out = {}
+    for axis in ('machine', 'path'):
+        names = owners.get(axis)
+        if not isinstance(names, dict) or not names:
+            raise Unreadable(f'{FIGURES_REGISTER.name}: $owners has no {axis} list')
+        for key, words in names.items():
+            if not isinstance(words, list) or not words:
+                raise Unreadable(f'{FIGURES_REGISTER.name}: owner "{key}" names no words')
+        out[axis] = names
+    return out
 
 
-def evidence_resolves(evidence):
-    """The first thing in an evidence field that resolves, or None."""
-    for m in EVIDENCE_PATH.finditer(evidence):
-        path = ROOT / m.group(1).rstrip('.')
-        # A file, or a folder two levels down: "crates/" exists and says nothing about any figure.
-        if path.is_file() or (path.is_dir() and len(m.group(1).strip('/').split('/')) >= 3):
-            return m.group(1)
-    m = EVIDENCE_RUN.search(evidence)
-    if m:
-        return m.group(0)
-    for m in EVIDENCE_COMMIT.finditer(evidence):
-        if subprocess_ok(['git', '-C', str(ROOT), 'cat-file', '-e', m.group(0) + '^{commit}']):
-            return m.group(0)
-    return None
+# Evidence that carries the figure. A path is read against this repository, or against the site
+# beside it; a receipt is decoded and the field the subject names is compared with the figure; a
+# text file has to hold the figure with its unit; a code file the constant. A quoted figure is held
+# to the document it is quoted from, which this cannot open and says so.
+EVIDENCE_PATH = re.compile(r'(?<![\w/.-])((?:[\w-]+/)+[\w.-]*|[\w-]+\.(?:md|yml|yaml|rs|json|cbor|receipt|sh|py|mjs|toml|txt))(?![\w-])')
+EVIDENCE_CITATION = re.compile(r'\bRFC \d+\b|https?://\S+', re.I)
+RECEIPT_SUFFIXES = ('.cbor', '.receipt', '.hex')
+CODE_SUFFIXES = ('.rs', '.yml', '.yaml', '.json', '.toml', '.sh', '.py', '.mjs')
+NANOS_PER = {'NANOS_PER_SEC': 10**9, 'NANOS_PER_MILLI': 10**6, 'NANOS_PER_MICRO': 10**3}
+FROM_UNIT = {'secs': 10**9, 'millis': 10**6, 'micros': 10**3, 'nanos': 1}
+RANGE_FIGURE = re.compile(r'(?<![\w.])(\d+(?:\.\d+)?)\s+to\s+(\d+(?:\.\d+)?)\s?' + SCALE + r'(?![\w-])', re.I)
 
 
-def subprocess_ok(argv):
-    import subprocess
+def cbor(data):
+    """A receipt's CBOR, read: integers, byte and text strings, arrays, maps, tags and the simple
+    values. Indefinite lengths and floating point are refused, because a receipt never writes them."""
+    import struct
+    at = 0
+
+    def take(n):
+        nonlocal at
+        if at + n > len(data):
+            raise ValueError('the receipt ends inside a value')
+        piece = data[at:at + n]
+        at += n
+        return piece
+
+    def head():
+        first = take(1)[0]
+        major, info = first >> 5, first & 0x1f
+        if info < 24:
+            return major, info
+        if info == 24:
+            return major, take(1)[0]
+        if info == 25:
+            return major, struct.unpack('>H', take(2))[0]
+        if info == 26:
+            return major, struct.unpack('>I', take(4))[0]
+        if info == 27:
+            return major, struct.unpack('>Q', take(8))[0]
+        raise ValueError(f'a header no receipt writes, {first:#x}')
+
+    def value():
+        major, arg = head()
+        if major == 0:
+            return arg
+        if major == 1:
+            return -1 - arg
+        if major == 2:
+            return bytes(take(arg))
+        if major == 3:
+            return take(arg).decode('utf-8')
+        if major == 4:
+            return [value() for _ in range(arg)]
+        if major == 5:
+            return {value(): value() for _ in range(arg)}
+        if major == 6:
+            tagged = value()
+            if arg in (2, 3) and isinstance(tagged, bytes):
+                n = int.from_bytes(tagged, 'big')
+                return n if arg == 2 else -1 - n
+            return tagged
+        if arg == 20:
+            return False
+        if arg == 21:
+            return True
+        if arg in (22, 23):
+            return None
+        raise ValueError(f'a simple value no receipt writes, {arg}')
+
+    out = value()
+    if at != len(data):
+        raise ValueError(f'{len(data) - at} bytes follow the receipt')
+    return out
+
+
+def receipt_fields(path):
+    """The nanosecond fields of a receipt on disk, by the names the register's subjects use. A receipt
+    stored as hex, which is how this repository keeps every receipt but the first so git can grep them,
+    is decoded first."""
+    raw = path.read_bytes()
+    if path.suffix == '.hex':
+        raw = bytes.fromhex(raw.decode('ascii').strip())
+    signed = cbor(raw)
+    payload = signed[2] if isinstance(signed, list) and len(signed) == 4 else signed
+    if isinstance(payload, (bytes, bytearray)):
+        payload = cbor(bytes(payload))
+    claim = payload.get('claim') if isinstance(payload, dict) else None
+    if not isinstance(claim, dict):
+        raise ValueError('no claim in it')
+    breakdown = claim.get('breakdown') or {}
+    width = claim['latest_ns'] - claim['earliest_ns']
+    ats = [e.get('at_ns') for e in payload.get('evidence') or [] if isinstance(e, dict) and isinstance(e.get('at_ns'), int)]
+    fields = {
+        'width': width,
+        'half': width // 2,
+        'bracket': (max(ats) - min(ats)) if len(ats) >= 2 else None,
+    }
+    for key, value_ns in breakdown.items():
+        if isinstance(value_ns, int) and not isinstance(value_ns, bool):
+            fields[key] = value_ns
+    return fields
+
+
+def within_the_last_place(figure, unit, value_ns):
+    """Whether a value in nanoseconds is the figure as written, to the figure's own last decimal."""
     try:
-        return subprocess.run(argv, capture_output=True, timeout=20).returncode == 0
-    except (OSError, subprocess.SubprocessError):
+        _, wanted = quantity(figure, unit)
+    except (KeyError, ValueError):
         return False
+    decimals = len(figure.split('.')[1]) if '.' in figure else 0
+    place = SCALE_NS[unit.strip().lower()] / (10 ** decimals)
+    return abs(value_ns - wanted) < place
+
+
+def figures_in_text(text, unit_ns, digits_only=False):
+    """Every quantity a text file states in nanoseconds, in digits or in words, ranges split. A code
+    file is read for digits only: a comment saying "five milliseconds" of another protocol's floor is
+    not a statement of 5 ms."""
+    found = set()
+    for token, _, _ in figures_of(text):
+        if digits_only and not token[:1].isdigit():
+            continue
+        try:
+            kind, value = quantity(*re.match(r'(.+?) (per cent|\S+)$', token).groups())
+        except (KeyError, ValueError, AttributeError):
+            continue
+        if kind == 'ns':
+            found.add(value)
+    for m in RANGE_FIGURE.finditer(text):
+        try:
+            for part in (m.group(1), m.group(2)):
+                found.add(quantity(part, m.group(3))[1])
+        except (KeyError, ValueError):
+            continue
+    return found
+
+
+def code_carries(text, figure, unit, wanted_ns, data_file):
+    """Whether a code or data file states the figure: the nanosecond count as an integer, a count of
+    units times a NANOS_PER_ constant, a Duration built from a count, the figure with its unit in a
+    comment, or, in a data file, the bare number in the file's own unit."""
+    digits = re.sub(r'(?<=\d)_(?=\d)', '', text)
+    for m in re.finditer(r'(?<![\w.])(\d+)(?![\w.])', digits):
+        if int(m.group(1)) == wanted_ns:
+            return True
+    for m in re.finditer(r'(?<![\w.])(\d+)\s*\*\s*(NANOS_PER_(?:SEC|MILLI|MICRO))\b', digits):
+        if int(m.group(1)) * NANOS_PER[m.group(2)] == wanted_ns:
+            return True
+    for m in re.finditer(r'from_(secs|millis|micros|nanos)\(\s*(\d+)\s*\)', digits):
+        if int(m.group(2)) * FROM_UNIT[m.group(1)] == wanted_ns:
+            return True
+    if wanted_ns in figures_in_text(text, None, digits_only=True):
+        return True
+    if data_file:
+        number = figure.strip()
+        return re.search(r'(?<![\w.])' + re.escape(number) + r'(?![\w.])', digits) is not None
+    return False
+
+
+def evidence_carries(entry, named):
+    """Whether the evidence an entry names carries its figure. Gives back (verdict, detail), the
+    verdict one of carried, not carried, unreadable here."""
+    evidence = entry['evidence']
+    figures = entry['figure'] if isinstance(entry['figure'], list) else [entry['figure']]
+    figures = [str(f) for f in figures]
+    unit = entry['unit']
+    ours = entry['whose'].lower().startswith('ours')
+    subject = named.get(entry['of']) or {}
+    field = subject.get('receiptField')
+    paths = []
+    for m in EVIDENCE_PATH.finditer(evidence):
+        rel = m.group(1).rstrip('.')
+        if rel.startswith('content/') and not (ROOT / rel).exists():
+            site = SITE_BESIDE / rel[len('content/'):]
+            paths.append((rel, site if site.is_file() else None, True))
+        else:
+            full = ROOT / rel
+            paths.append((rel, full if full.is_file() else None, False))
+    unreadable = []
+    reasons = []
+    for rel, full, on_site in paths:
+        if full is None:
+            if on_site:
+                unreadable.append(f'{rel} is on the site, which is not beside this tree')
+            else:
+                reasons.append(f'{rel} is not a file in this repository')
+            continue
+        if full.suffix in RECEIPT_SUFFIXES:
+            try:
+                fields = receipt_fields(full)
+            except (ValueError, KeyError, TypeError, IndexError) as e:
+                reasons.append(f'{rel} could not be read as a receipt: {e}')
+                continue
+            if not field:
+                reasons.append(f'{rel} is a receipt and the subject "{entry["of"]}" names no field of one')
+                continue
+            value_ns = fields.get(field)
+            if value_ns is None:
+                reasons.append(f'{rel} has no {field}')
+                continue
+            missing = [f for f in figures if not any(within_the_last_place(part, unit, value_ns) for part in f.split(' to '))]
+            if not missing:
+                return 'carried', f'{rel} reads {value_ns} ns for {field}'
+            reasons.append(f'{rel} reads {value_ns} ns for {field}, which is not {", ".join(missing)} {unit}')
+            continue
+        measured = entry['whose'].strip().lower() == 'ours' and not entry.get('constant')
+        if measured and full.suffix in CODE_SUFFIXES:
+            reasons.append(f'{rel} is code, and a measurement of ours is held to a receipt or to the prose that '
+                           f'reports it, never to a constant: a constant is a choice')
+            continue
+        text = full.read_text(encoding='utf-8', errors='replace')
+        missing = []
+        for f in figures:
+            for part in f.split(' to '):
+                try:
+                    wanted_ns = quantity(part, unit)[1]
+                except (KeyError, ValueError):
+                    missing.append(part)
+                    continue
+                if full.suffix in CODE_SUFFIXES:
+                    ok = code_carries(text, part, unit, wanted_ns, full.suffix in ('.json', '.yml', '.yaml'))
+                else:
+                    ok = wanted_ns in figures_in_text(text, None)
+                if not ok:
+                    missing.append(part)
+        if not missing:
+            return 'carried', f'{rel} states it'
+        reasons.append(f'{rel} does not state {", ".join(missing)} {unit}')
+    if unreadable and not reasons:
+        return 'unreadable here', '; '.join(unreadable)
+    if not paths:
+        if not ours and EVIDENCE_CITATION.search(evidence):
+            return 'carried', 'a document it is quoted from'
+        return 'not carried', 'it names no file in this repository' + ('' if ours else ' and no document it is quoted from')
+    return 'not carried', '; '.join(reasons + unreadable)
+
+
+def entry_name(entry):
+    """How a refusal names an entry: its number, its figure and what it is of."""
+    figures = entry['figure'] if isinstance(entry['figure'], list) else [entry['figure']]
+    return f'entry {entry.get("_n", "?")}, {", ".join(str(f) for f in figures)} {entry["unit"]} of {entry["of"]}'
 
 
 def read_register(data):
     """The same register, from what has already been parsed, so the self-test can hand it a bad one."""
     out = {}
     named, _ = read_subjects(data)
+    owners = read_owners(data)
     for n, entry in enumerate(data.get('allowed') or [], 1):
+        entry['_n'] = n
         for field in ('figure', 'unit', 'whose', 'conditions', 'evidence', 'of'):
             if not entry.get(field):
                 raise Unreadable(f'{FIGURES_REGISTER.name}: entry {n}, {entry.get("figure", "no figure")} '
@@ -1529,10 +1771,22 @@ def read_register(data):
         if entry['of'] not in named:
             raise Unreadable(f'{FIGURES_REGISTER.name}: entry {n}, {said}, is of "{entry["of"]}", which is not '
                              f'a subject in $subjects')
-        if entry['whose'].lower().startswith('ours') and not evidence_resolves(entry['evidence']):
-            raise Unreadable(f'{FIGURES_REGISTER.name}: entry {n}, {said} of {entry["of"]}, is ours and its '
-                             f'evidence, "{entry["evidence"][:80]}", names no path in this repository, no run '
-                             f'or build and no commit this repository holds, so nothing stands behind it')
+        owner = entry.get('owner')
+        if owner is not None:
+            if not isinstance(owner, dict) or not owner:
+                raise Unreadable(f'{FIGURES_REGISTER.name}: {entry_name(entry)} has an owner that names no machine or path')
+            for axis, who in owner.items():
+                if axis not in owners or who not in owners[axis]:
+                    raise Unreadable(f'{FIGURES_REGISTER.name}: {entry_name(entry)} is of {axis} "{who}", which '
+                                     f'is not in $owners')
+        # Until 2026-09-17 the evidence was held only where `whose` began with the word ours, and
+        # held to existing rather than to carrying the figure, so "our own measurement" with "none"
+        # licensed an invented 12.4 ms and README.md licensed anything at all.
+        verdict, detail = evidence_carries(entry, named)
+        if verdict == 'not carried':
+            raise Unreadable(f'{FIGURES_REGISTER.name}: {entry_name(entry)}, has evidence "{entry["evidence"][:80]}" '
+                             f'that does not carry the figure: {detail}. Nothing stands behind it')
+        entry['_unread'] = detail if verdict == 'unreadable here' else None
         for figure in figures:
             for part in str(figure).split(' to '):
                 try:
@@ -1550,15 +1804,38 @@ _SUBJECTS = {}
 
 
 def subjects_of_register():
-    """The subjects and neutral words, read once off the register on disk."""
+    """The subjects, neutral words and owners, read once off the register on disk."""
     if not _SUBJECTS:
-        named, neutral = read_subjects(json.loads(FIGURES_REGISTER.read_text(encoding='utf-8')))
-        _SUBJECTS['named'], _SUBJECTS['neutral'] = named, neutral
-    return _SUBJECTS['named'], _SUBJECTS['neutral']
+        data = json.loads(FIGURES_REGISTER.read_text(encoding='utf-8'))
+        named, neutral = read_subjects(data)
+        _SUBJECTS['named'], _SUBJECTS['neutral'], _SUBJECTS['owners'] = named, neutral, read_owners(data)
+    return _SUBJECTS['named'], _SUBJECTS['neutral'], _SUBJECTS['owners']
 
 
-# A superseded figure said as though nothing replaced it, or as today's.
-NOT_REPLACED = re.compile(r'\b(?:nothing|not|never|no\s+\w+)\s+(?:\w+\s+){0,3}?replac\w*|\b(?:today|now|currently|at present|still)\b', re.I)
+# A superseded figure said as though nothing replaced it, or as today's, in its own sentence or in
+# the one after it that points back at it.
+NOT_REPLACED = re.compile(r'\b(?:nothing|not|never|no\s+\w+)\s+(?:\w+\s+){0,3}?replac\w*|\b(?:today|now|currently|at present|still)\b|'
+                          r'\bis the (?:one|fixture|receipt)\b|\bin the tree\b|\bthe tree carries\b|\bships? (?:as|with|in)\b', re.I)
+POINTS_BACK = re.compile(r'^\W*(?:that|this|it|the same|nothing)\b', re.I)
+# A history figure said in the present: a present-tense verb in the figure's own clause and no past
+# marker anywhere in its sentence. A list of readings with no verb is not held, because its date is
+# in the sentence before it.
+PAST = re.compile(r'\b(?:was|were|reached|gave|took|got|had|did|used to|until|before|then|that day|those days|'
+                  r'at the time|since replaced|replaced|history|earlier|once|formerly|shipped that|'
+                  r'20\d\d-\d\d-\d\d)\b', re.I)
+PRESENT = re.compile(r'\b(?:is|are|reach|reaches|give|gives|come|comes|hold|holds|get|gets|sit|sits|stand|stands|'
+                     r'sign|signs|carry|carries|produce|produces)\b', re.I)
+# A constant called a measurement, in one of three shapes: the figure followed by "was measured",
+# "is read off" or the like; a measuring verb directly before the figure, "came to", "measured at";
+# or a sentence that opens with a measuring participle and puts the figure as the predicate, "Measured
+# on a desktop, the margin was 250 us". A measuring word elsewhere in the sentence is not enough: the
+# cadence a reading was taken at sits in a measured sentence and is not what was measured.
+CALLED_MEASURED_AFTER = re.compile(r'^\W*(?:\w+\s+){0,2}?(?:was|were|is|are|has been|have been|gets|got)\s+'
+                                   r'(?:measured|read(?: off)?|taken|recorded|observed|timed)\b', re.I)
+CALLED_MEASURED_BEFORE = re.compile(r'\b(?:measured|read off|took|taken|recorded|observed|reached|came to|comes to|come to)'
+                                    r'\s+(?:at\s+|as\s+|to\s+)?(?:about\s+|roughly\s+|a fixed\s+)?$', re.I)
+PREDICATE_BEFORE = re.compile(r'\b(?:was|were|is|are|came to|comes to)\s+(?:about\s+|roughly\s+|a fixed\s+|a\s+|an\s+)?$', re.I)
+OPENS_MEASURED = re.compile(r'^\W*(?:measured|read off|taken|recorded|observed)\b', re.I)
 
 
 def subject_named(sentence, start, end, named, neutral):
@@ -1599,9 +1876,80 @@ def subject_named(sentence, start, end, named, neutral):
     return None, set()
 
 
-def in_register(text, sentence, known, start=None, end=None):
-    """Whether a figure is in the register, said the way its entry asks and as what its entry says it
-    is of. Gives back the entry that answers it, or None and the reason."""
+def owners_named(sentence, start, end, owners):
+    """Who a figure is given to on each axis: {axis: (word, owner)}.
+
+    The nearest word naming an owner before the figure in its own clause; otherwise the phrase directly after
+    it, "from the one-shot command", "through the agent". A comparison later in the clause, "is
+    already past the agent's", names nothing about this figure.
+    """
+    c0, c1 = clause_around(sentence, start)
+    previous_end = None
+    for _, _, figure_end in figures_of(sentence):
+        if figure_end <= start:
+            previous_end = figure_end
+    found = {}
+    for axis, names in owners.items():
+        # Read back to the start of the clause: a list of readings shares one owner, and "through the
+        # agent ... and is 153.875 ms wide" puts an "and" between the owner and its figure. The one
+        # thing read past is the phrase directly after the figure before this one, which is that
+        # figure's owner: "16.219 s from a GitHub runner, 16.424 s on the receipt".
+        axis_floor = c0
+        if previous_end is not None:
+            claimed = owner_after(sentence, previous_end, c1, names)
+            if claimed:
+                axis_floor = max(axis_floor, claimed[0])
+        best = None
+        for owner, words in names.items():
+            for word in words:
+                pattern = re.compile(r"(?<![\w-])" + re.escape(word) + r"(?:'s)?(?![\w-])", re.I)
+                for m in pattern.finditer(sentence, axis_floor, start):
+                    if best is None or m.start() > best[0]:
+                        best = (m.start(), word, owner)
+        if best is None:
+            after = owner_after(sentence, end, c1, names)
+            if after:
+                best = (after[0], after[1], after[2])
+        if best is not None:
+            found[axis] = (best[1], best[2])
+    return found
+
+
+def owner_after(sentence, at, until, names):
+    """A word naming an owner in the phrase directly after a figure, "from the one-shot command", as
+    (end of the word, word, owner), or None."""
+    lead = re.match(r"\s*(?:wide\s+|of width\s+)?(?:from|through|by|via|on|with|inside)\s+"
+                    r"(?:the\s+|a\s+|an\s+|our\s+|its\s+|that\s+|this\s+)?(?:same\s+|resident\s+|ordinary\s+|GitHub\s+)?", sentence[at:until])
+    if not lead:
+        return None
+    start = at + lead.end()
+    for owner, words in names.items():
+        for word in words:
+            m = re.match(re.escape(word) + r"(?:'s)?(?![\w-])", sentence[start:until], re.I)
+            if m:
+                return start + m.end(), word, owner
+    return None
+
+
+def subject_is_close(sentence, start, end, word):
+    """Whether a subject word sits against the figure: directly after it, or within three words before."""
+    after = re.match(r"\s*(?:of\s+(?:the\s+|its\s+|that\s+)?)?" + re.escape(word) + r"(?:'s)?(?![\w-])", sentence[end:], re.I)
+    if after:
+        return True
+    before = sentence[:start]
+    m = None
+    for m in re.finditer(r"(?<![\w-])" + re.escape(word) + r"(?:'s)?(?![\w-])", before, re.I):
+        pass
+    if m is None:
+        return False
+    between = before[m.end():]
+    return len(re.findall(r"[^\W_]+", between)) <= 3 and not re.search(r'[,;:]', between)
+
+
+def in_register(text, sentence, known, start=None, end=None, neighbours=()):
+    """Whether a figure is in the register, said the way its entry asks, as what its entry says it is
+    of, whose its entry says it is, and in the tense its entry is in. Gives back the entry that answers
+    it, or None and the reason, which names the entry."""
     number, unit = re.match(r'(.+?) (per cent|\S+)$', text).groups()
     try:
         entries = known.get(quantity(number, unit), [])
@@ -1612,28 +1960,77 @@ def in_register(text, sentence, known, start=None, end=None):
     if start is None:
         start = sentence.find(text)
         end = start + len(text)
-    named, neutral = subjects_of_register()
+    named, neutral, owners = subjects_of_register()
     lower = sentence.lower()
+    c0, c1 = clause_around(sentence, start)
+    clause = sentence[c0:c1]
     reasons = []
     for entry in entries:
-        said = entry.get('saidWith') or []
+        name = entry_name(entry)
+        if entry.get('_unread'):
+            reasons.append(f'{FIGURES_REGISTER.name} {name} has evidence this run could not read: {entry["_unread"]}')
+            continue
+        said = list(entry.get('saidWith') or [])
+        nearby = entry.get('requiresNearby')
+        if nearby:
+            said.append(nearby)
         if said and not any(phrase.lower() in lower for phrase in said):
-            reasons.append(f'{FIGURES_REGISTER.name} has it as {entry["whose"]}, and a sentence quoting it has '
+            reasons.append(f'{FIGURES_REGISTER.name} {name} is {entry["whose"]}, and a sentence quoting it has '
                            f'to say ' + ' or '.join(f'"{phrase}"' for phrase in said))
             continue
         if entry.get('superseded'):
-            c0, c1 = clause_around(sentence, start)
             stale = NOT_REPLACED.search(sentence)
+            if not stale:
+                for other in neighbours:
+                    if other and POINTS_BACK.match(other) and NOT_REPLACED.search(other):
+                        stale = NOT_REPLACED.search(other)
+                        break
             if stale:
-                reasons.append(f'{FIGURES_REGISTER.name} has it as the width of a receipt since replaced, and '
+                reasons.append(f'{FIGURES_REGISTER.name} {name} is the width of a receipt since replaced, and '
                                f'this sentence says "{stale.group(0)}"')
                 continue
+        if (entry.get('superseded') or entry.get('history')) and PRESENT.search(clause) and not PAST.search(sentence):
+            reasons.append(f'{FIGURES_REGISTER.name} {name} is history, and this sentence says it in the present')
+            continue
+        if entry.get('constant'):
+            before = sentence[c0:start]
+            called = (CALLED_MEASURED_AFTER.match(sentence[end:c1]) or CALLED_MEASURED_BEFORE.search(before)
+                      or (OPENS_MEASURED.match(sentence) and PREDICATE_BEFORE.search(before)
+                          and not denied(sentence, OPENS_MEASURED.match(sentence))))
+            if called:
+                said_as = called.group(0).strip() if hasattr(called, 'group') else 'measured'
+                reasons.append(f'{FIGURES_REGISTER.name} {name} is a constant rather than a measurement, and '
+                               f'this sentence says "{said_as}"')
+                continue
+        if not entry['whose'].lower().startswith('ours') and OURS_MEASURED.search(clause):
+            reasons.append(f'{FIGURES_REGISTER.name} {name} is {entry["whose"]}, and this sentence says we '
+                           f'measured it')
+            continue
         subject = named.get(entry.get('of'))
+        word, keys = subject_named(sentence, start, end, named, neutral)
         if subject and subject['namedBy']:
-            word, keys = subject_named(sentence, start, end, named, neutral)
             if word is not None and entry['of'] not in keys:
                 reasons.append(f'{FIGURES_REGISTER.name} has {text} as {subject["what"]}, and this sentence calls '
                                f'it "{word}", which is ' + ' or '.join(named[k]['what'] for k in sorted(keys)))
+                continue
+        elif subject and word is not None and subject_is_close(sentence, start, end, word):
+            # A subject named by nothing is a setting, a condition or an illustration, and a sentence
+            # calling it a measured part of a bound is refused whatever word it uses. Held only where
+            # the word sits against the figure, "the bound was 12.4 ms", "5 s wide", because the
+            # nearest word further off in a clause about a reading is the reading's own.
+            reasons.append(f'{FIGURES_REGISTER.name} has {text} as {subject["what"]}, and this sentence calls '
+                           f'it "{word}", which is ' + ' or '.join(named[k]['what'] for k in sorted(keys)))
+            continue
+        owner = entry.get('owner')
+        if owner:
+            found = owners_named(sentence, start, end, owners)
+            wrong = []
+            for axis, who in owner.items():
+                if axis in found and found[axis][1] != who:
+                    word_, other = found[axis]
+                    wrong.append(f'"{word_}", which is {other}, and {name} is of {who}')
+            if wrong:
+                reasons.append(f'{FIGURES_REGISTER.name} {name} is given the wrong owner: this sentence says ' + '; '.join(wrong))
                 continue
         return entry, ''
     return None, reasons[0]
@@ -1715,13 +2112,17 @@ def unclaimed(read_from, policy, landing, excused, known=None):
     known = register() if known is None else known
     faults = []
     counts = {'found': 0, 'read by a rule': 0, 'in the register': 0, 'excused': 0}
-    for where, sentence in read_from:
+    read_from = list(read_from)
+    for index, (where, sentence) in enumerate(read_from):
         found = figures_of(sentence)
         if not found:
             continue
         read = []
         judge(sentence, policy, landing, read=read)
         surface = surface_of(where)
+        # The sentence after this one on the same surface, for a claim that points back at a figure
+        # ("That receipt is the one in the tree today"), which the figure's own sentence cannot see.
+        following = read_from[index + 1][1] if index + 1 < len(read_from) and read_from[index + 1][0] == where else None
         for text, start, end in found:
             counts['found'] += 1
             if any(a <= start and end <= b for a, b in read):
@@ -1742,7 +2143,7 @@ def unclaimed(read_from, policy, landing, excused, known=None):
             # register writes down, said the way its entry asks.
             why = 'no conditions in its own sentence'
             if CONDITIONS.search(sentence):
-                entry, why = in_register(text, sentence, known, start, end)
+                entry, why = in_register(text, sentence, known, start, end, (following,))
                 if entry is not None:
                     counts['in the register'] += 1
                     continue
@@ -2134,21 +2535,24 @@ def every_figure_is_read(policy):
         if refused:
             faults.append(f'honest sentence {name} of the cold set was refused ({refused[0].splitlines()[0]}): {honest}')
     # A register entry that does not say where its figure came from stops the run.
+    register_on_disk = json.loads(FIGURES_REGISTER.read_text(encoding='utf-8'))
     for missing in ('figure', 'unit', 'whose', 'conditions', 'evidence', 'of'):
         entry = {'figure': '12', 'unit': 'ms', 'whose': 'ours', 'conditions': 'a desktop on a day',
                  'evidence': 'README.md', 'of': 'the whole interval'}
         del entry[missing]
         try:
-            read_register({'$subjects': json.loads(FIGURES_REGISTER.read_text(encoding='utf-8'))['$subjects'],
+            read_register({'$subjects': register_on_disk['$subjects'], '$owners': register_on_disk['$owners'],
                            'allowed': [entry]})
             faults.append(f'a register entry with no {missing} was read as an entry')
         except Unreadable:
             pass
-    # And the register is what answers: the same invented sentence passes once an entry holds it.
-    invented = 'Measured, receipts come in under 12 ms.'
-    held = read_register({'$subjects': json.loads(FIGURES_REGISTER.read_text(encoding='utf-8'))['$subjects'],
-                          'allowed': [{'figure': '12', 'unit': 'ms', 'whose': 'ours', 'of': 'the whole interval',
-                                       'conditions': 'for the self-test', 'evidence': 'README.md, for the self-test'}]})
+    # And the register is what answers: a sentence a rule cannot read passes once an entry holds its
+    # figure, and the entry has to stand on evidence that carries it, here the committed receipt.
+    invented = 'Measured, receipts come in under 153.875 ms.'
+    held = read_register({'$subjects': register_on_disk['$subjects'], '$owners': register_on_disk['$owners'],
+                          'allowed': [{'figure': '153.875', 'unit': 'ms', 'whose': 'ours', 'of': 'the whole interval',
+                                       'conditions': 'for the self-test',
+                                       'evidence': 'crates/verify/tests/data/a-real-stamp/receipt.cbor, for the self-test'}]})
     if unclaimed([('a made-up surface', invented)], policy, None, [], held)[0]:
         faults.append('a figure the register holds was refused, so the register is not what answers')
     # What a registered figure is of, and whether the evidence for it resolves. Until 2026-09-17 the
@@ -2158,7 +2562,7 @@ def every_figure_is_read(policy):
     forged = {'figure': '12', 'unit': 'ms', 'whose': 'ours', 'conditions': 'an ordinary desktop',
               'evidence': 'none', 'of': 'the whole interval'}
     try:
-        read_register({'$subjects': json.loads(FIGURES_REGISTER.read_text(encoding='utf-8')).get('$subjects', {}),
+        read_register({'$subjects': register_on_disk['$subjects'], '$owners': register_on_disk['$owners'],
                        'allowed': [forged]})
         faults.append('a register entry of ours whose evidence is "none" was read as an entry')
     except Unreadable as e:
@@ -2170,6 +2574,67 @@ def every_figure_is_read(policy):
         refused = unclaimed([('a made-up surface', requoted)], policy, None, [])[0]
         if not refused:
             faults.append(f'a registered figure said as something it is not of passed: {requoted}')
+        elif 'entry' not in refused[0]:
+            faults.append(f'a registered figure said as something it is not of was refused without naming the entry: {refused[0].splitlines()[0]}')
+    # What the afternoon of 2026-09-17 added, each watched refused and each naming the entry. The
+    # owner of a figure, on both axes; a constant called measured, in each of its three shapes; a
+    # history figure in the present; a superseded figure called today's in the sentence after it;
+    # somebody else's figure said as measured by us; a setting called a bound.
+    for wrong, needs in (
+        ("The agent's bound on an ordinary desktop at sixteen polling rounds, measured on 2026-09-14, is 287.147 ms.", 'owner'),
+        ('On an ordinary desktop the Action gave 211.3 ms on 2026-09-09 at sixteen polling rounds.', 'owner'),
+        ('The one-shot stamp command reached 128.7 ms on an ordinary desktop at thirty-six minutes of uptime.', 'owner'),
+        ('Through the resident agent, a GitHub-hosted runner on 2026-09-09 at sixteen polling rounds reached 211.3 ms.', 'owner'),
+        ('The width breakdown safety margin of 250.000 us was measured on an ordinary desktop at sixteen polling rounds.', 'constant'),
+        ('Measured on an ordinary desktop at sixteen polling rounds, the local read came to 10.000 us.', 'constant'),
+        ('Measured on an ordinary desktop at sixteen polling rounds, the safety margin was 250.000 us.', 'constant'),
+        ('A GitHub-hosted runner at four polling rounds reaches 16.219 s with Roughtime alone.', 'history'),
+        ('On an ordinary desktop at four polling rounds the stamp is 16.439 s wide today.', 'history'),
+        ('Our agent measured 15 microseconds of dispersion on an ordinary desktop.', 'we measured'),
+        ('Measured on an ordinary desktop at sixteen polling rounds, the bound was 90 s.', 'calls it'),
+    ):
+        refused = unclaimed([('a made-up surface', wrong)], policy, None, [])[0]
+        if not refused:
+            faults.append(f'a registered figure said wrongly passed: {wrong}')
+        elif needs not in refused[0] or 'entry' not in refused[0]:
+            faults.append(f'a registered figure said wrongly was refused for the wrong reason or without the entry named ({refused[0].splitlines()[0]}): {wrong}')
+    across = [('a made-up surface', 'The receipt of 149.8 ms was taken at 20:32 on an ordinary desktop at sixteen polling rounds and was replaced at 21:50.'),
+              ('a made-up surface', 'That receipt is the one in the tree today.')]
+    refused = unclaimed(across, policy, None, [])[0]
+    if not refused or 'since replaced' not in refused[0]:
+        faults.append('a superseded figure called today\'s in the sentence after it passed')
+    for right in ('A GitHub-hosted runner on 2026-09-14, the Action at v0 at sixteen polling rounds, gave 287.147 ms.',
+                  'Through the resident agent on an ordinary desktop on 2026-09-09 at thirty-six minutes of uptime, the readings were 128.7 ms, 128.8 ms and 129.1 ms.',
+                  'The safety margin in the width breakdown of the committed receipt is a fixed 250.000 us, a constant rather than a measurement.',
+                  'Before the operator floor, on 2026-09-08, a GitHub runner at four polling rounds reached 16.219 s with Roughtime alone.'):
+        refused = unclaimed([('a made-up surface', right)], policy, None, [])[0]
+        if refused:
+            faults.append(f'an honest sentence about a registered figure was refused ({refused[0].splitlines()[0]}): {right}')
+    # The register itself: evidence has to carry the figure, whatever the entry says of whose it is.
+    frame = {'$subjects': register_on_disk['$subjects'], '$owners': register_on_disk['$owners']}
+    fixture = 'crates/verify/tests/data/a-real-stamp/receipt.cbor'
+    for label, bad in (
+        ('evidence none under another whose', {'figure': '12.4', 'unit': 'ms', 'whose': 'our own measurement', 'conditions': 'a desktop', 'evidence': 'none', 'of': 'the whole interval'}),
+        ('a file that does not state it', {'figure': '12.4', 'unit': 'ms', 'whose': 'ours', 'conditions': 'a desktop', 'evidence': 'README.md', 'of': 'the whole interval'}),
+        ('a run id', {'figure': '12.4', 'unit': 'ms', 'whose': 'ours', 'conditions': 'a desktop', 'evidence': 'run 34349361290 of another repository', 'of': 'the whole interval'}),
+        ('a commit', {'figure': '12.4', 'unit': 'ms', 'whose': 'ours', 'conditions': 'a desktop', 'evidence': 'commit d255d0a', 'of': 'the whole interval'}),
+        ('a receipt whose field is another number', {'figure': '72.433', 'unit': 'ms', 'whose': 'ours', 'conditions': 'a desktop', 'evidence': fixture, 'of': 'the whole interval'}),
+        ('a receipt of another figure', {'figure': '211.3', 'unit': 'ms', 'whose': 'ours', 'conditions': 'a desktop', 'evidence': fixture, 'of': 'the whole interval'}),
+        ('a constant in the code for a measurement', {'figure': '250', 'unit': 'ms', 'whose': 'ours', 'conditions': 'a desktop', 'evidence': 'crates/clock/src/policy.rs', 'of': 'the whole interval'}),
+        ('a folder', {'figure': '12.4', 'unit': 'ms', 'whose': 'ours', 'conditions': 'a desktop', 'evidence': 'crates/clock/src/', 'of': 'the whole interval'}),
+        ('an owner the register does not list', {'figure': '153.875', 'unit': 'ms', 'whose': 'ours', 'conditions': 'a desktop', 'evidence': fixture, 'of': 'the whole interval', 'owner': {'machine': 'a phone'}}),
+    ):
+        try:
+            read_register(dict(frame, allowed=[bad]))
+            faults.append(f'a register entry with {label} was read as an entry')
+        except Unreadable as e:
+            if 'entry 1' not in str(e):
+                faults.append(f'a register entry with {label} was refused without naming the entry: {e}')
+    good = {'figure': '153.875', 'unit': 'ms', 'whose': 'ours', 'conditions': 'a desktop', 'evidence': fixture, 'of': 'the whole interval'}
+    try:
+        read_register(dict(frame, allowed=[good]))
+    except Unreadable as e:
+        faults.append(f'an entry whose receipt carries its figure was refused: {e}')
     for said_right in ('In the width breakdown of the same receipt, the sources overlapping, halved, come to 35.081 ms, read off timewitness verify.',
                        'The receipt committed on 2026-09-09 at 20:32 was 149.8 ms wide and was replaced at 21:50 that day.'):
         refused = unclaimed([('a made-up surface', said_right)], policy, None, [])[0]
