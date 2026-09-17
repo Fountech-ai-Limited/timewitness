@@ -109,6 +109,15 @@ pub enum Validity {
         /// A short description of which sources disagree and how.
         detail: String,
     },
+    /// The policy the model was given is one its arithmetic cannot stand behind.
+    ///
+    /// A coverage factor under one, or a rate that is not a number or is negative. Each of those
+    /// used to narrow the bound rather than widen it, so the model refuses before it synchronises
+    /// and before it reads. Added 2026-09-17.
+    PolicyRefused {
+        /// Which field, what it held, and what it has to be.
+        detail: String,
+    },
     /// The bound has grown wider than the policy is prepared to put its name to.
     BoundTooWide {
         /// The width the model computed, in nanoseconds.
@@ -210,6 +219,11 @@ impl fmt::Display for Refusal {
                     "the sources disagree about a pending leap second: {detail}"
                 )
             }
+            Validity::PolicyRefused { detail } => write!(
+                f,
+                "this model was given a policy its arithmetic cannot stand behind, so it declined \
+                 to sign: {detail}"
+            ),
             Validity::BoundTooWide { width, ceiling } => write!(
                 f,
                 "the bound has grown to {} ms, past the {} ms ceiling this model will sign for",

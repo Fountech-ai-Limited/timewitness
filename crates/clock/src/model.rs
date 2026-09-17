@@ -29,7 +29,7 @@ use crate::combine;
 use crate::independence;
 use crate::marzullo;
 use crate::monotonic::MonotonicClock;
-use crate::policy::{ppm_over, signed_ppm_over, Policy};
+use crate::policy::{ppm_over, signed_ppm_over, Policy, WIDEST};
 use crate::regression::{self, Fit};
 use crate::sample::Sample;
 use crate::window::SourceWindow;
@@ -337,6 +337,9 @@ impl ClockModel {
     /// Returns what this round established. A round that fails leaves the previous synchronisation
     /// in place, so the model carries on in holdover from the last good one rather than losing it.
     pub fn synchronise(&mut self) -> Validity {
+        if let Some(detail) = self.policy.fault() {
+            return Validity::PolicyRefused { detail };
+        }
         let now = self.clock.now();
         let offered = self.candidates_at(now);
 
@@ -651,16 +654,33 @@ impl ClockModel {
             + sync.unclaimed_frequency_ppm;
         let frequency_uncertainty_ppm = measurement_ppm + rate_movement_ppm(&self.policy, elapsed);
 
-        let oscillator_holdover = ppm_over(frequency_uncertainty_ppm, elapsed)
-            + if elapsed > 0 {
+        let oscillator_holdover =
+            ppm_over(frequency_uncertainty_ppm, elapsed).saturating_add(if elapsed > 0 {
                 self.policy.holdover_allowance
             } else {
                 0
-            };
+            });
         let model_residual = scaled(sync.offset_stderr, self.policy.coverage_factor);
         let scheduling = self.scheduling_allowance;
         let safety_margin = self.policy.safety_margin;
-        let widen = oscillator_holdover + model_residual + scheduling + safety_margin;
+        let widen = oscillator_holdover
+            .saturating_add(model_residual)
+            .saturating_add(scheduling)
+            .saturating_add(safety_margin);
+
+        // The interval is the intersection plus the widening on each side, so its width is known
+        // before either end is placed. Refusing here rather than after means a term carried at
+        // `WIDEST` is refused as too wide rather than overflowing on the way to being measured.
+        let width = sync
+            .intersection
+            .width()
+            .saturating_add(widen.saturating_mul(2));
+        if width > self.policy.max_bound_width {
+            return Err(Refusal::new(Validity::BoundTooWide {
+                width,
+                ceiling: self.policy.max_bound_width,
+            }));
+        }
 
         let drift = signed_ppm_over(sync.frequency_ppm.unwrap_or(0.0), elapsed);
         let lo = sync.intersection.lo + drift - widen;
@@ -690,12 +710,7 @@ impl ClockModel {
             breakdown,
         };
 
-        if bound.width() > self.policy.max_bound_width {
-            return Err(Refusal::new(Validity::BoundTooWide {
-                width: bound.width(),
-                ceiling: self.policy.max_bound_width,
-            }));
-        }
+        debug_assert_eq!(bound.width(), width);
 
         Ok(Stamp {
             reading: Reading {
@@ -711,6 +726,11 @@ impl ClockModel {
     }
 
     fn validity_at(&self, now: MonotonicNanos) -> Validity {
+        // Ahead of everything else, forced states included: no reading taken under this policy can
+        // be stood behind, whatever else is true.
+        if let Some(detail) = self.policy.fault() {
+            return Validity::PolicyRefused { detail };
+        }
         if let Some(forced) = &self.forced {
             return forced.clone();
         }
@@ -958,8 +978,10 @@ fn supports_a_rate(fit: &Fit, policy: &Policy) -> bool {
 /// Over a poll interval that is a few parts per million and over an outage it is the whole band.
 ///
 /// Both figures are choices and both live in `Policy` with the reasoning attached. Anything not
-/// finite gives no allowance at all rather than an infinite one, because an infinite widening is a
-/// refusal dressed as an answer and the caller has a ceiling of its own for that.
+/// finite is an infinite allowance. This said the opposite until 2026-09-17, on the reasoning that an
+/// infinite widening is a refusal dressed as an answer, and what it gave instead was no allowance at
+/// all, which narrows the bound. An infinite allowance becomes [`WIDEST`] in `ppm_over`, and a bound
+/// holding that is refused by the ceiling, which is the same refusal said plainly.
 fn rate_movement_ppm(policy: &Policy, elapsed: Nanos) -> f64 {
     if elapsed <= 0 {
         return 0.0;
@@ -967,25 +989,56 @@ fn rate_movement_ppm(policy: &Policy, elapsed: Nanos) -> f64 {
     let seconds = elapsed as f64 / NANOS_PER_SEC as f64;
     let slewed = policy.frequency_slew_ppm_per_second * seconds;
     if !slewed.is_finite() || !policy.frequency_span_ppm.is_finite() {
-        return 0.0;
+        return f64::INFINITY;
     }
     slewed.min(policy.frequency_span_ppm).max(0.0)
 }
 
-/// A nanosecond quantity scaled by a factor, rounded away from zero.
+/// A nanosecond allowance scaled by a factor, rounded up.
+///
+/// Used for the coverage factor on the model's own residual. A factor that is not a number, or is
+/// nought or below, used to give nought, which took the residual out of the bound. It now gives
+/// [`WIDEST`], which the ceiling refuses. `Policy::fault` refuses such a policy before this is
+/// reached, so this is the second net and not the first.
 fn scaled(value: Nanos, factor: f64) -> Nanos {
     if !factor.is_finite() || factor <= 0.0 {
-        return 0;
+        return WIDEST;
     }
-    let product = (value as f64) * factor;
-    if !product.is_finite() {
-        return value;
+    let product = ((value as f64) * factor).ceil();
+    if !product.is_finite() || product >= WIDEST as f64 {
+        return WIDEST;
     }
-    product.ceil() as Nanos
+    product as Nanos
 }
 
 /// Seconds as nanoseconds, for callers assembling policy values.
 #[must_use]
 pub const fn seconds(n: i64) -> Nanos {
     (n as Nanos) * NANOS_PER_SEC
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_coverage_factor_nobody_can_use_scales_to_the_widest_and_never_nought() {
+        // Nought, negative nought, minus one, not a number and both infinities. Each gave nought until
+        // 2026-09-17.
+        for factor in [0.0, -0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(scaled(1_000, factor), WIDEST, "factor {factor}");
+        }
+        assert_eq!(scaled(1_000, 2.0), 2_000);
+        assert_eq!(scaled(1_000, 1e300), WIDEST);
+    }
+
+    #[test]
+    fn a_rate_nobody_can_use_is_an_infinite_allowance_and_never_nought() {
+        let policy = Policy {
+            frequency_slew_ppm_per_second: f64::NAN,
+            ..Policy::default()
+        };
+        let allowance = rate_movement_ppm(&policy, NANOS_PER_SEC);
+        assert!(allowance.is_infinite() && allowance > 0.0, "{allowance}");
+    }
 }

@@ -22,6 +22,15 @@ use timewitness_core::time::{Nanos, NANOS_PER_MICRO, NANOS_PER_MILLI, NANOS_PER_
 /// rather than maximised.
 pub const FREQUENCY_FLOOR_PPM: f64 = 15.0;
 
+/// The widest any one term of a bound is carried as, in nanoseconds: about 292 years.
+///
+/// A term the arithmetic cannot put a number on, because an input to it was not a number, is carried
+/// as this rather than as nought. Nought is the one wrong answer, because it narrows the bound at the
+/// moment the input is known to be bad. This is far past every ceiling a policy can set, so a bound
+/// holding it is refused as too wide, and it is small enough that the handful of terms a bound is
+/// built from add up inside the integer they are carried in rather than overflowing it.
+pub const WIDEST: Nanos = i64::MAX as Nanos;
+
 /// How the model runs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Policy {
@@ -224,6 +233,47 @@ pub struct Policy {
     pub history_capacity: usize,
 }
 
+impl Policy {
+    /// What makes this policy one the bound arithmetic cannot stand behind, if anything does.
+    ///
+    /// Every field is public, so a policy can be built by struct update from the default and nothing
+    /// that makes one can be relied on to have looked at it. The model asks this itself, before it
+    /// synchronises and before it reads, and refuses with the answer.
+    ///
+    /// The coverage factor has to be a number no smaller than one. Below one it carries less than a
+    /// single standard error into the bound, and at nought or below, or not a number, it used to take
+    /// the model's own residual out of the width altogether. Each rate in parts per million has to be
+    /// a number and must not be negative, and that includes negative nought, because a caller who
+    /// wrote a minus sign meant something the arithmetic cannot honour. Nought itself is allowed: the
+    /// tests switch a term off with it to see the others, and a nought written on purpose is a choice
+    /// about what to allow for rather than a number that went wrong.
+    #[must_use]
+    pub fn fault(&self) -> Option<String> {
+        if !self.coverage_factor.is_finite() || self.coverage_factor < 1.0 {
+            return Some(format!(
+                "coverage_factor is {} and has to be a number no smaller than one",
+                self.coverage_factor
+            ));
+        }
+        let rates = [
+            ("frequency_floor_ppm", self.frequency_floor_ppm),
+            (
+                "frequency_slew_ppm_per_second",
+                self.frequency_slew_ppm_per_second,
+            ),
+            ("frequency_span_ppm", self.frequency_span_ppm),
+        ];
+        for (name, value) in rates {
+            if !value.is_finite() || value.is_sign_negative() {
+                return Some(format!(
+                    "{name} is {value} and has to be a number that is not negative"
+                ));
+            }
+        }
+        None
+    }
+}
+
 impl Default for Policy {
     fn default() -> Self {
         Self {
@@ -253,19 +303,25 @@ impl Default for Policy {
 /// Nanoseconds of error accumulated by a frequency error of `ppm` over `elapsed` nanoseconds.
 ///
 /// One part per million is one millisecond per thousand seconds. The arithmetic is done in floating
-/// point and rounded away from zero, so the answer is never smaller than the true product.
+/// point and rounded up, so the answer is never smaller than the true product.
+///
+/// This is an allowance, so it is never less than nought and never less than it stands for. A rate
+/// that is not a number, or is negative, has no allowance anybody could compute, and the answer is
+/// [`WIDEST`] rather than nought: nought would narrow the bound on exactly the input that says the
+/// bound cannot be known. The same ceiling holds a finite rate too large to mean anything.
 #[must_use]
 pub fn ppm_over(ppm: f64, elapsed: Nanos) -> Nanos {
-    if elapsed <= 0 || !ppm.is_finite() {
+    if elapsed <= 0 {
         return 0;
     }
-    let product = ppm * (elapsed as f64) / 1_000_000.0;
-    let rounded = if product >= 0.0 {
-        product.ceil()
-    } else {
-        product.floor()
-    };
-    rounded as Nanos
+    if !ppm.is_finite() || ppm < 0.0 {
+        return WIDEST;
+    }
+    let product = (ppm * (elapsed as f64) / 1_000_000.0).ceil();
+    if !product.is_finite() || product >= WIDEST as f64 {
+        return WIDEST;
+    }
+    product as Nanos
 }
 
 /// The same, keeping the sign, for propagating an estimated drift rather than an uncertainty.
@@ -274,7 +330,10 @@ pub fn signed_ppm_over(ppm: f64, elapsed: Nanos) -> Nanos {
     if elapsed <= 0 || !ppm.is_finite() {
         return 0;
     }
-    (ppm * (elapsed as f64) / 1_000_000.0) as Nanos
+    // Held inside the same ceiling as an allowance, so a correction cannot carry an interval past
+    // what the integer holds.
+    let product = ppm * (elapsed as f64) / 1_000_000.0;
+    product.clamp(-(WIDEST as f64), WIDEST as f64) as Nanos
 }
 
 #[cfg(test)]
@@ -292,6 +351,42 @@ mod tests {
         // A third of a nanosecond of growth still counts as growth.
         assert_eq!(ppm_over(1.0, 333), 1);
         assert_eq!(ppm_over(0.0, NANOS_PER_SEC), 0);
+    }
+
+    #[test]
+    fn an_allowance_nobody_can_compute_is_the_widest_and_never_nought() {
+        // Each of these but the last returned nought or a negative number until
+        // 2026-09-17, which took the oscillator out of the width.
+        let second = NANOS_PER_SEC;
+        assert_eq!(ppm_over(f64::NAN, second), WIDEST);
+        assert_eq!(ppm_over(f64::INFINITY, second), WIDEST);
+        assert_eq!(ppm_over(f64::NEG_INFINITY, second), WIDEST);
+        assert_eq!(ppm_over(-5.0, second), WIDEST);
+        assert_eq!(ppm_over(1e300, second), WIDEST);
+        assert_eq!(ppm_over(-0.0, second), 0);
+    }
+
+    #[test]
+    fn the_shipped_policy_has_no_fault_and_a_bad_field_is_named() {
+        assert_eq!(Policy::default().fault(), None);
+        for factor in [0.0, -0.0, -1.0, 0.5, 0.999_999_999, f64::NAN, f64::INFINITY] {
+            let policy = Policy {
+                coverage_factor: factor,
+                ..Policy::default()
+            };
+            let fault = policy
+                .fault()
+                .expect("a coverage factor under one is refused");
+            assert!(fault.contains("coverage_factor"), "{fault}");
+        }
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -5.0, -0.0] {
+            let policy = Policy {
+                frequency_span_ppm: value,
+                ..Policy::default()
+            };
+            let fault = policy.fault().expect("a bad rate is refused");
+            assert!(fault.contains("frequency_span_ppm"), "{fault}");
+        }
     }
 
     #[test]
