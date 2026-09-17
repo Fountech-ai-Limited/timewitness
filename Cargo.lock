@@ -793,6 +793,7 @@ name = "timewitness-core"
 version = "0.1.0"
 dependencies = [
  "bls12_381",
+ "curve25519-dalek",
  "ed25519-dalek",
  "rsa",
  "sha2 0.10.9",

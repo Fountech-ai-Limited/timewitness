@@ -25,7 +25,7 @@
 //! three public servers reachable on 2026-09-07 were reporting one, three and five, so a corridor
 //! is seconds wide. It authenticates the bound. It does not tighten it.
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha512};
 
 use super::{Checked, EvidenceError};
@@ -557,7 +557,7 @@ impl Inspected<'_> {
         delegation_signed.extend_from_slice(DELEGATION_CONTEXT);
         delegation_signed.extend_from_slice(self.delegation);
         long_term
-            .verify(&delegation_signed, &cert_signature)
+            .verify_strict(&delegation_signed, &cert_signature)
             .map_err(|_| {
                 EvidenceError::BadSignature(format!(
                     "the delegation in this response was not signed by the published long-term \
@@ -656,7 +656,7 @@ pub fn inspect(blob: &[u8]) -> Result<Inspected<'_>, EvidenceError> {
     response_signed.extend_from_slice(RESPONSE_CONTEXT);
     response_signed.extend_from_slice(signed_response_bytes);
     online_key
-        .verify(&response_signed, &response_signature)
+        .verify_strict(&response_signed, &response_signature)
         .map_err(|_| {
             EvidenceError::BadSignature(
                 "the signed part of the response does not check against the key the delegation \
@@ -1002,6 +1002,25 @@ pub fn build_response(
     let request = Message::parse(message)?;
     let nonce = request.need_fixed::<32>(TAG_NONC)?;
 
+    Ok(respond(
+        request_packet,
+        &nonce,
+        certificate,
+        midpoint,
+        radius,
+        |signed| ed25519_dalek::Signer::sign(online, signed).to_bytes(),
+    ))
+}
+
+/// The response packet, with its signature made by `sign` over the bytes the draft says are signed.
+fn respond(
+    request_packet: &[u8],
+    nonce: &[u8; 32],
+    certificate: &Delegation,
+    midpoint: u64,
+    radius: u32,
+    sign: impl FnOnce(&[u8]) -> [u8; 64],
+) -> Vec<u8> {
     // A tree of one. The leaf is the hash of the whole request packet under the leaf prefix, and
     // that leaf is the root. `check` recomputes exactly this from the request it holds.
     let root = h(&[&[0x00], request_packet]);
@@ -1016,20 +1035,20 @@ pub fn build_response(
     let mut signed = Vec::with_capacity(RESPONSE_CONTEXT.len() + signed_response.len());
     signed.extend_from_slice(RESPONSE_CONTEXT);
     signed.extend_from_slice(&signed_response);
-    let signature = ed25519_dalek::Signer::sign(online, &signed);
+    let signature = sign(&signed);
 
     let response = encode(&[
         (TAG_VER, WIRE_VERSION.to_le_bytes().to_vec()),
         (TAG_NONC, nonce.to_vec()),
         (TAG_TYPE, TYPE_RESPONSE.to_le_bytes().to_vec()),
         (TAG_SREP, signed_response),
-        (TAG_SIG, signature.to_bytes().to_vec()),
+        (TAG_SIG, signature.to_vec()),
         (TAG_CERT, certificate.certificate()),
         (TAG_PATH, Vec::new()),
         (TAG_INDX, 0u32.to_le_bytes().to_vec()),
     ]);
 
-    Ok(frame(&response))
+    frame(&response)
 }
 
 const TAG_INDX: u32 = tag(b"INDX");
@@ -1468,5 +1487,281 @@ mod tests {
             response.len(),
             request.len()
         );
+    }
+    // Two signatures are checked on the way to a corridor: the long-term key's over the delegation,
+    // and the online key's over the signed response. Both used `verify` until 2026-09-17, which
+    // accepts a key of small order, and a key of small order has signatures anybody can write. Each
+    // shape below goes at both checks and each is refused.
+
+    use ed25519_dalek::Verifier;
+
+    /// Where an attack is aimed.
+    #[derive(Clone, Copy)]
+    enum Site {
+        /// The long-term key over the delegation. The attacker's key is the one the reader pins.
+        Delegation,
+        /// The online key over the signed response. An honest long-term key delegated to the
+        /// attacker's key.
+        Response,
+    }
+
+    /// The neutral point, `y = 1`, the first of the eight points of small order.
+    const NEUTRAL: [u8; 32] = {
+        let mut b = [0u8; 32];
+        b[0] = 1;
+        b
+    };
+
+    /// The point of order two, `y = p - 1`.
+    const ORDER_TWO: [u8; 32] = {
+        let mut b = [0xffu8; 32];
+        b[0] = 0xec;
+        b[31] = 0x7f;
+        b
+    };
+
+    /// The neutral point again, written with `y = p + 1`, which is not the canonical spelling.
+    const NEUTRAL_WRITTEN_LONG: [u8; 32] = {
+        let mut b = [0xffu8; 32];
+        b[0] = 0xee;
+        b[31] = 0x7f;
+        b
+    };
+
+    /// The base point, compressed.
+    const BASE: [u8; 32] = {
+        let mut b = [0x66u8; 32];
+        b[0] = 0x58;
+        b
+    };
+
+    /// The order of the base point, little-endian.
+    const ORDER: [u8; 32] = [
+        0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde,
+        0x14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+    ];
+
+    fn signature_of(r: [u8; 32], s: [u8; 32]) -> [u8; 64] {
+        let mut out = [0u8; 64];
+        out[..32].copy_from_slice(&r);
+        out[32..].copy_from_slice(&s);
+        out
+    }
+
+    fn one() -> [u8; 32] {
+        let mut b = [0u8; 32];
+        b[0] = 1;
+        b
+    }
+
+    /// A stored response that is honest except at `site`, where the signer's public key is
+    /// `signer` and the signature is whatever `sign` writes over the bytes signed there. `vary`
+    /// moves the signed bytes at that site, so a test can look for bytes a shape needs.
+    ///
+    /// Returns the blob, the long-term key a reader would pin, and the exact bytes signed at the site.
+    fn forged(
+        site: Site,
+        signer: [u8; 32],
+        sign: impl Fn(&[u8]) -> [u8; 64],
+        vary: u64,
+    ) -> (Vec<u8>, [u8; 32], Vec<u8>) {
+        let midpoint = 1_800_000_000u64;
+        let nonce = [0x5a; 32];
+        let online = key(9);
+        match site {
+            Site::Delegation => {
+                let min_time = midpoint - 43_200 - vary;
+                let max_time = midpoint + 43_200;
+                let delegation = encode(&[
+                    (TAG_PUBK, online.verifying_key().to_bytes().to_vec()),
+                    (TAG_MINT, min_time.to_le_bytes().to_vec()),
+                    (TAG_MAXT, max_time.to_le_bytes().to_vec()),
+                ]);
+                let mut signed = DELEGATION_CONTEXT.to_vec();
+                signed.extend_from_slice(&delegation);
+                let certificate = Delegation {
+                    delegation,
+                    signature: sign(&signed),
+                    min_time,
+                    max_time,
+                };
+                let request = build_request(&nonce, &signer);
+                let response = build_response(&request, &online, &certificate, midpoint, 1)
+                    .expect("the response half is honest");
+                (pack_blob(&[], &request, &response), signer, signed)
+            }
+            Site::Response => {
+                let long_term = key(7);
+                let long_term_public = long_term.verifying_key().to_bytes();
+                let certificate =
+                    delegate(&long_term, &signer, midpoint - 43_200, midpoint + 43_200)
+                        .expect("the delegation half is honest");
+                let request = build_request(&nonce, &long_term_public);
+                let mut signed = Vec::new();
+                let response = respond(
+                    &request,
+                    &nonce,
+                    &certificate,
+                    midpoint + vary,
+                    1,
+                    |bytes| {
+                        signed = bytes.to_vec();
+                        sign(bytes)
+                    },
+                );
+                (
+                    pack_blob(&[], &request, &response),
+                    long_term_public,
+                    signed,
+                )
+            }
+        }
+    }
+
+    fn refused(site: Site, blob: &[u8], long_term_public: &[u8; 32], shape: &str) {
+        let outcome = check(blob, long_term_public, "a pinned server");
+        let at = match site {
+            Site::Delegation => "the delegation",
+            Site::Response => "the response",
+        };
+        assert!(
+            matches!(outcome, Err(EvidenceError::BadSignature(_))),
+            "{shape} at {at}: expected a signature refusal, got {outcome:?}"
+        );
+    }
+
+    /// S1. The neutral point as the key, `R = B`, `s = 1`, which checks for every message under the
+    /// equation `verify` uses.
+    fn the_neutral_point_as_the_key(site: Site) {
+        let (blob, pinned, signed) = forged(site, NEUTRAL, |_| signature_of(BASE, one()), 0);
+        assert!(
+            VerifyingKey::from_bytes(&NEUTRAL)
+                .unwrap()
+                .verify(&signed, &Signature::from_bytes(&signature_of(BASE, one())))
+                .is_ok(),
+            "the shape has to be one the lenient check accepts, or this test holds nothing"
+        );
+        refused(site, &blob, &pinned, "S1");
+    }
+
+    /// S2. The point of order two as the key, `R = B`, `s = 1`, with the signed bytes moved until
+    /// the challenge is even, which is when that equation holds.
+    fn a_second_small_order_point_as_the_key(site: Site) {
+        let lenient = VerifyingKey::from_bytes(&ORDER_TWO).expect("a point on the curve");
+        let signature = signature_of(BASE, one());
+        let found = (0..256).find_map(|vary| {
+            let (blob, pinned, signed) = forged(site, ORDER_TWO, |_| signature, vary);
+            lenient
+                .verify(&signed, &Signature::from_bytes(&signature))
+                .is_ok()
+                .then_some((blob, pinned))
+        });
+        let (blob, pinned) = found.expect("half of all challenges are even");
+        refused(site, &blob, &pinned, "S2");
+    }
+
+    /// S3. The neutral point written the long way as `R`, over the neutral point as the key, `s = 0`.
+    fn a_commitment_written_the_long_way(site: Site) {
+        let (blob, pinned, _) = forged(
+            site,
+            NEUTRAL,
+            |_| signature_of(NEUTRAL_WRITTEN_LONG, [0u8; 32]),
+            0,
+        );
+        refused(site, &blob, &pinned, "S3");
+    }
+
+    /// S4. An honest key whose holder signs with `R` the neutral point and `s = h a`. The key is
+    /// sound and the signature is one that key could be made to have twice.
+    fn a_commitment_of_small_order_from_an_honest_key(site: Site) {
+        let holder = key(11);
+        let public = holder.verifying_key().to_bytes();
+        let a = holder.to_scalar();
+        let sign = |message: &[u8]| {
+            let mut hasher = Sha512::new();
+            hasher.update(NEUTRAL);
+            hasher.update(public);
+            hasher.update(message);
+            let challenge =
+                curve25519_dalek::Scalar::from_bytes_mod_order_wide(&hasher.finalize().into());
+            signature_of(NEUTRAL, (challenge * a).to_bytes())
+        };
+        let (blob, pinned, signed) = forged(site, public, sign, 0);
+        assert!(
+            holder
+                .verifying_key()
+                .verify(&signed, &Signature::from_bytes(&sign(&signed)))
+                .is_ok(),
+            "the shape has to be one the lenient check accepts, or this test holds nothing"
+        );
+        refused(site, &blob, &pinned, "S4");
+    }
+
+    /// S5. An honest signature with `s` written as `s + l`, the same scalar spelled out of range.
+    fn a_scalar_written_out_of_range(site: Site) {
+        let holder = key(13);
+        let public = holder.verifying_key().to_bytes();
+        let sign = |message: &[u8]| {
+            let mut bytes = ed25519_dalek::Signer::sign(&holder, message).to_bytes();
+            let mut carry = 0u16;
+            for (i, limb) in ORDER.iter().enumerate() {
+                let sum = u16::from(bytes[32 + i]) + u16::from(*limb) + carry;
+                bytes[32 + i] = (sum & 0xff) as u8;
+                carry = sum >> 8;
+            }
+            bytes
+        };
+        let (blob, pinned, _) = forged(site, public, sign, 0);
+        refused(site, &blob, &pinned, "S5");
+    }
+
+    #[test]
+    fn s1_at_the_delegation() {
+        the_neutral_point_as_the_key(Site::Delegation);
+    }
+
+    #[test]
+    fn s1_at_the_response() {
+        the_neutral_point_as_the_key(Site::Response);
+    }
+
+    #[test]
+    fn s2_at_the_delegation() {
+        a_second_small_order_point_as_the_key(Site::Delegation);
+    }
+
+    #[test]
+    fn s2_at_the_response() {
+        a_second_small_order_point_as_the_key(Site::Response);
+    }
+
+    #[test]
+    fn s3_at_the_delegation() {
+        a_commitment_written_the_long_way(Site::Delegation);
+    }
+
+    #[test]
+    fn s3_at_the_response() {
+        a_commitment_written_the_long_way(Site::Response);
+    }
+
+    #[test]
+    fn s4_at_the_delegation() {
+        a_commitment_of_small_order_from_an_honest_key(Site::Delegation);
+    }
+
+    #[test]
+    fn s4_at_the_response() {
+        a_commitment_of_small_order_from_an_honest_key(Site::Response);
+    }
+
+    #[test]
+    fn s5_at_the_delegation() {
+        a_scalar_written_out_of_range(Site::Delegation);
+    }
+
+    #[test]
+    fn s5_at_the_response() {
+        a_scalar_written_out_of_range(Site::Response);
     }
 }
