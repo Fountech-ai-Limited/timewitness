@@ -164,13 +164,10 @@ fn since_last_sync_reports_the_age_of_the_newest_exchange() {
     );
     assert_eq!(rig.poll_and_synchronise(), Validity::Valid);
 
-    // The sources were all polled at the same instant and their replies came home at the ends of
-    // their own round trips, so the newest exchange is the slowest source's reply.
-    let slowest = three_sources()
-        .iter()
-        .map(Path::round_trip)
-        .max()
-        .expect("three sources");
+    // The sources were all polled at the same instant, and the age is measured from the moment
+    // that request went out. Until the evening of 2026-09-17 it was measured from the moment the
+    // slowest reply came home, one round trip later, and a reply whose counter mark was written an
+    // hour ahead held the age at nought for the hour.
 
     // Ten minutes of a polling loop with nothing answering it.
     let quiet_for = 600 * NANOS_PER_SEC;
@@ -183,11 +180,10 @@ fn since_last_sync_reports_the_age_of_the_newest_exchange() {
         .model
         .read()
         .expect("ten minutes is inside the holdover ceiling");
-    let expected = quiet_for - slowest;
     assert_eq!(
-        stamp.since_last_sync, expected,
-        "the age reported has to be the age of the newest exchange, which came home {slowest} ns \
-         after the poll, and not the age of the last selection round"
+        stamp.since_last_sync, quiet_for,
+        "the age reported has to be the age of the newest exchange, from the moment it was sent, \
+         and not the age of the last selection round"
     );
 }
 

@@ -39,6 +39,24 @@ pub const WIDEST: Nanos = i64::MAX as Nanos;
 /// makes it the second net rather than a value a policy can ask for.
 pub const WIDEST_RATE_PPM: f64 = 1_000_000.0;
 
+/// The slowest an oscillator's rate may be assumed to move, in parts per million per second.
+///
+/// One, which is the shipped figure and the reasoning is on `Policy::frequency_slew_ppm_per_second`.
+/// It is a floor as well as a default from 2026-09-17: a policy may allow for a rate that moves
+/// faster than this and never for one that moves slower, because slower is a claim about hardware
+/// this code has not measured, and a policy stating nought signed a bound with true UTC outside it
+/// fifteen minutes after its second round on a clock drifting at an ordinary twelve parts per
+/// million.
+pub const SLEW_FLOOR_PPM_PER_SECOND: f64 = 1.0;
+
+/// The narrowest band an oscillator's rate may be assumed to occupy, in parts per million.
+///
+/// A hundred, which is a consumer part's specified fifty either side across its temperature range;
+/// the reasoning is on `Policy::frequency_span_ppm`. A floor for the same reason as the slew: a
+/// narrower band is a better crystal than the one this product documents, and nothing here has
+/// measured one.
+pub const SPAN_FLOOR_PPM: f64 = 100.0;
+
 /// How the model runs.
 ///
 /// Every field is public, so a policy can be built by struct update from the default and nothing that
@@ -271,11 +289,20 @@ impl Policy {
     /// The coverage factor has to be a number no smaller than one. Below one it carries less than a
     /// single standard error into the bound, and at nought or below, or not a number, it used to take
     /// the model's own residual out of the width altogether. Each rate in parts per million has to be
-    /// a number, must not be negative, and that includes negative nought, because a caller who wrote
-    /// a minus sign meant something the arithmetic cannot honour, and must not be more than
-    /// [`WIDEST_RATE_PPM`], because a rate past the whole clock is not a rate. Nought itself is
-    /// allowed: the tests switch a term off with it to see the others, and a nought written on
-    /// purpose is a choice about what to allow for rather than a number that went wrong.
+    /// a number and must not be more than [`WIDEST_RATE_PPM`], because a rate past the whole clock is
+    /// not a rate.
+    ///
+    /// **Each rate also has a floor, and the floor is the shipped figure**: [`FREQUENCY_FLOOR_PPM`],
+    /// [`SLEW_FLOOR_PPM_PER_SECOND`] and [`SPAN_FLOOR_PPM`]. Until the evening of 2026-09-17 nought
+    /// was allowed, on the reasoning that the tests switch a term off with it to see the others,
+    /// and a cold set found what that reasoning missed: the three rates are the model's whole
+    /// knowledge of the oscillator before it has fitted one, and a policy stating that the crystal
+    /// cannot drift signed a bound with true UTC outside it fifteen minutes after its second round.
+    /// A rate below the shipped figure is a claim that this machine's hardware is better than the
+    /// hardware this product documents, and no measurement here supports that claim; a rate above
+    /// it is a caller allowing for worse hardware, which only ever widens. So a policy may raise any
+    /// of the three and may lower none, and a test that wants to see one term without the others
+    /// compares two policies that differ in that term alone.
     ///
     /// Each allowance in nanoseconds, the holdover allowance, the safety margin and the scheduling
     /// floor, is a term added to the width, so it must not be negative and must not be more than
@@ -301,17 +328,29 @@ impl Policy {
             ));
         }
         let rates = [
-            ("frequency_floor_ppm", self.frequency_floor_ppm),
+            (
+                "frequency_floor_ppm",
+                self.frequency_floor_ppm,
+                FREQUENCY_FLOOR_PPM,
+            ),
             (
                 "frequency_slew_ppm_per_second",
                 self.frequency_slew_ppm_per_second,
+                SLEW_FLOOR_PPM_PER_SECOND,
             ),
-            ("frequency_span_ppm", self.frequency_span_ppm),
+            (
+                "frequency_span_ppm",
+                self.frequency_span_ppm,
+                SPAN_FLOOR_PPM,
+            ),
         ];
-        for (name, value) in rates {
-            if !value.is_finite() || value.is_sign_negative() {
+        for (name, value, floor) in rates {
+            // Not a number fails both halves, so it is refused here without a test of its own.
+            if value.is_nan() || value < floor {
                 return Some(format!(
-                    "{name} is {value} and has to be a number that is not negative"
+                    "{name} is {value} and has to be a number no smaller than {floor}, which is \
+                     the hardware this product documents; a policy may allow for worse and never \
+                     for better"
                 ));
             }
             if value > WIDEST_RATE_PPM {
@@ -427,9 +466,12 @@ pub fn ppm_over(ppm: f64, elapsed: Nanos) -> Nanos {
 }
 
 /// The same, keeping the sign, for propagating an estimated drift rather than an uncertainty.
+///
+/// `elapsed` may be negative here and nowhere else: a reading taken before the fit it is corrected
+/// by is corrected backwards, by the same rate over the same distance.
 #[must_use]
 pub fn signed_ppm_over(ppm: f64, elapsed: Nanos) -> Nanos {
-    if elapsed <= 0 || !ppm.is_finite() {
+    if elapsed == 0 || !ppm.is_finite() {
         return 0;
     }
     // Held inside the same ceiling as an allowance, so a correction cannot carry an interval past
@@ -478,6 +520,59 @@ mod tests {
         assert_eq!(signed_ppm_over(-1e300, second), -WIDEST);
         assert_eq!(signed_ppm_over(f64::NAN, second), 0);
         assert_eq!(signed_ppm_over(-2.0, 1_000 * second), -2 * NANOS_PER_MILLI);
+    }
+
+    #[test]
+    fn a_signed_correction_runs_backwards_over_a_negative_distance() {
+        // A reading taken before the fit is corrected by the same rate the other way. This returned
+        // nought until 2026-09-17, so a counter stepped back got the fitted offset uncorrected.
+        let second = NANOS_PER_SEC;
+        assert_eq!(signed_ppm_over(2.0, -1_000 * second), -2 * NANOS_PER_MILLI);
+        assert_eq!(signed_ppm_over(-2.0, -1_000 * second), 2 * NANOS_PER_MILLI);
+        assert_eq!(signed_ppm_over(2.0, 0), 0);
+    }
+
+    #[test]
+    fn a_rate_below_the_shipped_figure_is_refused_by_name() {
+        // Each rate at its floor is legal; the next float down, nought, a subnormal and negative
+        // nought are refused naming the field. Nought was legal until 2026-09-17 and a policy of
+        // three noughts signed a bound with the truth outside it.
+        type Set = fn(f64) -> Policy;
+        let d = Policy::default();
+        let cases: [(&str, f64, Set); 3] = [
+            ("frequency_floor_ppm", FREQUENCY_FLOOR_PPM, |v| Policy {
+                frequency_floor_ppm: v,
+                ..Policy::default()
+            }),
+            (
+                "frequency_slew_ppm_per_second",
+                SLEW_FLOOR_PPM_PER_SECOND,
+                |v| Policy {
+                    frequency_slew_ppm_per_second: v,
+                    ..Policy::default()
+                },
+            ),
+            ("frequency_span_ppm", SPAN_FLOOR_PPM, |v| Policy {
+                frequency_span_ppm: v,
+                ..Policy::default()
+            }),
+        ];
+        for (field, floor, set) in cases {
+            assert_eq!(set(floor).fault(), None, "{field} at its floor is legal");
+            assert_eq!(
+                set(floor * 2.0).fault(),
+                None,
+                "{field} above its floor is legal"
+            );
+            let below = f64::from_bits(floor.to_bits() - 1);
+            for value in [below, 0.0, 5e-324, -0.0, f64::MIN_POSITIVE, -5.0] {
+                let fault = set(value)
+                    .fault()
+                    .unwrap_or_else(|| panic!("{field} at {value} was not refused"));
+                assert!(fault.contains(field), "{field} at {value}: {fault}");
+            }
+        }
+        assert_eq!(d.fault(), None);
     }
 
     #[test]

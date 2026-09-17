@@ -71,7 +71,8 @@ impl ByHand {
 /// that rounded the other way would be a bound a fraction of a nanosecond too narrow, and the point
 /// of this file is that nothing about the width goes unchecked because it looks too small to matter.
 fn by_hand(policy: &Policy, fit: &SyncFit, scheduling: Nanos, at: MonotonicNanos) -> ByHand {
-    let elapsed = at.since(fit.newest_exchange);
+    // From the moment the newest exchange went out, whichever way the counter went since.
+    let elapsed = at.signed_since(fit.newest_exchange_sent).abs();
 
     // How wrong the fitted rate was when it was fitted, floored at what the hardware can support,
     // plus the magnitude of any rate the model refused to stand behind.
@@ -244,11 +245,15 @@ fn every_term_of_the_width_is_the_arithmetic_and_not_whatever_the_model_says() {
 
 #[test]
 fn the_coverage_factor_on_the_measured_rate_is_what_the_policy_says() {
-    // The floor is what hides a change to the measured term, so it is taken out of the way here and
-    // the case asserts that it was: with the floor above the measurement, halving the coverage
-    // factor changes nothing and this file would pass over the mutation it exists to catch.
+    // The floor is what hides a change to the measured term, and since the evening of 2026-09-17
+    // it cannot be lowered below the shipped figure, so the measured term is raised above it
+    // instead, by a coverage factor large enough that the fit's own error times it clears fifteen
+    // parts per million. The case asserts that it did: with the floor above the measurement,
+    // halving the coverage factor changes nothing and this file would pass over the mutation it
+    // exists to catch.
     let rig = settled(Policy {
-        frequency_floor_ppm: 0.001,
+        coverage_factor: 12.0,
+        max_bound_width: NANOS_PER_SEC,
         ..policy()
     });
     rig.clock.advance_seconds(9);

@@ -47,5 +47,5 @@ pub use marzullo::Intersection;
 pub use model::{ClockModel, SyncFit};
 pub use monotonic::{MonotonicClock, SystemMonotonic, TestClock};
 pub use policy::Policy;
-pub use sample::Sample;
+pub use sample::{RejectedExchange, Sample};
 pub use window::SourceWindow;

@@ -31,7 +31,7 @@ use crate::marzullo;
 use crate::monotonic::MonotonicClock;
 use crate::policy::{ppm_over, signed_ppm_over, Policy, WIDEST};
 use crate::regression::{self, Fit};
-use crate::sample::Sample;
+use crate::sample::{RejectedExchange, Sample};
 use crate::window::SourceWindow;
 
 /// Where the machine's raw clock was when the model started.
@@ -60,7 +60,11 @@ struct Origin {
 
 impl Origin {
     fn raw_at(&self, now: MonotonicNanos) -> UnixNanos {
-        self.wall + now.since(self.mono)
+        // Signed, so a counter reading before the origin projects to a wall time before it rather
+        // than to the origin itself. Nothing is measured before the origin: `ingest` refuses an
+        // exchange stamped there, and a read there is refused by the holdover ceiling, because the
+        // distance from the newest exchange is what the ceiling is held against.
+        self.wall + now.signed_since(self.mono)
     }
 }
 
@@ -74,8 +78,11 @@ struct SyncState {
     /// round takes whatever is in the window and a poller carries on calling it on its own
     /// schedule. Measuring age from `at` therefore let a loop over frozen samples keep the model
     /// looking fresh for as long as the loop kept running. Everything that asks how long the model
-    /// has been extrapolating asks this field.
+    /// has been extrapolating asks `newest_exchange_sent` below, through `holdover_at`.
     newest_exchange: MonotonicNanos,
+    /// The counter mark on which that same exchange went out, which is what every holdover term
+    /// is measured from. See `holdover_at` for why it is this mark and not the reply's.
+    newest_exchange_sent: MonotonicNanos,
     /// The Marzullo region, as offsets from the raw local clock.
     intersection: OffsetInterval,
     /// The point estimate, already inside `intersection`.
@@ -111,6 +118,8 @@ struct SyncState {
 pub struct SyncFit {
     /// The counter mark on the newest exchange behind this synchronisation.
     pub newest_exchange: MonotonicNanos,
+    /// The counter mark on which that exchange went out.
+    pub newest_exchange_sent: MonotonicNanos,
     /// The Marzullo region, as offsets from the raw local clock.
     pub intersection: OffsetInterval,
     /// The point estimate, already inside `intersection`.
@@ -133,7 +142,8 @@ struct Candidate {
     id: SourceId,
     operator: Operator,
     kind: SourceKind,
-    /// When the exchange behind this candidate came home.
+    /// When the exchange behind this candidate went out and came home.
+    sent_at: MonotonicNanos,
     taken_at: MonotonicNanos,
     interval: OffsetInterval,
     network_half: Nanos,
@@ -235,6 +245,7 @@ impl ClockModel {
     pub fn fit(&self) -> Option<SyncFit> {
         self.sync.as_ref().map(|sync| SyncFit {
             newest_exchange: sync.newest_exchange,
+            newest_exchange_sent: sync.newest_exchange_sent,
             intersection: sync.intersection,
             offset: sync.offset,
             offset_stderr: sync.offset_stderr,
@@ -265,22 +276,36 @@ impl ClockModel {
     /// will be anchored to. There is no other clock in this function and no way for a caller to
     /// supply one.
     ///
-    /// Returns whether the exchange was taken. A reply the source's own two timestamps contradict
-    /// is refused here rather than reduced to something usable, so it never becomes a sample and
-    /// never becomes a source. A poller that wants to count how often a source answers badly reads
-    /// this; one that does not can ignore it, and the sample is gone either way.
-    pub fn ingest(&mut self, exchange: &Exchange) -> bool {
+    /// Returns why the exchange was not taken, or `None` where it was. A reply the source's own two
+    /// timestamps contradict, a timestamp outside the range the arithmetic carries, an uncertainty
+    /// no clock can have, a reply stamped as home before the request left, or a request stamped
+    /// before this model existed: each is refused here rather than reduced to something usable, so
+    /// it never becomes a sample and never becomes a source. A poller that wants to count how often
+    /// a source answers badly reads this; one that does not can ignore it, and the sample is gone
+    /// either way.
+    ///
+    /// The two counter marks are the client's and are held here, because they are the ends the
+    /// anchor is applied to. Until 2026-09-17 a reply stamped before its request was read as a
+    /// round trip of nought, which is the shortest there is and so the sample the window prefers.
+    pub fn ingest(&mut self, exchange: &Exchange) -> Option<RejectedExchange> {
+        if exchange.mono_t4 < exchange.mono_t1 {
+            return Some(RejectedExchange::HomeBeforeItLeft);
+        }
+        if exchange.mono_t1 < self.origin.mono {
+            return Some(RejectedExchange::BeforeTheModelStarted);
+        }
         let local_t1 = self.origin.raw_at(exchange.mono_t1);
         let local_t4 = self.origin.raw_at(exchange.mono_t4);
-        let Some(sample) = Sample::from_exchange(exchange, local_t1, local_t4) else {
-            return false;
+        let sample = match Sample::from_exchange(exchange, local_t1, local_t4) {
+            Ok(sample) => sample,
+            Err(why) => return Some(why),
         };
         let capacity = self.policy.samples_per_source;
         self.windows
             .entry(sample.source.clone())
             .or_insert_with(|| SourceWindow::new(sample.source.clone(), capacity))
             .push(sample);
-        true
+        None
     }
 
     /// Record that the machine has come back from sleep or suspend.
@@ -488,11 +513,12 @@ impl ClockModel {
         // When the model last actually heard from a source. Taken over the survivors, because they
         // are the ones holding the interval up; a fresh answer from a source Marzullo threw out
         // says nothing about how well this machine knows UTC.
-        let newest_exchange = kept
+        let newest = kept
             .iter()
-            .map(|i| candidates[*i].taken_at)
-            .max()
-            .unwrap_or(now);
+            .map(|i| candidates[*i])
+            .max_by_key(|c| c.taken_at);
+        let newest_exchange = newest.map_or(now, |c| c.taken_at);
+        let newest_exchange_sent = newest.map_or(now, |c| c.sent_at);
 
         // A round that heard nothing new is not a measurement, so it does not become a regression
         // point. Feeding one in would fit a line through offsets the model has already used, at
@@ -500,7 +526,7 @@ impl ClockModel {
         // time round: silence would narrow the bound. That is the same fault as the one this fix is
         // about, arriving through the fit rather than through the ceiling.
         let heard_something_new = self.sync.as_ref().map_or(true, |s| {
-            newest_exchange.as_nanos() > s.newest_exchange.as_nanos()
+            newest_exchange.as_nanos() != s.newest_exchange.as_nanos()
         });
         let half_width = selection.region.width().div_euclid(2).max(1);
         if heard_something_new {
@@ -571,6 +597,7 @@ impl ClockModel {
 
         self.sync = Some(SyncState {
             newest_exchange,
+            newest_exchange_sent,
             intersection: selection.region,
             offset,
             offset_stderr,
@@ -599,7 +626,7 @@ impl ClockModel {
 
     /// Whether the sources may still be spreading a leap second the model saw announced.
     fn inside_a_smear_window(&self, now: MonotonicNanos) -> bool {
-        self.leap_watch.is_some_and(|w| now.since(w.at) <= w.window)
+        self.leap_watch.is_some_and(|w| now.apart(w.at) <= w.window)
     }
 
     /// The model's current state, without taking a reading.
@@ -622,9 +649,9 @@ impl ClockModel {
         // Checked by `validity_at` immediately above.
         let sync = self.sync.as_ref().expect("a valid model has synchronised");
 
-        // Measured from the newest exchange behind the interval and never from the selection round
-        // that used it. The round is when the arithmetic ran; the exchange is when the model last
-        // learned anything.
+        // Measured from the newest exchange behind the interval, at the moment it went out, and
+        // never from the selection round that used it. The round is when the arithmetic ran; the
+        // exchange is when the model last learned anything.
         //
         // The span between the two is paid for twice, once inside the intersection where every
         // source interval was aged at the frequency floor, and once here at the frequency
@@ -632,7 +659,11 @@ impl ClockModel {
         // second figure is never smaller than the floor, and paying it twice over a span the model
         // heard nothing during is cheaper than the alternative, which is a poller keeping a dead
         // window alive.
-        let elapsed = now.since(sync.newest_exchange);
+        //
+        // A reading before the exchange went out is a reading the counter went backwards to, and
+        // the model is extrapolating backwards over that distance: the allowances below widen by
+        // it and the drift correction runs the other way over it.
+        let (elapsed, direction) = holdover_at(now, sync);
 
         // Two quantities and they are not the same one. The first is how wrong the fitted frequency
         // was at the moment it was fitted, floored at what the hardware can support. The second is
@@ -671,7 +702,7 @@ impl ClockModel {
             .saturating_add(scheduling)
             .saturating_add(safety_margin);
 
-        let drift = signed_ppm_over(sync.frequency_ppm.unwrap_or(0.0), elapsed);
+        let drift = signed_ppm_over(sync.frequency_ppm.unwrap_or(0.0), direction);
         let (lo, hi, width) = place(
             &sync.intersection,
             drift,
@@ -728,6 +759,11 @@ impl ClockModel {
         if let Some(forced) = &self.forced {
             return forced.clone();
         }
+        if now < self.origin.mono {
+            return Validity::CounterBeforeStart {
+                by: self.origin.mono.since(now),
+            };
+        }
         if self.suspended_since_sync {
             return Validity::SuspendedSinceLastSync {
                 resume_generation: self.generations.resume,
@@ -742,7 +778,7 @@ impl ClockModel {
         // The age of the newest exchange, not the age of the last selection round. A poller calling
         // `synchronise()` over a window nothing is refreshing used to reset the second of those on
         // a schedule, so the ceiling never fired at all.
-        let elapsed = now.since(sync.newest_exchange);
+        let (elapsed, _) = holdover_at(now, sync);
         if elapsed > self.policy.max_holdover {
             return Validity::HoldoverExceeded {
                 elapsed,
@@ -772,6 +808,7 @@ impl ClockModel {
                     id: w.id().clone(),
                     operator: best.operator.clone(),
                     kind: best.kind,
+                    sent_at: best.sent_at,
                     taken_at: best.taken_at,
                     interval: best.interval_at(now, floor, source_floor),
                     network_half: best.split_direction_residual(),
@@ -796,13 +833,33 @@ impl ClockModel {
         let window = self.policy.regression_window;
         let keep = self.policy.regression_min_points;
         while let Some(front) = self.history.front() {
-            if newest.since(front.at) > window && self.history.len() > keep {
+            if newest.apart(front.at) > window && self.history.len() > keep {
                 self.history.pop_front();
             } else {
                 break;
             }
         }
     }
+}
+
+/// How far the model is extrapolating at `now`, and which way.
+///
+/// The first figure is the distance the allowances grow over and is never negative. The second is
+/// the signed distance a fitted rate is propagated over.
+///
+/// Both are measured from the moment the newest exchange went out, and not from the moment its
+/// reply came home, which is where they were measured from until the evening of 2026-09-17. Two
+/// reasons, and each was a bound with the truth outside it. The counter mark on a reply is the
+/// client's to write, and one written an hour ahead of its request made every reading inside that
+/// hour a reading with no holdover in it. And a reading the counter went backwards to, which is a
+/// reading before the exchange, read as no holdover either, because the distance saturated at
+/// nought. Measured from the request, a reading after the reply pays one round trip more of
+/// allowance than before, which is microseconds on an ordinary path and is the conservative
+/// direction; a reading inside the exchange pays for the time since the request left; and a
+/// reading before it pays for the distance back, with the fitted rate run the other way over it.
+fn holdover_at(now: MonotonicNanos, sync: &SyncState) -> (Nanos, Nanos) {
+    let direction = now.signed_since(sync.newest_exchange_sent);
+    (direction.abs(), direction)
 }
 
 /// The ends of the interval and its width, or the refusal where the width is past the ceiling.

@@ -145,6 +145,7 @@ mod tests {
             offset,
             round_trip,
             stated_uncertainty: 0,
+            sent_at: MonotonicNanos(at),
             taken_at: MonotonicNanos(at),
             timescale: Timescale::Utc,
             smear: SmearPolicy::None,

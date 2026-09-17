@@ -93,9 +93,6 @@ fn sources(error: Nanos) -> Vec<Path> {
 fn shipping_policy() -> Policy {
     Policy {
         max_bound_width: 30 * NANOS_PER_SEC,
-        // Nothing here is in holdover for long, and switching the slew off keeps the two policies
-        // in the containment test different in exactly one field.
-        frequency_slew_ppm_per_second: 0.0,
         ..common::arithmetic_policy()
     }
 }

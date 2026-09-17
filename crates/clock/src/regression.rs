@@ -66,8 +66,10 @@ pub fn fit(points: &[Point], min_points: usize) -> Option<Fit> {
     let mut prepared: Vec<(f64, f64, f64)> = Vec::with_capacity(points.len());
     for p in points {
         // Seconds before the most recent point, so x is zero or negative and the intercept is the
-        // fitted value at the moment the model last synchronised.
-        let x = -(last.since(p.at) as f64) / NANOS_PER_SEC as f64;
+        // fitted value at the moment the model last synchronised. Signed, because a point stamped
+        // after the last one, which a counter that stepped back can produce, is a point at a
+        // positive x and not a point at nought.
+        let x = p.at.signed_since(last) as f64 / NANOS_PER_SEC as f64;
         let y = p.offset as f64;
         let half = p.half_width.max(1) as f64;
         let w = 1.0 / (half * half);
@@ -229,6 +231,22 @@ mod tests {
             },
         ];
         assert!(fit(&points, 3).is_none());
+    }
+
+    #[test]
+    fn a_point_stamped_after_the_last_one_keeps_its_place_on_the_line() {
+        // A counter that stepped back leaves the newest point earlier on the counter than the one
+        // before it. Until 2026-09-17 its distance from the last point saturated at nought, which
+        // put it on top of the last point and bent the line.
+        let mut points = series(12, 64, 3 * NANOS_PER_MILLI, 4.0);
+        let newest = points.remove(3);
+        points.push(newest);
+        let f = fit(&points, 3).unwrap();
+        assert!(
+            (f.frequency_ppm - 4.0).abs() < 0.01,
+            "with one point out of order the fit gave {} parts per million",
+            f.frequency_ppm
+        );
     }
 
     #[test]

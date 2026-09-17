@@ -208,6 +208,82 @@ fn b6_a_rate_of_negative_nought() {
     every_rate("B6", -0.0);
 }
 
+/// Each rate one float below the figure this product ships, and at nought and a subnormal.
+///
+/// Refused by name rather than only no narrower, because these were legal until the evening of
+/// 2026-09-17 and a cold set (`tests/build-checks/2026-09-17-181-3/attacks.tsv` under the product
+/// root, D02 to D07 and R20) found that with the rates at nought, and with the slew or the band
+/// alone at nought or subnormal, a policy the validator accepted signed a bound with the truth
+/// outside it from fifteen minutes into holdover. A rate below the shipped figure is a claim about
+/// hardware nobody measured.
+#[test]
+fn b7_a_rate_below_the_figure_this_product_ships() {
+    let below = |floor: f64| f64::from_bits(floor.to_bits() - 1);
+    for value in [0.0, 5e-324, f64::MIN_POSITIVE] {
+        refused_naming(
+            "B7",
+            "frequency_floor_ppm",
+            Policy {
+                frequency_floor_ppm: value,
+                ..shipped()
+            },
+        );
+        refused_naming(
+            "B7",
+            "frequency_slew_ppm_per_second",
+            Policy {
+                frequency_slew_ppm_per_second: value,
+                ..shipped()
+            },
+        );
+        refused_naming(
+            "B7",
+            "frequency_span_ppm",
+            Policy {
+                frequency_span_ppm: value,
+                ..shipped()
+            },
+        );
+    }
+    let d = Policy::default();
+    refused_naming(
+        "B7",
+        "frequency_floor_ppm",
+        Policy {
+            frequency_floor_ppm: below(d.frequency_floor_ppm),
+            ..shipped()
+        },
+    );
+    refused_naming(
+        "B7",
+        "frequency_slew_ppm_per_second",
+        Policy {
+            frequency_slew_ppm_per_second: below(d.frequency_slew_ppm_per_second),
+            ..shipped()
+        },
+    );
+    refused_naming(
+        "B7",
+        "frequency_span_ppm",
+        Policy {
+            frequency_span_ppm: below(d.frequency_span_ppm),
+            ..shipped()
+        },
+    );
+    // All three at nought together, which is R20 of the afternoon's frozen set and signed 15.520 ms at 900 s
+    // with the truth outside at 3399099.
+    refused_naming(
+        "B7",
+        "frequency_floor_ppm",
+        Policy {
+            frequency_floor_ppm: 0.0,
+            frequency_slew_ppm_per_second: 0.0,
+            frequency_span_ppm: 0.0,
+            ..shipped()
+        },
+    );
+}
+
 // Every other field, one test each, from the cold set frozen on the afternoon of 2026-09-17 at
 // `tests/build-checks/2026-09-17-181-2/attacks.tsv` under the product root, after the morning's fix
 // held on the coverage factor and the rates and a set written without sight of it found five sibling
@@ -731,7 +807,10 @@ fn c17_a_bad_policy_refuses_every_method_and_the_callers_copy_reaches_nothing() 
     };
     let mut model = ClockModel::new(bad, Box::new(ClockHandle(clock.clone())), wall, 0);
     let now = clock.now();
-    assert!(model.ingest(&world.exchange(&Path::honest("alpha", 12, 1), now)));
+    assert_eq!(
+        model.ingest(&world.exchange(&Path::honest("alpha", 12, 1), now)),
+        None
+    );
     assert!(matches!(
         model.synchronise(),
         Validity::PolicyRefused { .. }

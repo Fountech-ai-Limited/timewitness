@@ -127,6 +127,14 @@ if ! command -v x86_64-linux-gnu-gcc >/dev/null 2>&1 && [ -z "${CC_x86_64_unknow
     echo "before-push: skipping it. Install one: winget install --id zig.zig" >&2
     exit 1
   fi
+  # The wrapper is a cmd file, and cmd cannot run a path spelled the way this shell spells one:
+  # `command -v` under Git Bash answers /c/Users/... and cmd answers "cannot find the path". So
+  # the path is turned into its Windows spelling where the shell has the tool to do it, which
+  # every Git Bash has. Until 2026-09-17 the wrapper was written with the POSIX spelling whenever
+  # zig was on PATH, and the Linux lint failed on every push from such a shell.
+  if command -v cygpath >/dev/null 2>&1; then
+    zig="$(cygpath -w "$zig")"
+  fi
   mkdir -p target
   wrapper="$root/target/linux-cc.cmd"
   {

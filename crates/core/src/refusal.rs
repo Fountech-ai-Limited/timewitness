@@ -118,6 +118,16 @@ pub enum Validity {
         /// Which field, what it held, and what it has to be.
         detail: String,
     },
+    /// The counter reads earlier than the moment this model started.
+    ///
+    /// A monotonic counter only goes forward, so a reading before the model's own origin is a
+    /// platform fault, and nothing the model holds describes a moment it was not running for. Added
+    /// 2026-09-17, when a cold set stepped the counter back past the origin and found the model
+    /// projecting its anchor backwards over a moment it had never measured.
+    CounterBeforeStart {
+        /// How far before the model's origin the counter reads, in nanoseconds.
+        by: Nanos,
+    },
     /// The bound has grown wider than the policy is prepared to put its name to.
     BoundTooWide {
         /// The width the model computed, in nanoseconds.
@@ -169,6 +179,11 @@ impl fmt::Display for Refusal {
                 f,
                 "this machine's clock was moved {} ms by something other than this agent, and \
                  there has been no synchronisation since, so the bound is unknown",
+                crate::time::nanos_as_millis_f64(*by)
+            ),
+            Validity::CounterBeforeStart { by } => write!(
+                f,
+                "the monotonic counter reads {} ms before the moment this model started, which a                  counter that only goes forward cannot do, so nothing here describes this moment",
                 crate::time::nanos_as_millis_f64(*by)
             ),
             Validity::HoldoverExceeded { elapsed, ceiling } => write!(
