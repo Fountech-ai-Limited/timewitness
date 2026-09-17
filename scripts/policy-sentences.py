@@ -14,6 +14,7 @@ policy off the code and asks each sentence whether it contradicts it.
     python3 scripts/policy-sentences.py --site <url>    this tree, and the pages a running site serves
     python3 scripts/policy-sentences.py --self-test     seeds per rule and per shape, each watched refused
     python3 scripts/policy-sentences.py --score FILE    what this refuses of a set it has not been fitted to
+    python3 scripts/policy-sentences.py --prints FILE   the sentence prints to record when a set becomes fitted
     python3 scripts/policy-sentences.py FILE...         only the files named, for a copy of an old tree
 
 **The only number anybody may quote about this file comes from `--score` on a set whose sha256 was
@@ -23,7 +24,9 @@ built around, so they say nothing about a sentence nobody here has seen. Five re
 each reported a jump, because each set became a seed the moment its misses became rules and the next
 number was taken on material this file had already been shaped around.
 `scripts/policy-sentences-fitted.txt` carries every set that has measured this one, and `--score`
-refuses a fitted one outright.
+refuses a fitted one outright. `scripts/policy-sentences-fitted-sentences.txt` carries the sentences of
+every fitted set by print, so a fitted set is refused by what it says rather than by the bytes of its
+file.
 
 Exit 0 where nothing contradicts the policy, 1 where something does, with the file and the sentence
 named, and 2 where the policy could not be read off the code or a surface could not be read. A fact
@@ -140,6 +143,7 @@ import os
 import re
 import shutil
 import sys
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -2131,6 +2135,16 @@ def the_fetch_refuses_a_redirect():
 
 
 FITTED = ROOT / 'scripts' / 'policy-sentences-fitted.txt'
+FITTED_SENTENCES = ROOT / 'scripts' / 'policy-sentences-fitted-sentences.txt'
+
+# The share of a set's sentences that may be sentences of a fitted set before the whole set is refused.
+#
+# One in ten. A sentence two writers arrive at independently, from the same rules, is a coincidence
+# and is taken out of the count by name. More than one in ten is not a coincidence, it is a set built
+# out of material this file was shaped around, and no number taken on it measures anything. A
+# fitted sentence never counts whichever side of the line a set falls, so padding a fitted set with
+# new sentences to get under the share buys nothing: what is left to score is only the new sentences.
+FITTED_SHARE = 0.1
 
 # Written out rather than escaped inline, so a line of a set built here cannot be mangled by the
 # quoting of whatever wrote it.
@@ -2153,6 +2167,60 @@ def fitted_sets():
                              f'and a name')
         known[parts[0].lower()] = {'state': parts[1], 'frozen': parts[2], 'name': parts[3]}
     return known
+
+
+def sentence_print(line):
+    """The sha256 of a sentence as its words, or None where the line is a comment or holds no words.
+
+    Whatever a set's file does to a sentence without changing its words gives the same print: the
+    marker in front of it, spaces doubled or turned non-breaking, a tab, a line ending, a curly quote,
+    a full stop dropped, a capital lowered. On 2026-09-16 the manifest knew a fitted set only by the
+    bytes of its file, and one comment line was enough to score it again.
+    """
+    text = unicodedata.normalize('NFKC', line).strip()
+    if not text or text.startswith('#'):
+        return None
+    words = re.sub(r'[\W_]+', ' ', text.casefold()).strip()
+    if not words:
+        return None
+    return hashlib.sha256(words.encode('utf-8')).hexdigest()
+
+
+def sentence_prints_of(text):
+    """The print of every sentence line in a set, in order."""
+    return [d for d in (sentence_print(line) for line in text.splitlines()) if d]
+
+
+def fitted_sentences(known):
+    """Which fitted sets each sentence print belongs to, held to the manifest in both directions.
+
+    The prints live in a file of their own on purpose. An entry deleted from the manifest leaves them
+    where they are, and a fitted set with prints and no entry, or an entry and no prints, is refused by name
+    rather than read past: either is a record that has been edited round, and a score taken beside it
+    is not a score.
+    """
+    if not FITTED_SENTENCES.is_file():
+        raise Unreadable(f'{FITTED_SENTENCES.name} is not beside this script, so a fitted set whose '
+                         f'file has changed by a byte cannot be recognised')
+    prints = {}
+    for number, line in enumerate(FITTED_SENTENCES.read_text(encoding='utf-8').splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2 or not re.fullmatch(r'[0-9a-f]{64}', parts[0]):
+            raise Unreadable(f'{FITTED_SENTENCES.name} line {number}: "{line[:70]}" is not a sha256 '
+                             f'and the name of a fitted set')
+        prints.setdefault(parts[0], set()).add(parts[1])
+    named_there = {n for names in prints.values() for n in names}
+    named_fitted = {v['name'] for v in known.values() if v['state'] == 'fitted'}
+    for name in sorted(named_there - named_fitted):
+        raise Unreadable(f'{name} has sentences recorded as fitted in {FITTED_SENTENCES.name} and no '
+                         f'fitted entry in {FITTED.name}, so its entry has gone and the set is still fitted')
+    for name in sorted(named_fitted - named_there):
+        raise Unreadable(f'{name} is fitted in {FITTED.name} and has no sentences in '
+                         f'{FITTED_SENTENCES.name}, so a copy of it with one byte changed would score')
+    return prints
 
 
 def marked(text):
@@ -2196,9 +2264,41 @@ def score(path, policy):
               f'measures nothing. Freeze a set this file has not been shaped around.', file=sys.stderr)
         return 2
 
-    wanted = marked(raw.decode('utf-8'))
-    seeds = {s.strip() for _, s in SEEDS}
-    honest = {s.strip() for s in HONEST}
+    text = raw.decode('utf-8')
+
+    # The sentences a fitted set holds, whatever file they are in now. Read before the set is parsed,
+    # so a fitted set whose markers were changed into something this cannot parse is still named.
+    try:
+        prints = fitted_sentences(known)
+    except Unreadable as e:
+        print(f'policy sentences: {e}', file=sys.stderr)
+        return 2
+    lines = [(number, sentence_print(line), line.strip())
+             for number, line in enumerate(text.splitlines(), 1)]
+    lines = [(number, digest, line) for number, digest, line in lines if digest]
+    from_fitted = [(number, line, sorted(prints[digest])) for number, digest, line in lines
+                   if digest in prints]
+    if lines and len(from_fitted) > FITTED_SHARE * len(lines):
+        sets = sorted({name for _, _, names in from_fitted for name in names})
+        print(f'policy sentences: {len(from_fitted)} of the {len(lines)} sentences in {file.name} are '
+              f'sentences of {", ".join(sets)}, fitted in {FITTED.name}, whatever this file is called '
+              f'and however they are written. That is more than one in {round(1 / FITTED_SHARE)}, so '
+              f'the set was built out of material this file was shaped around and a number taken on it '
+              f'measures nothing.', file=sys.stderr)
+        return 2
+    for number, line, names in from_fitted:
+        print(f'policy sentences: line {number} is a sentence of {", ".join(names)}, which is fitted, '
+              f'and is out of the count: "{line[:90]}"')
+
+    wanted = marked(text)
+    out_of_count = {number for number, _, _ in from_fitted}
+    wanted = [(refuse, s, n) for refuse, s, n in wanted if n not in out_of_count]
+    if not wanted:
+        print(f'policy sentences: every sentence in {file.name} is one this file has been shaped '
+              f'around, so there is nothing here to score', file=sys.stderr)
+        return 2
+    seeds = {sentence_print(s) for _, s in SEEDS}
+    honest = {sentence_print(s) for s in HONEST}
 
     # A sentence this file already holds word for word, and the two halves are not the same fault.
     #
@@ -2212,7 +2312,7 @@ def score(path, policy):
     # about a private root being admissible and never presumed, both quoted from the source. So the
     # line is taken out of the count rather than the set being thrown away, and it is named, which
     # keeps the number honest without wasting a cold set on a coincidence.
-    fitted_lines = [(n, s) for refuse, s, n in wanted if refuse and s in seeds]
+    fitted_lines = [(n, s) for refuse, s, n in wanted if refuse and sentence_print(s) in seeds]
     if fitted_lines:
         for number, sentence in fitted_lines:
             print(f'policy sentences: line {number} of {file.name} is a seed of this file, word for '
@@ -2220,7 +2320,7 @@ def score(path, policy):
                   f'whatever the manifest says.', file=sys.stderr)
         return 2
 
-    shared = [(n, s) for refuse, s, n in wanted if not refuse and s in honest]
+    shared = [(n, s) for refuse, s, n in wanted if not refuse and sentence_print(s) in honest]
     for number, sentence in shared:
         print(f'policy sentences: line {number} is in this file word for word and is out of the '
               f'count: "{sentence[:90]}"')
@@ -2320,10 +2420,74 @@ def the_score_refuses_a_fitted_set(policy):
     return faults
 
 
+def the_score_refuses_a_fitted_set_however_it_is_written(policy):
+    """A fitted set is refused by the sentences it holds, not by the bytes of its file.
+
+    Until 2026-09-17 the manifest knew a fitted set only by the sha256 of its file, so one comment line
+    appended to it gave a different sha and the set scored 45 of 45. Each walk-round here is built on a
+    stand-in set recorded as fitted for the length of the check, and each has to come back 2 with the
+    stand-in named. The manifest entry is deleted in the last one and the sentences recorded for it are
+    not, which is the walk-round a manifest alone cannot see.
+    """
+    import contextlib
+    import io
+    import tempfile
+
+    faults = []
+    name = 'a-fitted-set-walked-round.txt'
+    body = [
+        '- TimeWitness keeps every build on true UTC to the nanosecond.',
+        '- The receipt proves the deploy was blocked when the clock was wrong.',
+        '+ The bound is what the receipt carries, beside the reading.',
+        '+ A refusal records that the agent declined to sign.',
+    ]
+    text = NEWLINE.join(['# a stand-in for a set this file has been shaped around'] + body + [''])
+    work = Path(tempfile.mkdtemp(prefix='tw-walk-'))
+    manifest = FITTED.read_bytes()
+    recorded = FITTED_SENTENCES.read_bytes() if FITTED_SENTENCES.is_file() else None
+    try:
+        original = work / name
+        original.write_text(text, encoding='utf-8')
+        sha = hashlib.sha256(original.read_bytes()).hexdigest()
+        FITTED.write_bytes(manifest + f'{sha}  fitted  2026-09-17  {name}{NEWLINE}'.encode())
+        rows = ''.join(f'{digest}  {name}{NEWLINE}' for digest in sentence_prints_of(text))
+        FITTED_SENTENCES.write_bytes((recorded or b'') + rows.encode())
+
+        walks = {
+            'a comment line appended': (name, text + '# one more line' + NEWLINE, False),
+            'the sentences reordered': (name, NEWLINE.join(['# reordered'] + body[::-1] + ['']), False),
+            'the file renamed and one space doubled': ('renamed.txt', text.replace('keeps every', 'keeps  every'), False),
+            'its manifest entry deleted': (name, text, True),
+        }
+        for walk, (file_name, content, drop_row) in walks.items():
+            target = work / file_name
+            target.write_text(content, encoding='utf-8')
+            if drop_row:
+                FITTED.write_bytes(manifest)
+            said = io.StringIO()
+            with contextlib.redirect_stdout(said), contextlib.redirect_stderr(said):
+                try:
+                    code = score(str(target), policy)
+                except Unreadable as e:
+                    print(e)
+                    code = 2
+            if code != 2 or name not in said.getvalue():
+                faults.append(f'a fitted set with {walk} came back {code} rather than 2 with the set named')
+    finally:
+        FITTED.write_bytes(manifest)
+        if recorded is None:
+            FITTED_SENTENCES.unlink(missing_ok=True)
+        else:
+            FITTED_SENTENCES.write_bytes(recorded)
+        shutil.rmtree(work, ignore_errors=True)
+    return faults
+
+
 def self_test(policy):
     missed = (content_reader_reads_the_leaf() + the_fetch_refuses_a_redirect()
               + every_attribute_a_reader_is_given_is_read(policy)
-              + every_figure_is_read(policy) + the_score_refuses_a_fitted_set(policy))
+              + every_figure_is_read(policy) + the_score_refuses_a_fitted_set(policy)
+              + the_score_refuses_a_fitted_set_however_it_is_written(policy))
     for rule, seed in SEEDS:
         faults = judge(seed, policy)
         if not faults:
@@ -2363,6 +2527,16 @@ def main(argv):
                   'command answering both is how they got confused. Run them separately.', file=sys.stderr)
             return 2
         return self_test(policy)
+
+    if '--prints' in argv:
+        where = argv.index('--prints') + 1
+        if where >= len(argv):
+            print('policy sentences: --prints takes the set whose sentences are to be recorded', file=sys.stderr)
+            return 2
+        path = Path(argv[where])
+        for digest in sentence_prints_of(path.read_text(encoding='utf-8')):
+            print(f'{digest}  {path.name}')
+        return 0
 
     if '--score' in argv:
         where = argv.index('--score') + 1
