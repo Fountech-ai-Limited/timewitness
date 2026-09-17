@@ -1858,7 +1858,7 @@ HONEST = [
     'DigiCert signed for the payload hash, so the document existed no later than the moment its token states.',
     'It cannot prove elapsed time from a verifiable delay function, which proves sequential work.',
     'A delay function shows that sequential work was done, and it says nothing about how many seconds passed.',
-    'Roughtime is an Internet-Draft that expires on 18 September 2026.',
+    'Roughtime is an Internet-Draft and not an RFC: the IETF datatracker showed revision 19 in the RFC Editor Queue on 17 September 2026.',
     'A Roughtime corridor, a drand beacon and an RFC 3161 timestamp authority.',
     'The interval is our own claim and the outside evidence does not vouch for it.',
     'NTS improves the clock and can never be portable evidence.',

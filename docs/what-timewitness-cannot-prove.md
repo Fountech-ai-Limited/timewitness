@@ -622,11 +622,14 @@ service sets the clock before the agent sees anything, and a leap second arrives
 one of these is recorded after the fact. What the agent controls is whether it puts its name to a
 reading taken afterwards.
 
-**Roughtime is an expiring Internet-Draft.** The version implemented is
-`draft-ietf-ntp-roughtime-19`, which expires on 18 September 2026, and the version number on the
-wire is the draft's own testing number rather than the one a published standard would use. What
-lapses is the reference rather than the protocol: the servers keep answering and receipts already
-issued stay checkable.
+**Roughtime is an Internet-Draft and not an RFC.** The version implemented is
+`draft-ietf-ntp-roughtime-19`, with intended status Experimental. Read off the IETF datatracker on
+17 September 2026, that revision was in the RFC Editor Queue, which is where a draft waits before it
+is published as an RFC, and a place in that queue is not a publication date. The version number on
+the wire is the draft's own testing number rather than the one the published RFC would use, so
+publication may change what a server answers on. What moves then is the reference rather than the
+receipts: a receipt already issued stays checkable, because the verifier carries the rules it was
+signed under.
 
 **Only RSA signatures are checked on timestamp tokens.** One of the four free authorities tried signs
 with ECDSA, and its tokens are refused by name rather than skipped past.

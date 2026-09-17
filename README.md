@@ -222,7 +222,7 @@ and nothing portable is produced, so there is no artefact a third party could be
 released binary, so a stranger compiles the verifier rather than downloading it. Nothing links an
 agent's key to anybody. A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and no agent key. The `v0` release cannot read it. There is no first-run figure from anybody outside.
 One freshness beacon works rather than the two the design asks for. One kind of final witness works;
-there is no OpenTimestamps anchor. Roughtime is an Internet-Draft that expires on 18 September 2026.
+there is no OpenTimestamps anchor. Roughtime is an Internet-Draft and not an RFC: the IETF datatracker showed revision 19 in the RFC Editor Queue on 17 September 2026.
 A sleep is detected and has never been watched happening: the agent reads the two counters an
 operating system keeps, one that stops while the machine sleeps and one that does not, and refuses
 until it has synchronised again, but nothing has put a real machine to sleep to watch it, and a sleep

@@ -1,15 +1,15 @@
 //! Roughtime, checked from the bytes up.
 //!
 //! **Which specification this is.** `draft-ietf-ntp-roughtime-19`, dated 17 March 2026. It is an
-//! Internet-Draft with intended status Experimental, not an RFC, and **it expires on 18 September
-//! 2026**. The draft has been reissued roughly every two months for two years and each revision so
-//! far has kept the wire format, so an expiry is a document going stale rather than a protocol
-//! changing. What breaks when it lapses is the reference, not the code: the public servers keep
-//! answering, this module keeps verifying them, and nothing in a receipt already issued stops being
-//! checkable. What whoever maintains this has to do is read whatever revision replaced it and
-//! compare the four things this file depends on, which are the packet framing, the message
-//! encoding, the two signature context strings, and the Merkle rule. If any of those move, this
-//! file moves with them and the version constant below changes.
+//! Internet-Draft with intended status Experimental, not an RFC. Read off the IETF datatracker on
+//! 17 September 2026, that revision was in the RFC Editor Queue, which is where a draft waits before
+//! it is published as an RFC. The draft was reissued roughly every two months for two years and each
+//! revision kept the wire format, so publication is the likeliest point for anything here to move.
+//! What moves then is the reference, not a receipt already issued: this module keeps the rules it was
+//! signed under. What whoever maintains this has to do is read the published RFC, or whatever
+//! revision replaced this one, and compare the four things this file depends on, which are the
+//! packet framing, the message encoding, the two signature context strings, and the Merkle rule. If
+//! any of those move, this file moves with them and the version constant below changes.
 //!
 //! **The version on the wire is not 1.** The draft carries a note to the RFC editor naming
 //! `0x8000000c` as the version number to use while it is a draft, and that is the number every
@@ -33,9 +33,6 @@ use crate::time::{UnixNanos, NANOS_PER_SEC};
 
 /// The draft revision this module implements.
 pub const DRAFT_REVISION: u32 = 19;
-
-/// The date that revision expires, as a plain string for anything that reports it.
-pub const DRAFT_EXPIRY: &str = "2026-09-18";
 
 /// The version number to put in a request and to expect in a response.
 ///
