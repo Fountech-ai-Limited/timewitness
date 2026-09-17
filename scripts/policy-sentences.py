@@ -1463,15 +1463,73 @@ def register():
     return read_register(json.loads(FIGURES_REGISTER.read_text(encoding='utf-8')))
 
 
+def read_subjects(data):
+    """What a figure may be of, and the words that name each, read off the register."""
+    subjects = data.get('$subjects')
+    if not isinstance(subjects, dict):
+        raise Unreadable(f'{FIGURES_REGISTER.name} has no $subjects, so nothing says what any figure is of')
+    named = {}
+    for key, subject in subjects.items():
+        if key.startswith('$') or key == 'neutral':
+            continue
+        if not isinstance(subject, dict) or not subject.get('what') or not isinstance(subject.get('namedBy'), list):
+            raise Unreadable(f'{FIGURES_REGISTER.name}: subject "{key}" does not say what it is and what names it')
+        named[key] = subject
+    neutral = subjects.get('neutral') or []
+    return named, neutral
+
+
+# Evidence that resolves. A path is read against this repository, a run or a build is a number the
+# host issued, and a commit is one this repository holds.
+EVIDENCE_PATH = re.compile(r'(?<![\w/.-])((?:[\w-]+/)+[\w.-]*|[\w-]+\.(?:md|yml|yaml|rs|json|cbor|sh|py|mjs|toml))(?![\w-])')
+EVIDENCE_RUN = re.compile(r'\b(?:run|build)[ -]\d{8,}\b', re.I)
+EVIDENCE_COMMIT = re.compile(r'\b[0-9a-f]{7,40}\b')
+
+
+def evidence_resolves(evidence):
+    """The first thing in an evidence field that resolves, or None."""
+    for m in EVIDENCE_PATH.finditer(evidence):
+        path = ROOT / m.group(1).rstrip('.')
+        # A file, or a folder two levels down: "crates/" exists and says nothing about any figure.
+        if path.is_file() or (path.is_dir() and len(m.group(1).strip('/').split('/')) >= 3):
+            return m.group(1)
+    m = EVIDENCE_RUN.search(evidence)
+    if m:
+        return m.group(0)
+    for m in EVIDENCE_COMMIT.finditer(evidence):
+        if subprocess_ok(['git', '-C', str(ROOT), 'cat-file', '-e', m.group(0) + '^{commit}']):
+            return m.group(0)
+    return None
+
+
+def subprocess_ok(argv):
+    import subprocess
+    try:
+        return subprocess.run(argv, capture_output=True, timeout=20).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def read_register(data):
     """The same register, from what has already been parsed, so the self-test can hand it a bad one."""
     out = {}
+    named, _ = read_subjects(data)
     for n, entry in enumerate(data.get('allowed') or [], 1):
-        for field in ('figure', 'unit', 'whose', 'conditions', 'evidence'):
+        for field in ('figure', 'unit', 'whose', 'conditions', 'evidence', 'of'):
             if not entry.get(field):
-                raise Unreadable(f'{FIGURES_REGISTER.name}: entry {n} has no {field}, and an entry short '
-                                 f'of one says nothing about where its figure came from')
+                raise Unreadable(f'{FIGURES_REGISTER.name}: entry {n}, {entry.get("figure", "no figure")} '
+                                 f'{entry.get("unit", "")} of {entry.get("of", "nothing named")}, has no {field}, '
+                                 f'and an entry short of one says nothing about where its figure came from or '
+                                 f'what it is of')
         figures = entry['figure'] if isinstance(entry['figure'], list) else [entry['figure']]
+        said = f'{", ".join(str(f) for f in figures)} {entry["unit"]}'
+        if entry['of'] not in named:
+            raise Unreadable(f'{FIGURES_REGISTER.name}: entry {n}, {said}, is of "{entry["of"]}", which is not '
+                             f'a subject in $subjects')
+        if entry['whose'].lower().startswith('ours') and not evidence_resolves(entry['evidence']):
+            raise Unreadable(f'{FIGURES_REGISTER.name}: entry {n}, {said} of {entry["of"]}, is ours and its '
+                             f'evidence, "{entry["evidence"][:80]}", names no path in this repository, no run '
+                             f'or build and no commit this repository holds, so nothing stands behind it')
         for figure in figures:
             for part in str(figure).split(' to '):
                 try:
@@ -1485,9 +1543,62 @@ def read_register(data):
     return out
 
 
-def in_register(text, sentence, known):
-    """Whether a figure is in the register, and said the way its entry asks. Gives back the entry
-    that answers it, or None and the reason."""
+_SUBJECTS = {}
+
+
+def subjects_of_register():
+    """The subjects and neutral words, read once off the register on disk."""
+    if not _SUBJECTS:
+        named, neutral = read_subjects(json.loads(FIGURES_REGISTER.read_text(encoding='utf-8')))
+        _SUBJECTS['named'], _SUBJECTS['neutral'] = named, neutral
+    return _SUBJECTS['named'], _SUBJECTS['neutral']
+
+
+# A superseded figure said as though nothing replaced it, or as today's.
+NOT_REPLACED = re.compile(r'\b(?:nothing|not|never|no\s+\w+)\s+(?:\w+\s+){0,3}?replac\w*|\b(?:today|now|currently|at present|still)\b', re.I)
+
+
+def subject_named(sentence, start, end, named, neutral):
+    """The subject word governing a figure at [start, end), and every subject that word names.
+
+    The word directly after the figure first ("35.081 ms of the sources overlapping", "149.8 ms wide"),
+    and otherwise the nearest before it in the figure's own clause, read no further back than the figure
+    before it or the last "and": in "38.011 ms is the residual and 35.081 ms is what the sources overlap
+    on", the residual is the first figure's word and not the second's. Neutral words are read past.
+    """
+    c0, c1 = clause_around(sentence, start)
+    words = {}
+    for key, subject in named.items():
+        for phrase in subject['namedBy']:
+            words.setdefault(phrase.lower(), set()).add(key)
+    if not words:
+        return None, set()
+    alternatives = sorted(set(words) | {n.lower() for n in neutral}, key=len, reverse=True)
+    pattern = re.compile(r"(?<![\w-])(" + '|'.join(re.escape(w) for w in alternatives) + r")(?:'s)?(?![\w-])", re.I)
+    found = [(m.start(), m.end(), m.group(1).lower()) for m in pattern.finditer(sentence, c0, c1)]
+    neutral_words = {n.lower() for n in neutral}
+    after = re.match(r"\s*(?:of\s+(?:the\s+|its\s+|that\s+)?)?", sentence[end:c1])
+    at = end + (after.end() if after else 0)
+    for a, b, word in found:
+        if a == at and word not in neutral_words:
+            return word, words[word]
+    floor = c0
+    for _, _, figure_end in figures_of(sentence):
+        if figure_end <= start:
+            floor = max(floor, figure_end)
+    joins = [floor + m.end() for m in re.finditer(r'\band\b', sentence[floor:start])]
+    if joins:
+        floor = joins[-1]
+    before = [(a, b, word) for a, b, word in found if floor <= a and b <= start and word not in neutral_words]
+    if before:
+        word = before[-1][2]
+        return word, words[word]
+    return None, set()
+
+
+def in_register(text, sentence, known, start=None, end=None):
+    """Whether a figure is in the register, said the way its entry asks and as what its entry says it
+    is of. Gives back the entry that answers it, or None and the reason."""
     number, unit = re.match(r'(.+?) (per cent|\S+)$', text).groups()
     try:
         entries = known.get(quantity(number, unit), [])
@@ -1495,14 +1606,34 @@ def in_register(text, sentence, known):
         entries = []
     if not entries:
         return None, f'{FIGURES_REGISTER.name} has no entry for it'
+    if start is None:
+        start = sentence.find(text)
+        end = start + len(text)
+    named, neutral = subjects_of_register()
     lower = sentence.lower()
+    reasons = []
     for entry in entries:
         said = entry.get('saidWith') or []
-        if not said or any(phrase.lower() in lower for phrase in said):
-            return entry, ''
-    wanted = ' or '.join(f'"{phrase}"' for entry in entries for phrase in entry.get('saidWith') or [])
-    return None, (f'{FIGURES_REGISTER.name} has it as {entries[0]["whose"]}, and a sentence quoting it has '
-                  f'to say {wanted}')
+        if said and not any(phrase.lower() in lower for phrase in said):
+            reasons.append(f'{FIGURES_REGISTER.name} has it as {entry["whose"]}, and a sentence quoting it has '
+                           f'to say ' + ' or '.join(f'"{phrase}"' for phrase in said))
+            continue
+        if entry.get('superseded'):
+            c0, c1 = clause_around(sentence, start)
+            stale = NOT_REPLACED.search(sentence)
+            if stale:
+                reasons.append(f'{FIGURES_REGISTER.name} has it as the width of a receipt since replaced, and '
+                               f'this sentence says "{stale.group(0)}"')
+                continue
+        subject = named.get(entry.get('of'))
+        if subject and subject['namedBy']:
+            word, keys = subject_named(sentence, start, end, named, neutral)
+            if word is not None and entry['of'] not in keys:
+                reasons.append(f'{FIGURES_REGISTER.name} has {text} as {subject["what"]}, and this sentence calls '
+                               f'it "{word}", which is ' + ' or '.join(named[k]['what'] for k in sorted(keys)))
+                continue
+        return entry, ''
+    return None, reasons[0]
 
 
 def excuses():
@@ -1608,7 +1739,7 @@ def unclaimed(read_from, policy, landing, excused, known=None):
             # register writes down, said the way its entry asks.
             why = 'no conditions in its own sentence'
             if CONDITIONS.search(sentence):
-                entry, why = in_register(text, sentence, known)
+                entry, why = in_register(text, sentence, known, start, end)
                 if entry is not None:
                     counts['in the register'] += 1
                     continue
@@ -2000,21 +2131,47 @@ def every_figure_is_read(policy):
         if refused:
             faults.append(f'honest sentence {name} of the cold set was refused ({refused[0].splitlines()[0]}): {honest}')
     # A register entry that does not say where its figure came from stops the run.
-    for missing in ('figure', 'unit', 'whose', 'conditions', 'evidence'):
+    for missing in ('figure', 'unit', 'whose', 'conditions', 'evidence', 'of'):
         entry = {'figure': '12', 'unit': 'ms', 'whose': 'ours', 'conditions': 'a desktop on a day',
-                 'evidence': 'a file'}
+                 'evidence': 'README.md', 'of': 'the whole interval'}
         del entry[missing]
         try:
-            read_register({'allowed': [entry]})
+            read_register({'$subjects': json.loads(FIGURES_REGISTER.read_text(encoding='utf-8'))['$subjects'],
+                           'allowed': [entry]})
             faults.append(f'a register entry with no {missing} was read as an entry')
         except Unreadable:
             pass
     # And the register is what answers: the same invented sentence passes once an entry holds it.
     invented = 'Measured, receipts come in under 12 ms.'
-    held = read_register({'allowed': [{'figure': '12', 'unit': 'ms', 'whose': 'ours',
-                                       'conditions': 'for the self-test', 'evidence': 'for the self-test'}]})
+    held = read_register({'$subjects': json.loads(FIGURES_REGISTER.read_text(encoding='utf-8'))['$subjects'],
+                          'allowed': [{'figure': '12', 'unit': 'ms', 'whose': 'ours', 'of': 'the whole interval',
+                                       'conditions': 'for the self-test', 'evidence': 'README.md, for the self-test'}]})
     if unclaimed([('a made-up surface', invented)], policy, None, [], held)[0]:
         faults.append('a figure the register holds was refused, so the register is not what answers')
+    # What a registered figure is of, and whether the evidence for it resolves. Until 2026-09-17 the
+    # register answered a figure by its number alone: an entry whose evidence was the word "none"
+    # licensed an invented 12 ms, a margin was quoted as the whole bound, and the width of a receipt
+    # since replaced was said in the present tense beside a sentence saying nothing had replaced it.
+    forged = {'figure': '12', 'unit': 'ms', 'whose': 'ours', 'conditions': 'an ordinary desktop',
+              'evidence': 'none', 'of': 'the whole interval'}
+    try:
+        read_register({'$subjects': json.loads(FIGURES_REGISTER.read_text(encoding='utf-8')).get('$subjects', {}),
+                       'allowed': [forged]})
+        faults.append('a register entry of ours whose evidence is "none" was read as an entry')
+    except Unreadable as e:
+        if '12 ms' not in str(e) or 'the whole interval' not in str(e):
+            faults.append(f'a register entry with no evidence was refused without naming the figure and what it is of: {e}')
+    for requoted in ('The receipt committed today carries 149.8 ms, and nothing has replaced it.',
+                     "Measured today, a stamp's error bound is 35.081 ms.",
+                     "The model's own residual on the committed receipt is 153.875 ms."):
+        refused = unclaimed([('a made-up surface', requoted)], policy, None, [])[0]
+        if not refused:
+            faults.append(f'a registered figure said as something it is not of passed: {requoted}')
+    for said_right in ('In the width breakdown of the same receipt, the sources overlapping, halved, come to 35.081 ms, read off timewitness verify.',
+                       'The receipt committed on 2026-09-09 at 20:32 was 149.8 ms wide and was replaced at 21:50 that day.'):
+        refused = unclaimed([('a made-up surface', said_right)], policy, None, [])[0]
+        if refused:
+            faults.append(f'a registered figure said as what it is of was refused ({refused[0].splitlines()[0]}): {said_right}')
     # A spelled hundred is read whole, so two hundred milliseconds is not a hundred.
     if [t for t, _, _ in figures_of('a liar two hundred milliseconds out')] != ['two hundred milliseconds']:
         faults.append('two hundred milliseconds was not read as one figure')
@@ -2243,6 +2400,16 @@ def marked(text):
     return wanted
 
 
+def refusals(sentence, policy):
+    """Everything the tree check would refuse a sentence for: the rules, and the walk over its figures.
+
+    Until 2026-09-17 a set was scored by the rules alone, so a figure the register does not hold, or holds
+    as something else, passed `--score` while the same sentence on a surface was refused. A score that
+    reads less than the check it scores is a number about a different check.
+    """
+    return judge(sentence, policy) + unclaimed([('the set', sentence)], policy, None, [])[0]
+
+
 def score(path, policy):
     """What this file makes of a set it has not been fitted to, and a refusal where it has.
 
@@ -2339,7 +2506,7 @@ def score(path, policy):
     missed = []
     right = 0
     for refuse, sentence, number in wanted:
-        faults = judge(sentence, policy)
+        faults = refusals(sentence, policy)
         if bool(faults) == refuse:
             right += 1
         else:
@@ -2354,7 +2521,7 @@ def score(path, policy):
                   f'"{sentence[:150]}"', file=sys.stderr)
 
     refusable = sum(1 for refuse, _, _ in wanted if refuse)
-    caught = sum(1 for refuse, sentence, _ in wanted if refuse and judge(sentence, policy))
+    caught = sum(1 for refuse, sentence, _ in wanted if refuse and refusals(sentence, policy))
     print(f'policy sentences: {caught} of {refusable} refused, {right} of {len(wanted)} right, on '
           f'{file.name} at sha256 {sha[:16]}. Record that sha in {FITTED.name} before this file is '
           f'changed on the strength of it.')
