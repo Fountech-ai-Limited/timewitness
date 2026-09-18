@@ -638,11 +638,17 @@ impl ClockModel {
         // exchange is when the model last learned anything.
         //
         // The span between the two is paid for twice, once inside the intersection where every
-        // source interval was aged at the frequency floor, and once here at the frequency
-        // uncertainty the model measured. That is a widening and it is the correct direction: the
-        // second figure is never smaller than the floor, and paying it twice over a span the model
-        // heard nothing during is cheaper than the alternative, which is a poller keeping a dead
-        // window alive.
+        // source interval was aged over the local counter, and once here. That is a widening and it
+        // is the correct direction, and paying it twice over a span the model heard nothing during
+        // is cheaper than the alternative, which is a poller keeping a dead window alive.
+        //
+        // The first of the two was the frequency floor alone until 2026-09-18, which is a smaller
+        // figure than this one and was the wrong quantity besides: the floor bounds a measurement
+        // and a raw counter is not one. `CounterAgeing` is what it is now, and the two are the same
+        // knowledge read over different spans. What is still paid only here is the correction: a
+        // rate the model will stand behind is applied once, from this instant, and never inside the
+        // intersection, where a second reference instant would make it a bias rather than a
+        // widening.
         //
         // A reading before the exchange went out is a reading the counter went backwards to, and
         // the model is extrapolating backwards over that distance: the allowances below widen by
