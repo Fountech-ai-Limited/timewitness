@@ -553,16 +553,6 @@
       ],
       "sentence": "The sources overlap on 35.081 ms of its half width; the rest is our model.",
       "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "2 s"
-      ],
-      "surfaces": [
-        "picture-strings.txt"
-      ],
-      "sentence": "They pin the moment to 2 s and do not vouch for the width.",
-      "reason": "a field of the committed receipt, rendered as it stands"
     }
   ]
 }
