@@ -56,8 +56,8 @@ inputs:
       model cannot fit a line, so the scatter of its own measurements is never measured and never
       enters the width: the third round widens the bound and it narrows again from there. Measured
       on 2026-09-08 against the three public Roughtime servers, two passes each, before the operator
-      floor that now refuses a round of those three alone: 6.2 s of width at one round, 17.4 s at
-      three, 16.4 s at four, 12.0 s at sixteen and 10.4 s at thirty-two.
+      floor that now refuses a round of those three alone: 6.2 s of width at one round, 17.4 s wide at
+      three, 16.4 s wide at four, 12.0 s wide at sixteen and 10.4 s wide at thirty-two.
       Sixteen is the default because it takes about six seconds and each further second after it
       buys less than a quarter of a second of width.
     required: false
@@ -66,7 +66,7 @@ inputs:
     description: >-
       The widest interval this agent will sign for, in nanoseconds. The default is two seconds, the
       narrowest interval a Roughtime corridor can state, so a wider bound says less than one signed
-      corridor already does. The widest a GitHub runner has reached is 287.147 ms, on 2026-09-14 at
+      corridor already does. The widest a GitHub runner has reached is 287.147 ms wide, on 2026-09-14 at
       sixteen rounds. Past it the Action fails rather than issuing a receipt whose bound says nothing.
     required: false
     default: "2000000000"

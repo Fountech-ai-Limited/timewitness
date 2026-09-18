@@ -15,6 +15,7 @@ policy off the code and asks each sentence whether it contradicts it.
     python3 scripts/policy-sentences.py --self-test     seeds per rule and per shape, each watched refused
     python3 scripts/policy-sentences.py --score FILE    what this refuses of a set it has not been fitted to
     python3 scripts/policy-sentences.py --prints FILE   the sentence prints to record when a set becomes fitted
+    python3 scripts/policy-sentences.py --attributions [FILE]   record the generated subject grade for the register, and write it
     python3 scripts/policy-sentences.py FILE...         only the files named, for a copy of an old tree
 
 **The only number anybody may quote about this file comes from `--score` on a set whose sha256 was
@@ -1493,7 +1494,8 @@ def parse_register(text):
 
 
 def read_subjects(data):
-    """What a figure may be of, the words that name each, and the receipt field each is read off."""
+    """What a figure may be of, the words that name each, the words read past, and the closed set
+    of suffixes the words are folded over before they are compared."""
     subjects = data.get('$subjects')
     if not isinstance(subjects, dict):
         raise Unreadable(f'{FIGURES_REGISTER.name} has no $subjects, so nothing says what any figure is of')
@@ -1505,7 +1507,13 @@ def read_subjects(data):
             raise Unreadable(f'{FIGURES_REGISTER.name}: subject "{key}" does not say what it is and what names it')
         named[key] = subject
     neutral = subjects.get('neutral') or []
-    return named, neutral
+    suffixes = subjects.get('$suffixes')
+    if not isinstance(suffixes, dict) or not isinstance(suffixes.get('list'), list) or not suffixes['list'] \
+            or not all(isinstance(s, str) and s.isalpha() for s in suffixes['list']):
+        raise Unreadable(f'{FIGURES_REGISTER.name}: $subjects has no $suffixes list, so nothing says how a word '
+                         f'in a sentence is folded to a word in the vocabulary')
+    return named, neutral, list(suffixes['list'])
+
 
 
 def read_owners(data):
@@ -2071,7 +2079,7 @@ def entry_name(entry):
 def read_register(data):
     """The same register, from what has already been parsed, so the self-test can hand it a bad one."""
     out = {}
-    named, _ = read_subjects(data)
+    named, _, _ = read_subjects(data)
     owners = read_owners(data)
     lists = read_lists(data)
     for n, entry in enumerate(data.get('allowed') or [], 1):
@@ -2168,12 +2176,13 @@ _SUBJECTS = {}
 
 
 def subjects_of_register():
-    """The subjects, neutral words and owners, read once off the register on disk."""
+    """The subjects, neutral words, owners and suffixes, read once off the register on disk."""
     if not _SUBJECTS:
         data = parse_register(FIGURES_REGISTER.read_text(encoding='utf-8'))
-        named, neutral = read_subjects(data)
+        named, neutral, suffixes = read_subjects(data)
         _SUBJECTS['named'], _SUBJECTS['neutral'], _SUBJECTS['owners'] = named, neutral, read_owners(data)
-    return _SUBJECTS['named'], _SUBJECTS['neutral'], _SUBJECTS['owners']
+        _SUBJECTS['suffixes'] = suffixes
+    return _SUBJECTS['named'], _SUBJECTS['neutral'], _SUBJECTS['owners'], _SUBJECTS['suffixes']
 
 
 # A superseded figure said as though nothing replaced it, or as today's, in its own sentence or in
@@ -2202,45 +2211,146 @@ PREDICATE_BEFORE = re.compile(r'\b(?:was|were|is|are|came to|comes to)\s+(?:abou
 OPENS_MEASURED = re.compile(r'^\W*(?:measured|read off|taken|recorded|observed)\b', re.I)
 
 
-def subject_named(sentence, start, end, named, neutral):
-    """The subject word governing a figure at [start, end), and every subject that word names.
+# A word of a sentence, hyphens kept, a possessive dropped.
+A_WORD = re.compile(r"[^\W_][\w-]*(?:'s(?![\w-]))?")
+FEWEST_STEM_LETTERS = 3
 
-    The word directly after the figure first ("35.081 ms of the sources overlapping", "149.8 ms wide"),
-    and otherwise the nearest before it in the figure's own clause, read no further back than the figure
-    before it or the last "and": in "38.011 ms is the residual and 35.081 ms is what the sources overlap
-    on", the residual is the first figure's word and not the second's. Neutral words are read past.
+
+def stem(word, suffixes):
+    """The word folded: lower case, the possessive gone, and every suffix from the closed set taken
+    off the end while at least three letters are left, a doubled last consonant read once after
+    -ing or -ed. "overlapped", "overlapping" and "overlaps" fold to "overlap", so a vocabulary lists a word
+    once rather than every form of it, and the sentence's word is folded the same way before the
+    two are compared. The set is declared in the register beside the words it folds."""
+    word = word.lower()
+    if word.endswith("'s"):
+        word = word[:-2]
+    # Taken off until nothing comes off: "overlappings" is "overlapping" and then "overlap", and a
+    # fold that stops after one is not a fold of the word but of one form of it.
+    while True:
+        for suffix in suffixes:
+            if word.endswith(suffix) and len(word) - len(suffix) >= FEWEST_STEM_LETTERS:
+                word = word[:-len(suffix)]
+                if suffix != 's' and len(word) >= 2 and word[-1] == word[-2] and word[-1] not in 'aeiou':
+                    word = word[:-1]
+                break
+        else:
+            return word
+
+
+def stems(phrase, suffixes):
+    """A phrase of the vocabulary as the tuple of its folded words."""
+    return tuple(stem(w, suffixes) for w in A_WORD.findall(phrase))
+
+
+def phrase_matches(sentence, lo, hi, vocabulary, suffixes):
+    """Every phrase of the vocabulary found in sentence[lo:hi], as (start, end, phrase, key), left to
+    right. `vocabulary` maps a phrase to its key. Words are folded on both sides, the longest phrase
+    at a position wins and its words are read past, so "half width" is one neutral match and not a
+    match of "width" beside it."""
+    folded = {}
+    longest = 1
+    for phrase, key in vocabulary.items():
+        parts = stems(phrase, suffixes)
+        if parts:
+            folded[parts] = (phrase, key)
+            longest = max(longest, len(parts))
+    words = [(m.start(), m.end(), stem(m.group(0), suffixes)) for m in A_WORD.finditer(sentence, lo, hi)]
+    found = []
+    i = 0
+    while i < len(words):
+        hit = None
+        for size in range(min(longest, len(words) - i), 0, -1):
+            parts = tuple(w for _, _, w in words[i:i + size])
+            if parts in folded:
+                hit = (words[i][0], words[i + size - 1][1], *folded[parts])
+                i += size
+                break
+        if hit is None:
+            i += 1
+        else:
+            found.append(hit)
+    return found
+
+
+def subject_named(sentence, start, end, named, neutral, suffixes):
+    """The subject a figure at [start, end) is predicated of: the phrase, the subjects it names,
+    and where it sits, or (None, set(), None).
+
+    The nearest subject word to the figure inside its clause, looked for after the figure first and
+    then before it, neutral words read past. Forward, no further than the next figure in the
+    clause, whose own subject sits after it; backward, no further than the figure before or the
+    last "and", so in "38.011 ms is the residual and 35.081 ms is what the sources overlap on" the
+    residual is the first figure's word and not the second's. Nearest wins: "38.011 ms of the whole
+    interval" names the interval, whatever sits between, and "inside the bound at 38.011 ms" names
+    the bound whether or not the sentence meant the residual. A sentence naming a subject the entry
+    does not have is refused, and one naming none the reader can see is refused too, by the caller,
+    rather than read as agreeing. Until 2026-09-18 the forward read was one fixed offset after "of
+    the", so one unlisted adjective in front of the subject word left the sentence read for no
+    subject at all and passed.
     """
     c0, c1 = clause_around(sentence, start)
-    words = {}
+    vocabulary = {}
+    keys_of = {}
     for key, subject in named.items():
         for phrase in subject['namedBy']:
-            words.setdefault(phrase.lower(), set()).add(key)
-    if not words:
-        return None, set()
-    alternatives = sorted(set(words) | {n.lower() for n in neutral}, key=len, reverse=True)
-    pattern = re.compile(r"(?<![\w-])(" + '|'.join(re.escape(w) for w in alternatives) + r")(?:'s)?(?![\w-])", re.I)
-    found = [(m.start(), m.end(), m.group(1).lower()) for m in pattern.finditer(sentence, c0, c1)]
-    neutral_words = {n.lower() for n in neutral}
-    after = re.match(r"\s*(?:of\s+(?:the\s+|its\s+|that\s+)?)?", sentence[end:c1])
-    at = end + (after.end() if after else 0)
-    for a, b, word in found:
-        if a == at and word not in neutral_words:
-            return word, words[word]
+            vocabulary[phrase] = key
+            keys_of.setdefault(phrase, set()).add(key)
+    for phrase in neutral:
+        vocabulary.setdefault(phrase, None)
+    if not keys_of:
+        return None, set(), None
+    found = phrase_matches(sentence, c0, c1, vocabulary, suffixes)
+    ceiling = c1
     floor = c0
-    for _, _, figure_end in figures_of(sentence):
-        if figure_end <= start:
-            floor = max(floor, figure_end)
-    joins = [floor + m.end() for m in re.finditer(r'\band\b', sentence[floor:start])]
+    # A list of figures, "128.7 ms, 128.8 ms and 129.1 ms", names what they are once, so a figure
+    # that only a comma or an "and" separates from the one before or after is read with it: the
+    # floor is the figure before the list's head and the ceiling the figure after its last member.
+    figures = [(a, b) for _, a, b in figures_of(sentence)]
+    position = next((i for i, (a, _) in enumerate(figures) if a == start), None)
+    if position is not None:
+        head = tail = position
+        while head > 0 and LIST_JOIN.fullmatch(sentence[figures[head - 1][1]:figures[head][0]]):
+            head -= 1
+        while tail + 1 < len(figures) and LIST_JOIN.fullmatch(sentence[figures[tail][1]:figures[tail + 1][0]]):
+            tail += 1
+        floor = max([c0] + [b for a, b in figures[:head] if b <= start])
+        ceiling = min([c1] + [a for a, b in figures[tail + 1:] if a >= end])
+        head_start = figures[head][0]
+    else:
+        head_start = start
+    # No further back than the last "and" before the list this figure is in.
+    joins = [floor + m.end() for m in re.finditer(r'\band\b', sentence[floor:head_start])]
     if joins:
         floor = joins[-1]
-    before = [(a, b, word) for a, b, word in found if floor <= a and b <= start and word not in neutral_words]
+    after = [(a, b, phrase) for a, b, phrase, key in found if key is not None and a >= end and b <= ceiling]
+    if after:
+        a, b, phrase = after[0]
+        return phrase, keys_of[phrase], (a, b)
+    before = [(a, b, phrase) for a, b, phrase, key in found if key is not None and floor <= a and b <= start]
     if before:
-        word = before[-1][2]
-        return word, words[word]
-    return None, set()
+        a, b, phrase = before[-1]
+        return phrase, keys_of[phrase], (a, b)
+    return None, set(), None
 
 
-def owners_named(sentence, start, end, owners):
+LIST_JOIN = re.compile(r'\s*(?:,|and|,\s*and)\s*')
+
+
+def neutral_marker_in(sentence, neutral, suffixes):
+    """Whether a word the register reads past, "half width", "breakdown", sits anywhere in the
+    sentence: a sentence about the parts of a width names its figures as parts once, and one that
+    carries no such marker and no subject word has said nothing about what a figure is of."""
+    return bool(phrase_matches(sentence, 0, len(sentence), {phrase: None for phrase in neutral}, suffixes))
+
+
+def owner_matches(sentence, lo, hi, names, suffixes):
+    """Every word naming an owner on one axis in sentence[lo:hi], as (start, end, word, owner)."""
+    vocabulary = {word: owner for owner, words in names.items() for word in words}
+    return phrase_matches(sentence, lo, hi, vocabulary, suffixes)
+
+
+def owners_named(sentence, start, end, owners, suffixes):
     """Who a figure is given to on each axis: {axis: (word, owner)}.
 
     The nearest word naming an owner before the figure in its own clause; otherwise the phrase directly after
@@ -2260,39 +2370,30 @@ def owners_named(sentence, start, end, owners):
         # figure's owner: "16.219 s from a GitHub runner, 16.424 s on the receipt".
         axis_floor = c0
         if previous_end is not None:
-            claimed = owner_after(sentence, previous_end, c1, names)
+            claimed = owner_after(sentence, previous_end, c1, names, suffixes)
             if claimed:
-                axis_floor = max(axis_floor, claimed[0])
+                axis_floor = max(axis_floor, claimed[1])
         best = None
-        for owner, words in names.items():
-            for word in words:
-                pattern = re.compile(r"(?<![\w-])" + re.escape(word) + r"(?:'s)?(?![\w-])", re.I)
-                for m in pattern.finditer(sentence, axis_floor, start):
-                    if best is None or m.start() > best[0]:
-                        best = (m.start(), word, owner)
+        for a, b, word, owner in owner_matches(sentence, axis_floor, start, names, suffixes):
+            if b <= start and (best is None or a > best[0]):
+                best = (a, word, owner)
         if best is None:
-            after = owner_after(sentence, end, c1, names)
+            after = owner_after(sentence, end, c1, names, suffixes)
             if after:
-                best = (after[0], after[1], after[2])
+                best = (after[0], after[2], after[3])
         if best is not None:
             found[axis] = (best[1], best[2])
     return found
 
 
-def owner_words_in(sentence, names, claimed=()):
+def owner_words_in(sentence, names, suffixes, claimed=()):
     """Every word naming an owner in the sentence on one axis, as (word, owner), from left to right,
     leaving out any that sits in a span another figure's own reading has claimed."""
-    found = []
-    for owner, words in names.items():
-        for word in words:
-            for m in re.finditer(r"(?<![\w-])" + re.escape(word) + r"(?:'s)?(?![\w-])", sentence, re.I):
-                if any(m.start() < b and m.end() > a for a, b in claimed):
-                    continue
-                found.append((m.start(), word, owner))
-    return [(word, owner) for _, word, owner in sorted(found)]
+    return [(word, owner) for a, b, word, owner in owner_matches(sentence, 0, len(sentence), names, suffixes)
+            if not any(a < c1 and b > c0 for c0, c1 in claimed)]
 
 
-def claimed_owner_words(sentence, owners):
+def claimed_owner_words(sentence, owners, suffixes):
     """The spans of the words naming an owner that the phrase directly after some figure gives to that figure,
     "against 161.1 ms from the one-shot command": those words are that figure's and say nothing
     about another figure in the same sentence."""
@@ -2300,41 +2401,46 @@ def claimed_owner_words(sentence, owners):
     for _, figure_start, figure_end in figures_of(sentence):
         _, c1 = clause_around(sentence, figure_start)
         for names in owners.values():
-            after = owner_after(sentence, figure_end, c1, names)
+            after = owner_after(sentence, figure_end, c1, names, suffixes)
             if after:
-                spans.add((after[0] - len(after[1]) - 2, after[0]))
+                spans.add((after[0], after[1]))
     return spans
 
 
-def owner_after(sentence, at, until, names):
+OWNER_LEAD = re.compile(r"\s*(?:wide\s+|of width\s+)?(?:from|through|by|via|on|with|inside)\s+"
+                        r"(?:the\s+|a\s+|an\s+|our\s+|its\s+|that\s+|this\s+)?(?:same\s+|resident\s+|ordinary\s+|GitHub\s+)?")
+
+
+def owner_after(sentence, at, until, names, suffixes):
     """A word naming an owner in the phrase directly after a figure, "from the one-shot command", as
-    (end of the word, word, owner), or None."""
-    lead = re.match(r"\s*(?:wide\s+|of width\s+)?(?:from|through|by|via|on|with|inside)\s+"
-                    r"(?:the\s+|a\s+|an\s+|our\s+|its\s+|that\s+|this\s+)?(?:same\s+|resident\s+|ordinary\s+|GitHub\s+)?", sentence[at:until])
+    (start, end, word, owner), or None."""
+    lead = OWNER_LEAD.match(sentence[at:until])
     if not lead:
         return None
     start = at + lead.end()
-    for owner, words in names.items():
-        for word in words:
-            m = re.match(re.escape(word) + r"(?:'s)?(?![\w-])", sentence[start:until], re.I)
-            if m:
-                return start + m.end(), word, owner
+    for a, b, word, owner in owner_matches(sentence, start, until, names, suffixes):
+        if a == start:
+            return a, b, word, owner
+        break
     return None
 
 
-def subject_is_close(sentence, start, end, word):
-    """Whether a subject word sits against the figure: directly after it, or within three words before."""
-    after = re.match(r"\s*(?:of\s+(?:the\s+|its\s+|that\s+)?)?" + re.escape(word) + r"(?:'s)?(?![\w-])", sentence[end:], re.I)
-    if after:
-        return True
-    before = sentence[:start]
-    m = None
-    for m in re.finditer(r"(?<![\w-])" + re.escape(word) + r"(?:'s)?(?![\w-])", before, re.I):
-        pass
-    if m is None:
+# Between a figure and a subject word directly after it: "of", an article, and at most one other
+# word, which is the shape "38.011 ms of the whole interval" takes.
+DIRECTLY_AFTER = re.compile(r"\s*(?:of\s+(?:the\s+|its\s+|that\s+|a\s+|an\s+)?(?:[\w-]+\s+)?)?$")
+
+
+def subject_is_close(sentence, start, end, span):
+    """Whether a subject word at `span` sits against the figure: directly after it, with no more
+    than "of", an article and one other word between, or within three words before it with no
+    punctuation between."""
+    a, b = span
+    if a >= end:
+        return bool(DIRECTLY_AFTER.fullmatch(sentence[end:a]))
+    if b > start:
         return False
-    between = before[m.end():]
-    return len(re.findall(r"[^\W_]+", between)) <= 3 and not re.search(r'[,;:]', between)
+    between = sentence[b:start]
+    return len(A_WORD.findall(between)) <= 3 and not re.search(r'[,;:]', between)
 
 
 def in_register(text, sentence, known, start=None, end=None, neighbours=()):
@@ -2351,7 +2457,7 @@ def in_register(text, sentence, known, start=None, end=None, neighbours=()):
     if start is None:
         start = sentence.find(text)
         end = start + len(text)
-    named, neutral, owners = subjects_of_register()
+    named, neutral, owners, suffixes = subjects_of_register()
     lower = sentence.lower()
     c0, c1 = clause_around(sentence, start)
     clause = sentence[c0:c1]
@@ -2398,13 +2504,13 @@ def in_register(text, sentence, known, start=None, end=None, neighbours=()):
                            f'measured it')
             continue
         subject = named.get(entry.get('of'))
-        word, keys = subject_named(sentence, start, end, named, neutral)
+        word, keys, span = subject_named(sentence, start, end, named, neutral, suffixes)
         if subject and subject['namedBy']:
             if word is not None and entry['of'] not in keys:
                 reasons.append(f'{FIGURES_REGISTER.name} has {text} as {subject["what"]}, and this sentence calls '
                                f'it "{word}", which is ' + ' or '.join(named[k]['what'] for k in sorted(keys)))
                 continue
-        elif subject and word is not None and subject_is_close(sentence, start, end, word):
+        elif subject and word is not None and subject_is_close(sentence, start, end, span):
             # A subject named by nothing is a setting, a condition or an illustration, and a sentence
             # calling it a measured part of a bound is refused whatever word it uses. Held only where
             # the word sits against the figure, "the bound was 12.4 ms", "5 s wide", because the
@@ -2414,7 +2520,7 @@ def in_register(text, sentence, known, start=None, end=None, neighbours=()):
             continue
         owner = entry.get('owner')
         if owner:
-            found = owners_named(sentence, start, end, owners)
+            found = owners_named(sentence, start, end, owners, suffixes)
             wrong = []
             for axis, who in owner.items():
                 if axis in found:
@@ -2429,15 +2535,31 @@ def in_register(text, sentence, known, start=None, end=None, neighbours=()):
                 # no word naming an owner on the axis is not read on it. Where a sentence names two owners on
                 # one axis, which one the figure belongs to is read no further than the reading
                 # beside the figure above.
-                elsewhere = owner_words_in(sentence, owners[axis], claimed_owner_words(sentence, owners))
-                everyone = {o for _, o in owner_words_in(sentence, owners[axis])}
-                # Two owners named on the axis is read no further than beside the figure above.
+                elsewhere = owner_words_in(sentence, owners[axis], suffixes, claimed_owner_words(sentence, owners, suffixes))
+                everyone = {o for _, o in owner_words_in(sentence, owners[axis], suffixes)}
                 if len(everyone) == 1 and elsewhere and who not in everyone:
                     word_, other = elsewhere[0]
                     wrong.append(f'"{word_}", which is {other}, and {name} is of {who}, which nothing in the sentence names')
+                elif len(everyone) > 1:
+                    # Two owners named on the axis and nothing beside the figure saying which is
+                    # its: that is a sentence this cannot attribute, and until 2026-09-18 naming a
+                    # second owner bought a pass. It is refused, naming the axis and both.
+                    wrong.append(f'on the {axis} axis both ' + ' and '.join(sorted(everyone)) + f', and nothing beside '
+                                 f'the figure says which of them {name} is of, so the sentence cannot be read')
             if wrong:
                 reasons.append(f'{FIGURES_REGISTER.name} {name} is given the wrong owner: this sentence says ' + '; '.join(wrong))
                 continue
+        if subject and subject['namedBy'] and word is None and not neutral_marker_in(sentence, neutral, suffixes):
+            # Nothing in the clause says what the figure is of and nothing in the sentence marks it
+            # as a part of a breakdown. That is not agreement with the entry; it is a sentence this
+            # cannot read, and until 2026-09-18 it was passed for the same reason a forged one was.
+            # It is refused, naming what could not be read, so the fix is a rephrasing. Read last,
+            # so a figure given to the wrong owner is refused for that.
+            reasons.append(f'{FIGURES_REGISTER.name} has {text} as {subject["what"]}, and nothing in this '
+                           f'sentence says what the figure is of: no word for a subject sits in its clause '
+                           f'and no marker such as "{neutral[0] if neutral else "half width"}" is in the sentence, '
+                           f'so the sentence cannot be read and is refused')
+            continue
         return entry, ''
     return None, reasons[0]
 
@@ -2896,8 +3018,8 @@ def every_figure_is_read(policy):
             faults.append(f'a figure nothing has a rule for passed: {probe}')
     # An honest sentence of the same shape has to pass, or this is refusing figures rather than
     # unread ones.
-    for honest in ('Measured 2026-09-09 at 21:41 on an ordinary desktop at sixteen rounds: 153.875 ms.',
-                   'The agent refuses any interval wider than 250 ms.'):
+    for honest in ('Measured 2026-09-09 at 21:41 on an ordinary desktop at sixteen rounds: 153.875 ms wide.',
+                   'The agent refuses anything past its 250 ms ceiling.'):
         refused, _ = unclaimed([('a made-up surface', honest)], policy, None, [])
         if refused:
             faults.append(f'an honest figure was refused ({refused[0].splitlines()[0]}): {honest}')
@@ -2924,8 +3046,8 @@ def every_figure_is_read(policy):
     # e4c2a62 before the figure walk was opened, all twelve, named, through both halves of this file.
     cold = {
         'C33': 'The receipt committed at `crates/verify/tests/data/a-real-stamp/receipt.cbor` gives 153.875 ms of half width, taken on an ordinary desktop on 2026-09-09 at 21:41 over sixteen polling rounds.',
-        'C34': 'Measured on an ordinary desktop on 2026-09-09 at 22:17, at thirty-six minutes of uptime and a thirty-two second cadence, the agent read 128.7 ms, 128.8 ms and 129.1 ms.',
-        'C35': "Of that 153.875 ms, 38.011 ms is the model's own regression residual doubled by the coverage factor and 35.081 ms is what the sources overlap on, read off `timewitness verify` on that receipt.",
+        'C34': 'Measured on an ordinary desktop on 2026-09-09 at 22:17, at thirty-six minutes of uptime and a thirty-two second cadence, the agent read bounds of 128.7 ms, 128.8 ms and 129.1 ms.',
+        'C35': "Of that 153.875 ms of width, 38.011 ms is the model's own regression residual doubled by the coverage factor and 35.081 ms is what the sources overlap on, read off `timewitness verify` on that receipt.",
         'C36': 'Public research puts a well disciplined clock at 5 to 50 ms over the public internet with no owned hardware, and none of that has been measured by us.',
         'C37': 'The shipped default is sixteen polling rounds.',
         'C38': 'The agent disciplines the clock against four to six independent sources.',
@@ -2972,7 +3094,7 @@ def every_figure_is_read(policy):
         refused_naming(f'no {missing}', short)
     # And the register is what answers: a sentence a rule cannot read passes once an entry holds its
     # figure, and the entry has to stand on evidence that carries it, here the committed receipt.
-    invented = 'Measured, receipts come in under 153.875 ms.'
+    invented = 'Measured, receipts come in under a bound of 153.875 ms.'
     held = read_register(dict(frame, allowed=[ours('153.875')]))
     if unclaimed([('a made-up surface', invented)], policy, None, [], held)[0]:
         faults.append('a figure the register holds was refused, so the register is not what answers')
@@ -3038,11 +3160,11 @@ def every_figure_is_read(policy):
         if not refused or 'owner' not in refused[0] or 'entry' not in refused[0]:
             faults.append(f'a figure given to another owner elsewhere in its sentence passed or was refused for something else: {wrong}')
     for right in ('At sixteen polling rounds on 2026-09-09 the committed receipt is 153.875 ms wide.',
-                  'Where a GitHub-hosted runner gave 287.147 ms on 2026-09-14 at sixteen polling rounds, the ordinary desktop\'s committed receipt of 2026-09-09 at sixteen polling rounds is 153.875 ms wide.',
-                  'A GitHub-hosted runner on 2026-09-14, the Action at v0 at sixteen polling rounds, gave 287.147 ms.',
-                  'Through the resident agent on an ordinary desktop on 2026-09-09 at thirty-six minutes of uptime, the readings were 128.7 ms, 128.8 ms and 129.1 ms.',
+                  'Where a GitHub-hosted runner gave a bound of 287.147 ms on 2026-09-14 at sixteen polling rounds, the ordinary desktop\'s committed receipt of 2026-09-09 at sixteen polling rounds is 153.875 ms wide.',
+                  'A GitHub-hosted runner on 2026-09-14, the Action at v0 at sixteen polling rounds, gave a bound of 287.147 ms.',
+                  'Through the resident agent on an ordinary desktop on 2026-09-09 at thirty-six minutes of uptime, the bounds were 128.7 ms, 128.8 ms and 129.1 ms.',
                   'The safety margin in the width breakdown of the committed receipt is a fixed 250.000 us, a constant rather than a measurement.',
-                  'Before the operator floor, on 2026-09-08, a GitHub runner at four polling rounds reached 16.219 s with Roughtime alone.'):
+                  'Before the operator floor, on 2026-09-08, a GitHub runner at four polling rounds reached a bound of 16.219 s with Roughtime alone.'):
         refused = unclaimed([('a made-up surface', right)], policy, None, [])[0]
         if refused:
             faults.append(f'an honest sentence about a registered figure was refused ({refused[0].splitlines()[0]}): {right}')
@@ -3212,6 +3334,241 @@ def every_figure_is_read(policy):
         faults.append('a reason of one word was read as a reason')
     except Unreadable:
         pass
+    return faults
+
+
+ATTRIBUTIONS_RECORD = ROOT / 'scripts' / 'policy-attributions.txt'
+# The closed list of ways a sentence gives a figure to a subject, each the part of the sentence
+# from the verb on, and the adjectives the vocabulary does not list that may sit in front of the
+# subject word. The generated grade below is the cross product of these with every phrase of every
+# other subject in every form the fold admits, for every entry.
+UNLISTED_ADJECTIVES = ('whole', 'full', 'entire')
+ATTRIBUTIONS_VERSION = 1
+
+
+def inflections(word, suffixes):
+    """Every form of a word the fold reads as the word: the word, its stem with each suffix, and
+    where the stem ends in one consonant after a vowel, that consonant doubled before -ed and
+    -ing."""
+    root = stem(word, suffixes)
+    out = [word]
+    for suffix in suffixes:
+        out.append(root + suffix)
+    last = root[-1]
+    if last not in 'aeiou' and last.isalpha() and len(root) >= 3 and root[-2] in 'aeiou' and root[-3] not in 'aeiou':
+        out.append(root + last + 'ed')
+        out.append(root + last + 'ing')
+    return out
+
+
+def attributing_phrasings(figure, unit, phrase, subject_is_whole):
+    f = f'{figure} {unit}'
+    yield 'directly after the figure', f'was {f} {phrase}'
+    yield 'after of', f'was {f} of {phrase}'
+    yield 'after of the', f'was {f} of the {phrase}'
+    yield 'after of its', f'was {f} of its {phrase}'
+    yield 'after of that', f'was {f} of that {phrase}'
+    for adjective in UNLISTED_ADJECTIVES:
+        yield f'after of and the unlisted adjective {adjective}', f'was {f} of {adjective} {phrase}'
+        yield f'after of the and the unlisted adjective {adjective}', f'was {f} of the {adjective} {phrase}'
+    yield 'the subject fronted before the figure', f'{phrase} was {f}'
+    if not subject_is_whole:
+        yield 'the figure written wide', f'was {f} wide'
+
+
+def attribution_conditions(entry):
+    """A conditions clause the entry's own rules accept: its machine, its date, its rounds or
+    cadence, the phrase it has to be said with, a path where it is a setting."""
+    setup = entry.get('setup') or {}
+    owner = entry.get('owner') or {}
+    said = list(entry.get('saidWith') or [])
+    nearby = entry.get('requiresNearby')
+    parts = []
+    if owner:
+        parts.append(f'on {owner["machine"]}')
+        if 'rounds' in setup:
+            rounds = setup['rounds']
+            parts.append(f'at {rounds[0] if isinstance(rounds, list) else rounds} polling rounds')
+        elif 'cadenceSeconds' in setup:
+            parts.append(f'at a {setup["cadenceSeconds"]} second cadence')
+        if setup.get('date'):
+            parts.append(f'on {setup["date"]}')
+    elif nearby:
+        parts.append(nearby)
+    elif said:
+        parts.append(f'on the {said[0]} network on 2026-09-07')
+    else:
+        evidence = entry.get('evidence')
+        artefact = evidence.get('artefact') if isinstance(evidence, dict) else None
+        if artefact and '/' in artefact:
+            parts.append(f'in {artefact}')
+        elif entry['whose'] == 'the NTP wire format':
+            parts.append('quoted from the protocol document')
+        else:
+            parts.append('in docs/what-timewitness-cannot-prove.md')
+    if entry.get('superseded') and said:
+        parts.append(said[0])
+    elif entry.get('history') and not setup.get('date'):
+        parts.append('until 2026-09-15')
+    return ', '.join(parts)
+
+
+def attributions(data):
+    """The generated grade: for every entry and every phrase naming every other subject, every
+    attributing phrasing in every form the fold admits, each giving the entry's figure to the wrong
+    subject and each to be refused naming the subject; and one base sentence per entry in its own
+    subject, to pass, so a wrong one refused for some other reason shows as such. Yields
+    (id, entry number, expected, wrong subject key, phrasing, form, sentence)."""
+    named, _, suffixes = read_subjects(data)
+    # Two entries can hold one figure, "2 s" being both a ceiling and the outside signatures' gap,
+    # so a subject some other entry of the same figure has is not a wrong subject for it.
+    subjects_of_figure = {}
+    for entry in data['allowed']:
+        for figure in (entry['figure'] if isinstance(entry['figure'], list) else [entry['figure']]):
+            subjects_of_figure.setdefault((figure, entry['unit']), set()).add(entry['of'])
+    n = 0
+    for number, entry in enumerate(data['allowed'], 1):
+        figure = entry['figure']
+        figure = figure[0] if isinstance(figure, list) else figure
+        unit = entry['unit']
+        own = entry['of']
+        honest_elsewhere = subjects_of_figure[(figure, unit)]
+        own_phrases = named[own]['namedBy']
+        lead = attribution_conditions(entry)
+        lead = lead[0].upper() + lead[1:]
+        n += 1
+        if own_phrases:
+            yield f'A{n:05d}', number, 'PASS', '-', 'the base sentence', '-', f'{lead}, the {own_phrases[0]} was {figure} {unit}.'
+        else:
+            yield f'A{n:05d}', number, 'PASS', '-', 'the base sentence', '-', f'{lead}, it was {figure} {unit}.'
+        for key, subject in named.items():
+            if key in honest_elsewhere:
+                continue
+            for phrase in subject['namedBy']:
+                words = phrase.split()
+                for form in inflections(words[-1], suffixes):
+                    formed = ' '.join(words[:-1] + [form])
+                    for phrasing, tail in attributing_phrasings(figure, unit, formed, own == 'the whole interval'):
+                        if phrasing == 'the figure written wide' and form != words[-1]:
+                            continue
+                        n += 1
+                        if phrasing == 'the subject fronted before the figure':
+                            yield f'A{n:05d}', number, 'REFUSE', key, phrasing, formed, f'{lead}, the {tail}.'
+                        else:
+                            yield f'A{n:05d}', number, 'REFUSE', key, phrasing, formed, f'{lead}, it {tail}.'
+
+
+def vocabulary_fingerprint(data):
+    return hashlib.sha256(json.dumps(data['$subjects'], sort_keys=True).encode()).hexdigest()
+
+
+def attributions_record(data):
+    """What the record of the generated grade has to say for this register: the vocabulary's
+    fingerprint, the generator's version and the number of lines."""
+    lines = sum(1 for _ in attributions(data))
+    return (f'# The generated grade of {FIGURES_REGISTER.name}: every entry given to every other subject in every '
+            f'phrasing and form. Written by --attributions; --self-test refuses a register whose vocabulary has '
+            f'changed since.\nvocabulary {vocabulary_fingerprint(data)}\ngenerator {ATTRIBUTIONS_VERSION}\nlines {lines}\n')
+
+
+def the_register_holds_a_figure_to_its_subject(policy):
+    """The fold has no collisions, the generated grade is refused line by line, and a sentence that
+    names no subject, or two owners on an axis, is refused rather than passed."""
+    faults = []
+    data = parse_register(FIGURES_REGISTER.read_text(encoding='utf-8'))
+    named, neutral, suffixes = read_subjects(data)
+    owners = read_owners(data)
+    # No two subjects share a folded phrase, no subject's phrase folds to a neutral one, and no two
+    # owners on an axis share a folded word: over every phrase, because the list is small enough for
+    # that to be exhaustive, and that assertion is what makes the fold a closed rule.
+    seen = {}
+    for key, subject in named.items():
+        for phrase in subject['namedBy']:
+            folded = stems(phrase, suffixes)
+            if folded in seen and seen[folded] != key:
+                faults.append(f'"{phrase}" of {key} and a phrase of {seen[folded]} fold to the same stems {folded}')
+            seen[folded] = key
+    for phrase in neutral:
+        if stems(phrase, suffixes) in seen:
+            faults.append(f'the neutral phrase "{phrase}" folds to the stems of a phrase of {seen[stems(phrase, suffixes)]}')
+    for axis, names in owners.items():
+        seen_words = {}
+        for owner, words in names.items():
+            for word in words:
+                folded = stems(word, suffixes)
+                if folded in seen_words and seen_words[folded] != owner:
+                    faults.append(f'"{word}" of {owner} and a word of {seen_words[folded]} fold alike on the {axis} axis')
+                seen_words[folded] = owner
+    for word, stemmed in (('overlapped', 'overlap'), ('overlapping', 'overlap'), ('overlaps', 'overlap'),
+                          ('overlappings', 'overlap'), ('widths', 'width'), ('bounds', 'bound'), ('ceilings', 'ceil'),
+                          ('ceiling', 'ceil'), ('wide', 'wide'), ("agent's", 'agent')):
+        if stem(word, suffixes) != stemmed:
+            faults.append(f'"{word}" folds to "{stem(word, suffixes)}" rather than "{stemmed}"')
+    # The record of the generated grade agrees with the register on disk, or the vocabulary grew
+    # and nobody regenerated the set.
+    wanted = attributions_record(data)
+    if not ATTRIBUTIONS_RECORD.is_file() or ATTRIBUTIONS_RECORD.read_text(encoding='utf-8') != wanted:
+        faults.append(f'{ATTRIBUTIONS_RECORD.name} does not match the register: the vocabulary or the generator '
+                      f'changed and the generated grade was not regenerated; run --attributions')
+    # Every line of the generated grade, through the register answer alone.
+    known = read_register(data)
+    passed = []
+    base_refused = []
+    for ident, number, expected, wrong, phrasing, form, sentence in attributions(data):
+        entry = data['allowed'][number - 1]
+        figure = entry['figure'][0] if isinstance(entry['figure'], list) else entry['figure']
+        # The entry's own figure, not a condition written before it: "at a 32 second cadence" is a
+        # figure too.
+        wanted = f'{figure} {entry["unit"]}'.lower()
+        # A range, "5 to 50 ms", is read at its upper figure.
+        figures = [f for f in figures_of(sentence) if f[0] == wanted or wanted.endswith(' ' + f[0])]
+        if not figures:
+            faults.append(f'{ident} carries no figure this reads as the entry has it: {sentence}')
+            continue
+        text, start, end = figures[0]
+        entry, why = in_register(text, sentence, known, start, end)
+        if expected == 'PASS' and entry is None:
+            base_refused.append(f'{ident} (entry {number}): {sentence} | {why}')
+        elif expected == 'REFUSE' and (entry is not None or 'calls it' not in why):
+            passed.append(f'{ident} (entry {number}, {phrasing}, "{form}"): {sentence} | {why}')
+    for line in base_refused[:5]:
+        faults.append(f'a base sentence of the generated grade, in its own subject, was refused: {line}')
+    if len(base_refused) > 5:
+        faults.append(f'and {len(base_refused) - 5} more base sentences were refused')
+    for line in passed[:10]:
+        faults.append(f'a sentence giving a figure to the wrong subject was not refused naming the subject: {line}')
+    if len(passed) > 10:
+        faults.append(f'and {len(passed) - 10} more sentences of the generated grade were not refused')
+    # The two branches that used to give the permitting answer to what they could not read.
+    unreadable = ('On an ordinary desktop at sixteen polling rounds on 2026-09-09, the one-shot command reached 38.011 ms.',
+                  'On an ordinary desktop at thirty-six minutes of uptime on 2026-09-09, the readings were 128.7 ms, 128.8 ms and 129.1 ms.')
+    for sentence in unreadable:
+        text, start, end = next(f for f in figures_of(sentence) if f[0].endswith(' ms'))
+        entry, why = in_register(text, sentence, known, start, end)
+        if entry is not None or 'cannot be read' not in why:
+            faults.append(f'a sentence naming no subject the reader can see was not refused as unreadable: {sentence} | {why}')
+    marked = 'In the width breakdown of the committed receipt, on an ordinary desktop at sixteen polling rounds on 2026-09-09, the residual came to 38.011 ms.'
+    text, start, end = figures_of(marked)[0]
+    entry, why = in_register(text, marked, known, start, end)
+    if entry is None:
+        faults.append(f'a sentence naming its subject after a breakdown marker was refused: {why}')
+    two = ('The ordinary desktop and the GitHub-hosted runner were both read on 2026-09-09 at sixteen polling rounds, '
+           'and the committed receipt is 153.875 ms wide.')
+    text, start, end = figures_of(two)[0]
+    entry, why = in_register(text, two, known, start, end)
+    if entry is not None or 'machine axis' not in why or 'an ordinary desktop' not in why or 'a GitHub-hosted runner' not in why:
+        faults.append(f'a sentence naming two owners on an axis was not refused naming the axis and both: {two} | {why}')
+    for inflected in ('On an ordinary desktop at sixteen polling rounds on 2026-09-09, the sources overlapped by 153.875 ms.',
+                      'On an ordinary desktop at sixteen polling rounds on 2026-09-09, the one-shot command reached 38.011 ms of whole interval.'):
+        text, start, end = figures_of(inflected)[0]
+        entry, why = in_register(text, inflected, known, start, end)
+        if entry is not None or 'calls it' not in why:
+            faults.append(f'a figure given to the wrong subject through an inflection or an unlisted adjective passed: {inflected} | {why}')
+    own = 'On an ordinary desktop at sixteen polling rounds on 2026-09-09, the residuals came to 38.011 ms.'
+    text, start, end = figures_of(own)[0]
+    entry, why = in_register(text, own, known, start, end)
+    if entry is None:
+        faults.append(f'a figure given to its own subject through an inflection was refused: {why}')
     return faults
 
 
@@ -4247,7 +4604,8 @@ def the_score_refuses_a_fitted_set_however_it_is_written(policy):
 def self_test(policy):
     missed = (content_reader_reads_the_leaf() + the_fetch_refuses_a_redirect()
               + every_attribute_a_reader_is_given_is_read(policy)
-              + every_figure_is_read(policy) + the_score_refuses_a_fitted_set(policy)
+              + every_figure_is_read(policy) + the_register_holds_a_figure_to_its_subject(policy)
+              + the_score_refuses_a_fitted_set(policy)
               + the_score_refuses_a_fitted_set_however_it_is_written(policy))
     for rule, seed in SEEDS:
         faults = judge(seed, policy)
@@ -4294,6 +4652,19 @@ def main(argv):
                   'command answering both is how they got confused. Run them separately.', file=sys.stderr)
             return 2
         return self_test(policy)
+
+    if '--attributions' in argv:
+        data = parse_register(FIGURES_REGISTER.read_text(encoding='utf-8'))
+        ATTRIBUTIONS_RECORD.write_text(attributions_record(data), encoding='utf-8')
+        where = argv.index('--attributions') + 1
+        if where < len(argv) and not argv[where].startswith('--'):
+            with open(argv[where], 'w', encoding='utf-8') as out:
+                out.write(f'# Generated from {FIGURES_REGISTER.name} whose $subjects fingerprint is {vocabulary_fingerprint(data)}.\n')
+                out.write('# id\tentry\texpected\twrong subject\tphrasing\tinflection\tsentence\n')
+                for row in attributions(data):
+                    out.write('\t'.join(str(x) for x in row) + '\n')
+        print(f'policy sentences: {ATTRIBUTIONS_RECORD.name} written for the register on disk')
+        return 0
 
     if '--prints' in argv:
         where = argv.index('--prints') + 1

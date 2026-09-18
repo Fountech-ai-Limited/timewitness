@@ -267,21 +267,18 @@ set aside; all three then took part in deciding which of the narrow sources was 
 They could not have disagreed with any of them. Measured on 2026-09-11 in
 `crates/clock/tests/two_kinds_of_source.rs`, which runs on the simulated harness rather than on a real
 path, so every figure in this item and the two below it is the arithmetic of the model and not a
-reading from the wire: three honest NTP servers throw out a liar two hundred milliseconds off them, and
-adding three Roughtime servers kept him, taking the interval from 12.52 ms to 223.52 ms and moving
-the reading 82.570909 ms. Nothing signed in either round was untrue and both held UTC. What was
+reading from the wire: three honest NTP servers throw out a liar whose interval sits two hundred milliseconds off them, and adding three Roughtime servers kept him, taking the interval from 12.52 ms to 223.52 ms wide and moving the reading 82.570909 ms inside that interval. Nothing signed in either round was untrue and both held UTC. What was
 wrong is that three faults were tolerated where none of the three had been earned.
 
 From 2026-09-11 the sources that could have disagreed decide who is in the minority, and the interval
-is taken over what is left standing. The same round now comes back at 34.52 ms with the liar thrown
+is taken over what is left standing. The same round now comes back at 34.52 ms of width with the liar thrown
 out and the reading where it was. This can narrow an interval only by throwing a source out: a source
 that does not reach the interval contributes nothing inside it, so dropping it cannot move an edge,
 and an honest round where nobody is in the minority comes back exactly where it always did.
 
 **What that second rule still does not cover, and it is a figure rather than a caveat.** How much
 room the width allows for a fault is still counted over every source that answered, so a source that
-could not have disagreed still buys the interval some room: 34.52 ms in the round above against the
-12.52 ms the narrow sources reach on their own. Counting that over the sources that could have
+could not have disagreed still buys the interval some room: 34.52 ms of width in the round above against the 12.52 ms of width the narrow sources reach on their own. Counting that over the sources that could have
 disagreed is the same arithmetic pointed at the width, and it takes an ordinary honest round of four
 agreeing servers down to the narrowest of them with no fault tolerance left, so it is a decision
 about the claim rather than a defect to fix. It is still open.
@@ -373,16 +370,15 @@ bound resting on Roughtime alone would be seconds wide whatever else is done to 
 floor refuses such a round; a plain NTP server states a delay and a dispersion in units of about
 fifteen microseconds and signs nothing at all.
 Measured against Roughtime alone on 2026-09-08, every one of them at the four rounds the Action
-shipped that day: 16.219 s from a GitHub runner, 16.424 s on the receipt committed at that path then and since replaced, and 16.439 s from a stamp on an ordinary desktop at 11:08. Measured against two kinds
-on 2026-09-09 at the sixteen rounds the Action ships now: 153.6 ms, 164.8 ms and 211.3 ms over three
-passes on an ordinary desktop at 14:52, 176.7 ms on the receipt committed at that path then and since replaced, taken at 15:05, and 211.3 ms from a GitHub runner at 12:09 UTC. Every one of those is our own measurement on
-the machine it names, and none of them is a figure for anybody else's machine. Measured with all three kinds on 2026-09-09 at the sixteen rounds the Action ships: 154.1 ms, 159.2 ms and 154.7 ms over three passes on an ordinary desktop at 20:28, and 149.8 ms on the receipt committed at that path then and since replaced, taken at 20:32, nine servers answering and nine kept. Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms over three passes at 21:39, and 153.9 ms on the receipt committed in this repository at 21:41, nine servers behind six operators and nine kept. Enforcing independence narrowed nothing and was never going to, because the rule refuses rounds rather than narrowing them: the sources overlapping is 35.1 ms of half width on that receipt against 34.9 ms on the one before it. Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 128.7 ms, 128.8 ms and 129.1 ms over three readings at 22:17, against 122.7 ms, 122.8 ms and 122.6 ms from the same agent at the same uptime and the same cadence before the rule at 21:04. The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did. The third kind narrowed nothing and the breakdown says so: the sources overlapping is 34.9 ms of half width on that nine-source receipt against 34.5 ms on the six-source one taken at 15:05, and what moved between the two receipts is the oscillator, 0.5 ms against 17.3 ms, which is how long after the last exchange each stamp was taken. Measured through the resident agent with all three kinds on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 122.7 ms, 122.8 ms and 122.6 ms over three readings at 21:04, against 133.5 ms, 136.8 ms and 128.9 ms from the same agent at the same uptime and the same cadence with two kinds at 16:27. The sources overlapping did not move there either, 37.6 ms of half width against 37.1 to 38.3 ms, so the ten milliseconds between the two sets is the fit and the oscillator rather than the sources. Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms over three readings at 16:27, against 161.1 ms, 159.4 ms and 162.2 ms from the one-shot command on the same machine twelve minutes earlier. What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit. The largest single part of the 153.875 ms on the receipt committed in this repository is the model's own regression residual doubled by the coverage factor, 38.011 ms of half width, with 35.081 ms of the sources overlapping and 3.586 ms of the oscillator beside it, all four read 2026-09-10 off the verify command run on that receipt, which prints half widths.
+shipped that day: a bound of 16.219 s from a GitHub runner, a bound of 16.424 s on an ordinary desktop's receipt committed at that path then and since replaced, and a bound of 16.439 s from that same desktop, stamped at 11:08. Measured against two kinds
+on 2026-09-09 at the sixteen rounds the Action ships now, on an ordinary desktop: 153.6 ms and 164.8 ms wide over the first two of three passes at 14:52, and a bound of 176.7 ms on that desktop's receipt committed at that path then and since replaced, taken at 15:05. At 12:09 UTC a GitHub runner reached a bound of 211.3 ms, and that desktop reached the same on the remaining one of its three. Every one of those is our own measurement on
+the machine it names, and none of them is a figure for anybody else's machine. Measured with all three kinds on 2026-09-09 at the sixteen rounds the Action ships: 154.1 ms, 159.2 ms and 154.7 ms wide over three passes on an ordinary desktop at 20:28, and a bound of 149.8 ms on the receipt committed at that path then and since replaced, taken at 20:32, nine servers answering and nine kept. Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms wide over three passes at 21:39, and a bound of 153.9 ms on the receipt committed in this repository at 21:41, nine servers behind six operators and nine kept. Enforcing independence narrowed nothing and was never going to, because the rule refuses rounds rather than narrowing them: the sources overlapping is 35.1 ms of half width on that receipt against 34.9 ms on the one before it. Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 128.7 ms, 128.8 ms and 129.1 ms wide over three readings at 22:17, against 122.7 ms, 122.8 ms and 122.6 ms wide from the same agent at the same uptime and the same cadence before the rule at 21:04. The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did. The third kind narrowed nothing and the breakdown says so: the sources overlapping is 34.9 ms of half width on that nine-source receipt against 34.5 ms on the six-source one taken at 15:05, and what moved between the two receipts is the oscillator, 0.5 ms against 17.3 ms, which is how long after the last exchange each stamp was taken. Measured through the resident agent with all three kinds on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 122.7 ms, 122.8 ms and 122.6 ms wide over three readings at 21:04, against 133.5 ms, 136.8 ms and 128.9 ms wide from the same agent at the same uptime and the same cadence with two kinds at 16:27. The sources overlapping did not move there either, 37.6 ms of half width against 37.1 to 38.3 ms, so the ten milliseconds between the two sets is the fit and the oscillator rather than the sources. Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms wide over three readings at 16:27, against 161.1 ms, 159.4 ms and 162.2 ms wide from the one-shot command on the same machine twelve minutes earlier. What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit. Of the 153.875 ms of width on the receipt committed in this repository, the largest single part is the model's own regression residual doubled by the coverage factor, 38.011 ms of half width, with 35.081 ms of the sources overlapping and 3.586 ms of the oscillator beside it, all four read 2026-09-10 off the verify command run on that receipt, which prints half widths.
 Polling more times does help and it is the shipped default that was wrong about which way: below
 three rounds no line is fitted, so the scatter of the measurements is never measured and never
 enters the width, and the bound at one round is narrower because less was measured rather than
 because the clock is better known. Measured on this desktop at 12:54 and 12:56 on 2026-09-08 against
-Roughtime alone, two passes at each setting: 6.2 s at one round, 17.4 s at three, 16.4 s at four,
-12.0 s at sixteen and 10.4 s at thirty-two. So the figure this product leads with is its own bound, about 155 ms at sixteen rounds where the sources that narrow it are reachable. Where only Roughtime is reachable it now refuses, and the 12 s it reached there on 2026-09-08 is from before the operator floor. About one second is still the target and it is a target for something else: a bound
+Roughtime alone, two passes at each setting: 6.2 s wide at one round, 17.4 s wide at three, 16.4 s wide at four,
+12.0 s wide at sixteen and 10.4 s wide at thirty-two. So the figure this product leads with is its own bound, about 155 ms at sixteen rounds where the sources that narrow it are reachable. Where only Roughtime is reachable it now refuses, and the 12 s of width it reached there on 2026-09-08 is from before the operator floor. About one second is still the target and it is a target for something else: a bound
 resting on third-party evidence rather than on the agent's own model, which nothing outside the
 tests constructs, and which a timestamp authority writing whole seconds puts a floor under. That is
 the rule underneath it, and it holds for everything this product says about itself: the prose may be
@@ -440,10 +436,8 @@ share is not a fixed number.** The shipped cadence is thirty-two seconds and the
 decides whether a reading is signed. On an ordinary desktop the top of it sits close enough to the
 ceiling that the answer moves with the network. Measured 2026-09-10 on an ordinary Windows desktop
 at those settings, one reading every five seconds: nought refused of 100 readings from three to
-twelve minutes of uptime on one run and nought of 103 on a second, at widths of 144.636 to 238.409
-ms and 140.933 to 217.723 ms. Measured again the same morning on the same machine, forty
-readings five seconds apart at five to eight minutes of uptime: one refused, at 254.047 ms
-against the 250 ms ceiling. So the share on one machine on one day is somewhere between nought and
+twelve minutes of uptime on one run and nought of 103 on a second, at widths of 144.636 to 238.409 ms and widths of 140.933 to 217.723 ms. Measured again the same morning on the same machine, forty
+readings five seconds apart at five to eight minutes of uptime: one refused, at 254.047 ms of width against the 250 ms ceiling. So the share on one machine on one day is somewhere between nought and
 one in forty, and a deployment should expect a refusal now and then rather than never. The refusal
 is the design working rather than a fault: a wider interval says something true and a narrow wrong
 one does not, and the last good reading is never offered.
@@ -452,8 +446,7 @@ one does not, and the last good reading is never offered.
 it is on this list with the rest of them. Every caller gets a thread of its own from 2026-09-10, and
 past `CALLERS_AT_ONCE` a caller is turned away in words rather than queued behind the others,
 because a queue behind a full cap is the same unavailability moved somewhere the caller cannot see
-it. Before that date the agent answered one caller at a time and waited two seconds for a token
-before it looked at one, so two sockets opened and left silent stopped the machine issuing receipts
+it. Before that date the agent answered one caller at a time and its ceiling on waiting for a token before it looked at one was two seconds, so two sockets opened and left silent stopped the machine issuing receipts
 at all: measured on an ordinary Windows desktop, a legitimate ask took 56 ms alone and 40158 ms
 behind twenty of them. What the cap does not do is make the agent proof against somebody who already
 runs code on this machine. It turns a cheap permanent outage into an expensive temporary one:
@@ -524,7 +517,7 @@ by a key the reader holds, and every other operator name is the signer's word.
 under the shipped floor of four, so it refuses to sign, and nothing that ships lowers the floor.**
 That path was the seconds-wide one until 2026-09-09. The shipped product now declines it on two
 counts: the operator floor refuses the round before any width is looked at, and the width ceilings
-refuse it as well, 250 ms through the resident agent and 2 s on the one-shot command the Action runs.
+refuse it as well, 250 ms through the resident agent and, on the one-shot command the Action runs, a 2 s ceiling.
 No option on the command line and no input to the Action lowers the floor. It is `min_operators` in
 `Policy::default`, in `crates/clock/src/policy.rs`, so lowering it means building from a changed
 source. That is deliberate, because a product whose independence floor bends to whatever the network
@@ -550,12 +543,11 @@ format can express a bound resting on outside signatures and nothing issues a re
 GitHub Action runs, refuses one wider than 2 s.** Read on 2026-09-15 off `max_bound_width` in
 `Policy::default`, in `crates/clock/src/policy.rs`, off `CI_MAX_BOUND_WIDTH` in
 `crates/cli/src/stamp_cmd.rs`, and off the `max-width` input in `action.yml`. Only the agent holds
-itself to 250 ms. The one-shot path needs a ceiling of its own, because the widest receipt a build
-runner has given us, 287.147 ms on 2026-09-14 at sixteen rounds, is already past the agent's. Two
+itself to 250 ms. The one-shot path needs a ceiling of its own, because the widest receipt the one-shot command on a build runner has given us, 287.147 ms wide on 2026-09-14 at sixteen rounds, is already past the agent's. Two
 seconds is the narrowest interval a Roughtime corridor can state, a radius of one second either side,
 so a bound wider than that says less than one signed corridor already tells a stranger. It is about
-seven times that runner's width, and about nine times the 211.3 ms another runner reached on
-2026-09-09. The ceiling was 30 s until 2026-09-15, sized for the 16.219 s a runner reached against
+seven times that runner's width, and about nine times the bound of 211.3 ms another runner reached on
+2026-09-09. The ceiling was 30 s until 2026-09-15, sized for the 16.219 s of width a runner reached against
 Roughtime alone on 2026-09-08, a round the operator floor has refused since 2026-09-09. Every receipt
 the one-shot command signed before 2026-09-15 states that older ceiling in its own policy, the one at
 `crates/verify/tests/data/a-real-stamp/` included.

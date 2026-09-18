@@ -115,8 +115,8 @@ sentences=(
   # They carry no backticks on purpose: the site copy drops them and a sentence that cannot be
   # spelled the same way on both surfaces cannot be pinned.
   "Three time source clients exist in this repository, Roughtime, plain NTP and NTS, and only Roughtime signs anything a stranger can check, so the one that can be shown to a stranger is the one that cannot narrow the bound."
-  "Measured against Roughtime alone on 2026-09-08, every one of them at the four rounds the Action shipped that day: 16.219 s from a GitHub runner, 16.424 s on the receipt committed at that path then and since replaced, and 16.439 s from a stamp on an ordinary desktop at 11:08."
-  "Measured against two kinds on 2026-09-09 at the sixteen rounds the Action ships now: 153.6 ms, 164.8 ms and 211.3 ms over three passes on an ordinary desktop at 14:52, 176.7 ms on the receipt committed at that path then and since replaced, taken at 15:05, and 211.3 ms from a GitHub runner at 12:09 UTC."
+  "Measured against Roughtime alone on 2026-09-08, every one of them at the four rounds the Action shipped that day: a bound of 16.219 s from a GitHub runner, a bound of 16.424 s on an ordinary desktop's receipt committed at that path then and since replaced, and a bound of 16.439 s from that same desktop, stamped at 11:08."
+  "Measured against two kinds on 2026-09-09 at the sixteen rounds the Action ships now, on an ordinary desktop: 153.6 ms and 164.8 ms wide over the first two of three passes at 14:52, and a bound of 176.7 ms on that desktop's receipt committed at that path then and since replaced, taken at 15:05. At 12:09 UTC a GitHub runner reached a bound of 211.3 ms, and that desktop reached the same on the remaining one of its three."
   # The sentence that used to sit here broke the width of the committed receipt into its parts, and
   # it was pinned to the receipt of 15:05 on 2026-09-09, which has been replaced twice since. It is
   # now read from the receipt instead, at the foot of this file. Every figure attributed to the
@@ -125,7 +125,7 @@ sentences=(
   # Added 2026-09-09. The agent figures and the one-shot figures were taken
   # on the same desktop twelve minutes apart on purpose, so the comparison is a measurement
   # rather than two measurements from different days.
-  "Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms over three readings at 16:27, against 161.1 ms, 159.4 ms and 162.2 ms from the one-shot command on the same machine twelve minutes earlier."
+  "Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms wide over three readings at 16:27, against 161.1 ms, 159.4 ms and 162.2 ms wide from the one-shot command on the same machine twelve minutes earlier."
   "What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit."
   # Replaced 2026-09-09, when a resident agent went into the tree. Both sentences
   # they replace said the agent did not exist, and one of them is now four sentences, because
@@ -150,9 +150,9 @@ sentences=(
   # that the figure moved and the term a new source kind was supposed to move did not. The third is
   # the word independent, which the code does not yet enforce. The fourth is why NTS is never
   # evidence, on the surface a reader sees rather than only in the source file.
-  "Measured with all three kinds on 2026-09-09 at the sixteen rounds the Action ships: 154.1 ms, 159.2 ms and 154.7 ms over three passes on an ordinary desktop at 20:28, and 149.8 ms on the receipt committed at that path then and since replaced, taken at 20:32, nine servers answering and nine kept."
+  "Measured with all three kinds on 2026-09-09 at the sixteen rounds the Action ships: 154.1 ms, 159.2 ms and 154.7 ms wide over three passes on an ordinary desktop at 20:28, and a bound of 149.8 ms on the receipt committed at that path then and since replaced, taken at 20:32, nine servers answering and nine kept."
   "The third kind narrowed nothing and the breakdown says so: the sources overlapping is 34.9 ms of half width on that nine-source receipt against 34.5 ms on the six-source one taken at 15:05, and what moved between the two receipts is the oscillator, 0.5 ms against 17.3 ms, which is how long after the last exchange each stamp was taken."
-  "Measured through the resident agent with all three kinds on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 122.7 ms, 122.8 ms and 122.6 ms over three readings at 21:04, against 133.5 ms, 136.8 ms and 128.9 ms from the same agent at the same uptime and the same cadence with two kinds at 16:27."
+  "Measured through the resident agent with all three kinds on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 122.7 ms, 122.8 ms and 122.6 ms wide over three readings at 21:04, against 133.5 ms, 136.8 ms and 128.9 ms wide from the same agent at the same uptime and the same cadence with two kinds at 16:27."
   "The sources overlapping did not move there either, 37.6 ms of half width against 37.1 to 38.3 ms, so the ten milliseconds between the two sets is the fit and the oscillator rather than the sources."
   # Replaced 2026-09-09. The sentence it replaces said nothing in
   # the code counts operators, which stopped being true the same evening, and its figure was five
@@ -167,9 +167,9 @@ sentences=(
   "The operator names the floor counts are strings the signer wrote."
   # Pinned as far as the comma and no further. What follows it on each surface is the width of the
   # receipt on disk, and that is read from the receipt rather than pinned here.
-  "Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms over three passes at 21:39,"
+  "Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms wide over three passes at 21:39,"
   "Enforcing independence narrowed nothing and was never going to, because the rule refuses rounds rather than narrowing them: the sources overlapping is 35.1 ms of half width on that receipt against 34.9 ms on the one before it."
-  "Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 128.7 ms, 128.8 ms and 129.1 ms over three readings at 22:17, against 122.7 ms, 122.8 ms and 122.6 ms from the same agent at the same uptime and the same cadence before the rule at 21:04."
+  "Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 128.7 ms, 128.8 ms and 129.1 ms wide over three readings at 22:17, against 122.7 ms, 122.8 ms and 122.6 ms wide from the same agent at the same uptime and the same cadence before the rule at 21:04."
   "The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did."
   "NTS authenticates a source and can never be evidence for a bound."
   # Rewritten 2026-09-15, when the one-shot ceiling moved from 30 s to 2 s. The sentence it replaces
@@ -593,8 +593,8 @@ def agrees(written, actual):
 ATTRIBUTED = re.compile(r'([\d.]+)\s+(ms|s)\s+on the receipt committed in this repository')
 
 BREAKDOWN = re.compile(
-    r"The largest single part of the ([\d.]+) ms on the receipt committed in this repository is "
-    r"the model's own regression residual doubled by the coverage factor, ([\d.]+) ms of half "
+    r"Of the ([\d.]+) ms of width on the receipt committed in this repository, the largest single "
+    r"part is the model's own regression residual doubled by the coverage factor, ([\d.]+) ms of half "
     r"width, with ([\d.]+) ms of the sources overlapping and ([\d.]+) ms of the oscillator "
     r'beside it')
 

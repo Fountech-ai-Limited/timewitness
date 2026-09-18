@@ -136,7 +136,7 @@ summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
     echo "A runner that reaches only the three public Roughtime servers gets no receipt: that is three"
     echo "operators, under the floor of four the agent signs on, so this step fails there rather than"
     echo "signing. Ours, on GitHub-hosted runners at sixteen rounds, each a reading from the day it"
-    echo "names: 211.3 ms on 2026-09-09 with Roughtime and plain NTP servers answering, and 287.147 ms"
+    echo "names: a bound of 211.3 ms on 2026-09-09 with Roughtime and plain NTP servers answering, and a bound of 287.147 ms"
     echo "on 2026-09-14 from the public install check. Those two are not a series and are not a trend."
     echo "This step refuses a width over $max_width ns."
     echo

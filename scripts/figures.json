@@ -92,7 +92,16 @@
   }
  },
  "$subjects": {
-  "$rule": "What a figure in this register is of, and the words a sentence may use to say so. Every entry names one. A sentence quoting a figure is read for the nearest of these words to it in its own clause, the one directly after it (\"35.081 ms of the sources overlapping\") first and otherwise the nearest before it (\"the residual falls from 13.522 ms\"), and that word has to be one the entry's subject is named by. A sentence that names no subject near the figure is not held to one, because a list of readings names what they are once, at its head. A subject named by nothing is not held to this at all: it is a setting, a condition or an illustration, and a sentence about it can call it anything but a measured part of a bound. The words under neutral are read past. Each measured subject names the receipt field it is read off, so an entry whose evidence is a receipt is held to that field and to nothing else in the receipt.",
+  "$rule": "What a figure in this register is of, and the words a sentence may use to say so. Every entry names one. A sentence quoting a figure is read for the nearest of these words to it in its own clause, after the figure first (\"35.081 ms of the sources overlapping\", whatever sits between) and otherwise the nearest before it (\"the residual falls from 13.522 ms\"), and that word has to be one the entry's subject is named by; nearest wins, so a sentence that puts another subject's word nearer is refused whether or not it meant the entry's. A sentence that names no subject the reader can see near the figure, and carries none of the words under neutral anywhere, is refused rather than read as agreeing: from 2026-09-18 what cannot be read is refused, because until then such a sentence passed for the same reason a forged one did. A subject named by nothing is not held to this at all: it is a setting, a condition or an illustration, and a sentence about it can call it anything but a measured part of a bound, held only where the word sits against the figure. The words under neutral are read past. Every word here and every word of a sentence is folded over the suffixes under $suffixes before the two are compared, so a form of a word is the word. Each measured subject names the receipt field it is read off, so an entry whose evidence is a receipt is held to that field and to nothing else in the receipt.",
+  "$suffixes": {
+   "$rule": "The closed set of suffixes a word is folded over before it is compared with a word here: one of these taken off the end where at least three letters are left, a doubled last consonant read once after -ing or -ed, so overlapped, overlapping and overlaps are overlap. The self-test refuses this register where two subjects' phrases, or two owners' words on one axis, fold alike. Until 2026-09-18 the words here were a hand-written list of forms and each cold set found the form the list lacked.",
+   "list": [
+    "ings",
+    "ing",
+    "ed",
+    "s"
+   ]
+  },
   "neutral": [
    "half width",
    "half widths",
@@ -193,7 +202,7 @@
   }
  },
  "$owners": {
-  "$rule": "Whose a measured figure is, on two axes: the machine it was taken on and the path it was taken through. Every entry of a measurement names both. A sentence quoting the figure is read, in the figure's own clause, for the words naming each owner, and a word naming another owner on either axis refuses it, naming the entry, the word and the owner. Until 2026-09-17 the three most quoted figures, the committed receipt's, the agent's and the runner's, could be swapped between a desktop and a runner and between the agent and the one-shot command on every surface.",
+  "$rule": "Whose a measured figure is, on two axes: the machine it was taken on and the path it was taken through. Every entry of a measurement names both. A sentence quoting the figure is read, in the figure's own clause, for the words naming each owner, and a word naming another owner on either axis refuses it, naming the entry, the word and the owner. Where nothing beside the figure names an owner, the whole sentence is read on the axis: one other owner named refuses, and two owners named refuses too, naming the axis and both, because a sentence that names two and points at neither cannot be read, and until 2026-09-18 naming a second owner bought a pass. The words are folded over $subjects.$suffixes before they are compared. Until 2026-09-17 the three most quoted figures, the committed receipt's, the agent's and the runner's, could be swapped between a desktop and a runner and between the agent and the one-shot command on every surface.",
   "machine": {
    "an ordinary desktop": [
     "desktop",

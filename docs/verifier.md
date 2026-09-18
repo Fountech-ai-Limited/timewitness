@@ -87,8 +87,7 @@ moment, which is the latest checked not-earlier-than against the earliest checke
 receipt resting on its agent's own model it names the width as the signer's own claim, and it says so
 where the receipt carries no Roughtime corridor or carries one nobody checked.
 
-On the receipt committed at `crates/verify/tests/data/a-real-stamp/` that line is a bracket of 2 s
-round a width of 153.875 ms. On the one at `crates/verify/tests/data/a-backdated-receipt/`, whose
+On the receipt committed at `crates/verify/tests/data/a-real-stamp/` that line is a 2 s bracket round a width of 153.875 ms. On the one at `crates/verify/tests/data/a-backdated-receipt/`, whose
 attestations are all genuine and whose reading was moved back three years, it is about 2.95 years.
 Both pass every check, and until 2026-09-15 both printed the same first line and nothing under it.
 
@@ -112,7 +111,7 @@ So the reader holds numbers of their own. The shipped ones:
 
 | | | Why |
 |---|---|---|
-| narrowest interval | 1 us | Two orders of magnitude under the tightest condition the product quotes, which is about 100 us to UTC on a cloud instance with a hypervisor clock. That figure is quoted from public research and has not been measured by this product or by us. Deliberately not set at the 200 us today's agent policy cannot beat, because a future agent on better hardware honestly will, and refusing those would look identical to catching a lie. |
+| narrowest interval | a ceiling of 1 us | Two orders of magnitude under the tightest condition the product quotes, which is about 100 us to UTC on a cloud instance with a hypervisor clock. That figure is quoted from public research and has not been measured by this product or by us. Deliberately not set at the 200 us today's agent policy cannot beat, because a future agent on better hardware honestly will, and refusing those would look identical to catching a lie. |
 | widest interval | 1 hour | Past an hour an interval says nothing a calendar would not. |
 | fewest sources answering | 3 | With three, a majority beats one bad clock. Two is two clocks agreeing. |
 | fewest operators behind the sources kept | 3 | The row above counts names and names are free: nine addresses at one company clear it with six to spare and are one chance to be wrong. A fault happens to whoever runs a server, so this is the count Marzullo's guarantee rests on. Three and not the four the shipped agent requires, because four is chosen against the server lists this product ships against today and a verifier is read years later by somebody pointing an agent at their own. Counted by the reader from the `operator` labels and never read out of the receipt. A receipt naming no operator anywhere does not clear it: the receipt crate accepts such a receipt, because its question is whether the agent kept its own word, and this question is whether there is any reason to believe the sources failed separately. |
