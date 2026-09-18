@@ -147,7 +147,7 @@ reasoning and with what each kind of evidence actually says, is
 [`docs/what-timewitness-cannot-prove.md`](docs/what-timewitness-cannot-prove.md). A reviewer who
 knows this field should find nothing there that we did not say first.
 
-The full list runs to 59 items. What follows groups them and leaves some out, so read the full list
+The full list runs to 60 items. What follows groups them and leaves some out, so read the full list
 before deciding whether this product does what you need. `scripts/three-surfaces.sh` holds that
 number to the list itself, which is how an item added there and not summarised here gets noticed.
 
@@ -161,7 +161,12 @@ machine stayed alive through a power cut; it can record the gap. It cannot carry
 its last synchronisation, because the machine's own oscillator changes rate as it warms and cools:
 on the shipped settings the agent refuses about sixteen minutes after the sources last answered
 rather than reporting a number too wide to be worth anything, and that figure and the widths behind
-it come from the simulated harness rather than from a real network.
+it come from the simulated harness rather than from a real network. It cannot prove that this machine's
+oscillator is the one the arithmetic assumes: every allowance for the oscillator rests on the rate
+staying inside the band the policy states, which comes from a consumer crystal's published
+specification and has never been measured by us on real hardware. The agent reads its own fitted
+rate back against that band and widens by what it measured where the two disagree, and before it has
+fitted anything it cannot tell.
 
 **About the evidence.** An authenticated corridor makes the moment checkable to within seconds and
 does not make the bound tighter, because a Roughtime radius is seconds. A beacon's signature covers a round number and not a

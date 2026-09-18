@@ -215,6 +215,20 @@ moment of synchronising and 234.6 ms at fifteen minutes, come from the simulated
 wrote down; they are the arithmetic of the model rather than a reading from a real network. An agent
 that cannot reach its sources stops issuing receipts; it does not issue worse ones.
 
+**It cannot prove that this machine's oscillator is the one the arithmetic assumes.** Every
+allowance the model derives for the oscillator rests on one assumption: that the rate of this
+machine's counter stays inside the band the policy states for it, a hundred parts per million from
+one end of the band to the other at the shipped settings, so the largest magnitude a part may
+honestly show is fifty. Both figures are `Policy::frequency_span_ppm` in this tree. They come from a
+consumer crystal's published specification across its temperature range, they are a choice about
+hardware rather than a measurement, and nothing in this product has measured either on real
+hardware. What the agent does do, from 2026-09-18, is read its own fitted rate back against that
+band every time it fits one, and where the fit puts the machine outside it the model stops claiming
+the rate and widens by the magnitude it measured instead, so the interval holds what was seen rather
+than what was assumed. What it cannot do is see a machine outside the band before it has fitted
+anything at all, which is every reading in the first rounds after a start. On a machine outside the
+band, nothing on this page is a promise the arithmetic can keep.
+
 ## About the evidence, and this is where most of the surprises are
 
 The three evidence roles do different jobs and none of them does another's. Nothing below is a fault
