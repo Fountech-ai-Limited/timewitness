@@ -4225,6 +4225,15 @@ def the_score_refuses_a_fitted_set_however_it_is_written(policy):
             if code == 2 or ('line 2 is' in said.getvalue()):
                 faults.append(f'a set with {walk} came back {code}, or its first line was named as '
                               f'recorded material, and it is outside the list: "{first[:70]}"')
+        # The residue is what is scored: five fresh lines beside one recorded verbatim score on the
+        # five, the score line says so, and the recorded line is out of the count rather than in it.
+        target = work / 'one-recorded-five-fresh.txt'
+        target.write_text(NEWLINE.join(['# one recorded', body[0]] + FRESH_FIVE + body[3:] + ['']), encoding='utf-8')
+        said = io.StringIO()
+        with contextlib.redirect_stdout(said), contextlib.redirect_stderr(said):
+            code = score(str(target), policy)
+        if code == 2 or not re.search(r'\d+ of 5 refused, \d+ of 5 right, on a residue of 5 of 6 sentences to be refused \(1 recorded here and out of the count\)', said.getvalue()):
+            faults.append(f'a set of five fresh lines and one recorded came back {code} without a residue of 5 of 6 on its score line')
     finally:
         FITTED.write_bytes(manifest)
         if recorded is None:
