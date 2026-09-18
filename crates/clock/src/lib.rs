@@ -44,7 +44,7 @@ pub use discipline::{
 };
 pub use loss::{LossOfUtc, Response};
 pub use marzullo::Intersection;
-pub use model::{ClockModel, SyncFit};
+pub use model::{oscillator_holdover, ClockModel, RateKnowledge, SyncFit};
 pub use monotonic::{MonotonicClock, SystemMonotonic, TestClock};
 pub use policy::Policy;
 pub use sample::{RejectedExchange, Sample};

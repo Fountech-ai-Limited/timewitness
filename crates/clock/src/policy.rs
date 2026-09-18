@@ -149,6 +149,14 @@ pub struct Policy {
     /// That is the honest outcome: an hour of holdover on a machine whose crystal is warming up is
     /// not something to put a number on.
     ///
+    /// Half of it is also what the model carries for a rate it is not correcting for, which is
+    /// every read before a fit exists and every read after a fit it refused: the largest
+    /// magnitude a part inside the band may honestly show, over the elapsed time, on top of the
+    /// floor above. Until 2026-09-18 a read before a fit carried the floor alone, and the floor
+    /// bounds a measurement rather than a raw counter. `crates/clock/src/model.rs`,
+    /// `oscillator_holdover`, states the invariant and the three assumptions it rests on, and
+    /// the first of them is that this band is true of the machine.
+    ///
     /// A choice about hardware, not a measurement on this machine, and it only ever widens.
     pub frequency_span_ppm: f64,
 

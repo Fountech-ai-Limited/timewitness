@@ -89,18 +89,8 @@ struct SyncState {
     offset: Nanos,
     /// The standard error of that offset, from the regression.
     offset_stderr: Nanos,
-    /// The frequency error the model will stand behind, in parts per million, positive meaning the
-    /// local clock is slow. `None` where the fit could not support one. See `supports_a_rate`.
-    frequency_ppm: Option<f64>,
-    /// The standard error of that frequency.
-    frequency_stderr_ppm: f64,
-    /// The magnitude of a fitted rate the model refused to stand behind, in parts per million.
-    ///
-    /// Zero whenever a rate is claimed, and zero before anything has been fitted. Where a fit is
-    /// refused this carries its magnitude into the width, because the correction that would have
-    /// removed it is no longer being applied and the true rate could be anywhere the fit allowed.
-    /// It is what makes refusing a fit a widening rather than a quiet tightening.
-    unclaimed_frequency_ppm: f64,
+    /// What the width knows about the oscillator's rate. See [`RateKnowledge`].
+    rate: RateKnowledge,
     /// The largest half round trip among the surviving sources, reported and never added twice.
     widest_network_half: Nanos,
     /// How the sources were combined.
@@ -130,7 +120,8 @@ pub struct SyncFit {
     pub frequency_ppm: Option<f64>,
     /// The standard error of that frequency.
     pub frequency_stderr_ppm: f64,
-    /// The magnitude of a fitted rate the model refused to stand behind.
+    /// The magnitude the model is not correcting for, in parts per million. See
+    /// [`RateKnowledge::unclaimed_frequency_ppm`].
     pub unclaimed_frequency_ppm: f64,
     /// The largest half round trip among the surviving sources.
     pub widest_network_half: Nanos,
@@ -249,9 +240,9 @@ impl ClockModel {
             intersection: sync.intersection,
             offset: sync.offset,
             offset_stderr: sync.offset_stderr,
-            frequency_ppm: sync.frequency_ppm,
-            frequency_stderr_ppm: sync.frequency_stderr_ppm,
-            unclaimed_frequency_ppm: sync.unclaimed_frequency_ppm,
+            frequency_ppm: sync.rate.frequency_ppm,
+            frequency_stderr_ppm: sync.rate.frequency_stderr_ppm,
+            unclaimed_frequency_ppm: sync.rate.unclaimed_frequency_ppm,
             widest_network_half: sync.widest_network_half,
         })
     }
@@ -540,42 +531,33 @@ impl ClockModel {
         let history: Vec<regression::Point> = self.history.iter().copied().collect();
         let fitted = regression::fit(&history, self.policy.regression_min_points);
 
-        let (offset, offset_stderr, frequency_ppm, frequency_stderr_ppm, unclaimed_frequency_ppm) =
-            match fitted {
-                Some(fit) => {
-                    // The offset half of the fit is kept either way. It is the scatter of the
-                    // measurements themselves and it is honest whatever the baseline was; throwing
-                    // it away with the frequency would take the largest term out of the width for
-                    // nothing.
-                    let offset = fit.offset.clamp(selection.region.lo, selection.region.hi);
-                    if supports_a_rate(&fit, &self.policy) {
-                        (
-                            offset,
-                            fit.offset_stderr,
-                            Some(fit.frequency_ppm),
-                            fit.frequency_stderr_ppm,
-                            0.0,
-                        )
-                    } else {
-                        (
-                            offset,
-                            fit.offset_stderr,
-                            None,
-                            fit.frequency_stderr_ppm,
-                            fit.frequency_ppm.abs(),
-                        )
-                    }
-                }
-                // Nothing has been fitted yet, so no frequency has been measured. The honest values
-                // are no drift and no extra residual, with the floor carrying the uncertainty.
-                None => (
-                    combined.offset,
-                    0,
-                    None,
-                    self.policy.frequency_floor_ppm,
-                    0.0,
-                ),
-            };
+        let (offset, offset_stderr, rate) = match fitted {
+            Some(fit) => {
+                // The offset half of the fit is kept either way. It is the scatter of the
+                // measurements themselves and it is honest whatever the baseline was; throwing
+                // it away with the frequency would take the largest term out of the width for
+                // nothing.
+                let offset = fit.offset.clamp(selection.region.lo, selection.region.hi);
+                (
+                    offset,
+                    fit.offset_stderr,
+                    RateKnowledge::from_fit(&fit, &self.policy),
+                )
+            }
+            // Nothing has been fitted yet. The residual is nought and that is the honest value for
+            // it: the residual measures how far the points sit from the fitted line, there is no
+            // line, and the intersection this round produced is the whole of what is known about
+            // the offset and is carried whole. The rate is a different matter. Nought was the
+            // value here until 2026-09-18, with the floor carrying the uncertainty, and the floor
+            // bounds how wrong a fitted rate was rather than how wrong an unfitted one can be, so
+            // a machine drifting forty parts per million walked out of a signed interval nine
+            // seconds after its first round. What is carried instead is in `before_a_fit`.
+            None => (
+                combined.offset,
+                0,
+                RateKnowledge::before_a_fit(&self.policy),
+            ),
+        };
 
         // Reported over everything that answered, not over everything that was used. A source
         // dropped for saying its own clock is wrong is in the receipt with `kept` false, because a
@@ -601,9 +583,7 @@ impl ClockModel {
             intersection: selection.region,
             offset,
             offset_stderr,
-            frequency_ppm,
-            frequency_stderr_ppm,
-            unclaimed_frequency_ppm,
+            rate,
             widest_network_half,
             // Offered is over everything that answered, which is what the field says it is and what
             // the source list beside it holds. It read `found.offered` until it was corrected,
@@ -665,35 +645,10 @@ impl ClockModel {
         // it and the drift correction runs the other way over it.
         let (elapsed, direction) = holdover_at(now, sync);
 
-        // Two quantities and they are not the same one. The first is how wrong the fitted frequency
-        // was at the moment it was fitted, floored at what the hardware can support. The second is
-        // how far the rate has moved since, which is what the correction below cannot know about
-        // and what the fitted frequency's own standard error says nothing about. They are added
-        // rather than maximised, because they are independent and both are present.
-        //
-        // Holding them as one number was an earlier fault: fifteen parts per million was doing both
-        // jobs, and fifteen is NTP's `PHI`, which bounds the total error of an extrapolation that
-        // has not been corrected. Correcting first and then applying the same figure to what is
-        // left applies it to a different quantity, and an ordinary forty parts per million
-        // temperature change then put true UTC 79.669 ms outside a receipt that signed cleanly.
-        //
-        // A third quantity joins them where the model refused a fitted rate. The correction below
-        // is then not applied, so the true rate could be anywhere that fit allowed, and the whole
-        // magnitude of it has to be carried as width instead. Adding it to the measurement term
-        // rather than taking the larger of the two is what makes this a widening: the interval
-        // afterwards is the interval before it plus the fitted magnitude on each side, so it
-        // contains the old one at every elapsed time rather than merely resembling it.
-        let measurement_ppm = (sync.frequency_stderr_ppm * self.policy.coverage_factor)
-            .max(self.policy.frequency_floor_ppm)
-            + sync.unclaimed_frequency_ppm;
-        let frequency_uncertainty_ppm = measurement_ppm + rate_movement_ppm(&self.policy, elapsed);
-
-        let oscillator_holdover =
-            ppm_over(frequency_uncertainty_ppm, elapsed).saturating_add(if elapsed > 0 {
-                self.policy.holdover_allowance
-            } else {
-                0
-            });
+        // The whole of the allowance for the oscillator is one function, so the invariant it
+        // carries can be asserted on the arithmetic with no world in the test. Its documentation
+        // says what the terms are and what the allowance assumes.
+        let oscillator_holdover = oscillator_holdover(&self.policy, &sync.rate, elapsed);
         let model_residual = scaled(sync.offset_stderr, self.policy.coverage_factor);
         let scheduling = self.scheduling_allowance;
         let safety_margin = self.policy.safety_margin;
@@ -702,7 +657,7 @@ impl ClockModel {
             .saturating_add(scheduling)
             .saturating_add(safety_margin);
 
-        let drift = signed_ppm_over(sync.frequency_ppm.unwrap_or(0.0), direction);
+        let drift = signed_ppm_over(sync.rate.frequency_ppm.unwrap_or(0.0), direction);
         let (lo, hi, width) = place(
             &sync.intersection,
             drift,
@@ -746,7 +701,7 @@ impl ClockModel {
             sources: sync.sources.clone(),
             generations: self.generations,
             since_last_sync: elapsed,
-            frequency_ppm: sync.frequency_ppm,
+            frequency_ppm: sync.rate.frequency_ppm,
         })
     }
 
@@ -1018,6 +973,159 @@ fn nanos_as_millis(n: Nanos) -> f64 {
     n as f64 / NANOS_PER_MILLI as f64
 }
 
+/// What the width knows about this machine's oscillator, as `read` composes it.
+///
+/// Three numbers, and the allowance for the oscillator is built from all three by
+/// [`oscillator_holdover`]. The first is the rate the model corrects a reading by, or `None` where
+/// it has none it will stand behind. The second is how wrong that rate was at the moment it was
+/// fitted. The third is the magnitude the model is not correcting for at all, which is what makes
+/// refusing a fit, or not having one, a widening rather than a quiet tightening.
+///
+/// The only two ways to build one inside the model are [`RateKnowledge::before_a_fit`] and
+/// [`RateKnowledge::from_fit`], and every field is public so the arithmetic can be asserted on
+/// values a test writes down rather than only on values a world produced.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RateKnowledge {
+    /// The frequency error the model will stand behind, in parts per million, positive meaning the
+    /// local clock is slow. `None` where nothing has been fitted or the fit could not be supported.
+    pub frequency_ppm: Option<f64>,
+    /// The standard error of that frequency, in parts per million. The floor before a fit, so the
+    /// measurement term is never below what the hardware can support.
+    pub frequency_stderr_ppm: f64,
+    /// The magnitude of rate the model is not correcting for, in parts per million.
+    ///
+    /// Nought whenever a rate is claimed. Wherever no rate is claimed it is at least half the band
+    /// the policy states, because that is the largest magnitude a part may honestly show and the
+    /// correction that would have removed it is not being applied. Before a fit it is exactly
+    /// half the band; for a fit the model refused it is the larger of half the band and the
+    /// magnitude the fit found, since a fit outside the band is the machine saying the band was
+    /// wrong about it and the larger figure is the one to carry.
+    pub unclaimed_frequency_ppm: f64,
+}
+
+impl RateKnowledge {
+    /// What the model knows before anything has been fitted: nothing measured, and a rate that
+    /// could be anywhere in the band.
+    ///
+    /// The floor stands in for the standard error, as it always did. What changed on 2026-09-18 is
+    /// the unclaimed magnitude, which was nought. `Policy::frequency_floor_ppm` bounds how wrong
+    /// the model's own measurement of the rate is, and before a fit there is no measurement for it
+    /// to bound, so it was being asked to bound the raw counter instead. The raw counter can be
+    /// wrong by the whole band a part is specified across, and `crates/agent/src/crossing.rs`
+    /// already carries that rule for a caller's counter; this is the same rule at the model's own
+    /// first read.
+    ///
+    /// A band that is not a finite number above nought is a band nobody can read, and the
+    /// magnitude is then infinite, which [`ppm_over`] carries as [`WIDEST`] and the ceiling
+    /// refuses. `Policy::fault` refuses such a policy first; this is the second net.
+    #[must_use]
+    pub fn before_a_fit(policy: &Policy) -> Self {
+        Self {
+            frequency_ppm: None,
+            frequency_stderr_ppm: policy.frequency_floor_ppm,
+            unclaimed_frequency_ppm: half_band(policy),
+        }
+    }
+
+    /// What the model takes from a fit: the rate where it will stand behind it, and the magnitude
+    /// it is not correcting for where it will not.
+    #[must_use]
+    pub fn from_fit(fit: &Fit, policy: &Policy) -> Self {
+        if supports_a_rate(fit, policy) {
+            Self {
+                frequency_ppm: Some(fit.frequency_ppm),
+                frequency_stderr_ppm: fit.frequency_stderr_ppm,
+                unclaimed_frequency_ppm: 0.0,
+            }
+        } else {
+            Self {
+                frequency_ppm: None,
+                frequency_stderr_ppm: fit.frequency_stderr_ppm,
+                unclaimed_frequency_ppm: readable(fit.frequency_ppm.abs()).max(half_band(policy)),
+            }
+        }
+    }
+}
+
+/// Half the band the policy states, which is the largest magnitude a part may honestly show, or an
+/// infinite magnitude where the band cannot be read.
+fn half_band(policy: &Policy) -> f64 {
+    let band = policy.frequency_span_ppm;
+    if band.is_finite() && band > 0.0 {
+        band / 2.0
+    } else {
+        f64::INFINITY
+    }
+}
+
+/// A rate as an allowance may read it: itself where it is a finite number no less than nought, and
+/// infinite otherwise.
+///
+/// Every rate that enters the allowance goes through this, because the alternative is what stood
+/// until 2026-09-18: `f64::max` answers with its other operand when one is not a number, so a
+/// standard error that was not a number came out as the floor, which is the permitting value on
+/// exactly the input that says the measurement cannot be known. An infinite rate becomes [`WIDEST`]
+/// in [`ppm_over`] and is refused by the ceiling, which is the same refusal said plainly.
+fn readable(ppm: f64) -> f64 {
+    if ppm.is_finite() && ppm >= 0.0 {
+        ppm
+    } else {
+        f64::INFINITY
+    }
+}
+
+/// The allowance for the oscillator over `elapsed`, in nanoseconds: what goes in the breakdown
+/// under that name.
+///
+/// Three quantities in parts per million, added rather than maximised because they are independent
+/// and all three are present, over the elapsed time, plus the fixed holdover allowance whenever the
+/// model is extrapolating at all.
+///
+/// The first is how wrong the fitted rate was at the moment it was fitted, floored at what the
+/// hardware can support. The second is the magnitude the model is not correcting for. The third is
+/// how far the rate may have moved since, which the correction cannot know about and the fit's own
+/// standard error says nothing about. Holding the first and third as one number was an earlier
+/// fault: fifteen parts per million was doing both jobs, and fifteen is NTP's `PHI`, which bounds
+/// the total error of an extrapolation that has not been corrected. Correcting first and then
+/// applying the same figure to what is left applies it to a different quantity, and an ordinary
+/// forty parts per million temperature change then put true UTC 79.669 ms outside a receipt that
+/// signed cleanly.
+///
+/// The invariant, and the three assumptions it rests on. Wherever `rate.frequency_ppm` is `None`,
+/// this allowance is at least `frequency_span_ppm / 2` parts per million over `elapsed`, for every
+/// policy `Policy::fault` accepts and every elapsed time. That holds a truth that started inside
+/// the sources' intersection under three assumptions, and a proof without them is not a proof:
+///
+/// 1. The machine's true rate magnitude never passes `frequency_span_ppm / 2`. A choice about
+///    hardware, stated on that field, and never measured on this machine.
+/// 2. The rate moves by at most `frequency_slew_ppm_per_second` per second. The same kind of
+///    choice, stated on that field.
+/// 3. The sources' intersection holds the truth at the moment the newest exchange went out, which
+///    is the moment `elapsed` is measured from.
+///
+/// The first is what the pre-fit branch rests on entirely, since nothing there corrects for any
+/// rate and the whole of it has to be covered. A machine outside the band gets a width this
+/// arithmetic cannot vouch for, and nothing here can tell. The test that asserts the invariant on
+/// the arithmetic alone is `crates/clock/tests/the_band_before_a_fit.rs`.
+///
+/// A rate that cannot be read, in any of the three or in the fields they are built from, is an
+/// infinite allowance and never nought; see `readable`. The term is carried at no more than
+/// [`WIDEST`], which is what that constant says of every term, so a fixed allowance on top of an
+/// infinite one is still one term the ceiling refuses rather than a sum past what a term may be.
+#[must_use]
+pub fn oscillator_holdover(policy: &Policy, rate: &RateKnowledge, elapsed: Nanos) -> Nanos {
+    let measured = readable(rate.frequency_stderr_ppm * policy.coverage_factor);
+    let floor = readable(policy.frequency_floor_ppm);
+    let unclaimed = readable(rate.unclaimed_frequency_ppm);
+    let ppm = measured.max(floor) + unclaimed + rate_movement_ppm(policy, elapsed);
+    let fixed = if elapsed > 0 {
+        policy.holdover_allowance
+    } else {
+        0
+    };
+    ppm_over(ppm, elapsed).saturating_add(fixed).min(WIDEST)
+}
+
 /// Whether a fit has actually measured this machine's oscillator, or only its own noise.
 ///
 /// The regression is honest arithmetic and it will fit a line through anything. What it cannot do
@@ -1057,21 +1165,24 @@ fn supports_a_rate(fit: &Fit, policy: &Policy) -> bool {
 /// things: a slew over the time that has passed, and the whole band the part is specified across.
 /// Over a poll interval that is a few parts per million and over an outage it is the whole band.
 ///
-/// Both figures are choices and both live in `Policy` with the reasoning attached. Anything not
-/// finite is an infinite allowance. This said the opposite until 2026-09-17, on the reasoning that an
-/// infinite widening is a refusal dressed as an answer, and what it gave instead was no allowance at
-/// all, which narrows the bound. An infinite allowance becomes [`WIDEST`] in `ppm_over`, and a bound
-/// holding that is refused by the ceiling, which is the same refusal said plainly.
+/// Both figures are choices and both live in `Policy` with the reasoning attached. A slew or a band
+/// that is not a finite number, or a slew below nought, or a band at or below it, is an infinite
+/// allowance. This said the opposite until 2026-09-17, on the reasoning that an infinite widening is
+/// a refusal dressed as an answer, and what it gave instead was no allowance at all, which narrows
+/// the bound; and until 2026-09-18 a negative slew or a band of nought still came out as no
+/// movement. An infinite allowance becomes [`WIDEST`] in `ppm_over`, and a bound holding that is
+/// refused by the ceiling, which is the same refusal said plainly.
 fn rate_movement_ppm(policy: &Policy, elapsed: Nanos) -> f64 {
     if elapsed <= 0 {
         return 0.0;
     }
-    let seconds = elapsed as f64 / NANOS_PER_SEC as f64;
-    let slewed = policy.frequency_slew_ppm_per_second * seconds;
-    if !slewed.is_finite() || !policy.frequency_span_ppm.is_finite() {
+    let slew = readable(policy.frequency_slew_ppm_per_second);
+    let band = policy.frequency_span_ppm;
+    if !slew.is_finite() || !band.is_finite() || band <= 0.0 {
         return f64::INFINITY;
     }
-    slewed.min(policy.frequency_span_ppm).max(0.0)
+    let seconds = elapsed as f64 / NANOS_PER_SEC as f64;
+    (slew * seconds).min(band)
 }
 
 /// A nanosecond allowance scaled by a factor, rounded up.
@@ -1134,6 +1245,40 @@ mod tests {
                 10 * NANOS_PER_MILLI + 5 + 1_000,
                 20 * NANOS_PER_MILLI + 2_000
             )
+        );
+    }
+
+    #[test]
+    fn a_refused_fit_carries_no_less_than_half_the_band() {
+        // Refused for an error bar wider than the band, with a small magnitude. The two reasons a
+        // fit is refused for each carry more than half the band on their own, so this floor is not
+        // what holds the invariant today; it is what holds it when a third reason is added.
+        let fit = Fit {
+            offset: 0,
+            offset_stderr: 0,
+            frequency_ppm: 3.0,
+            frequency_stderr_ppm: 200.0,
+            points: 3,
+        };
+        let rate = RateKnowledge::from_fit(&fit, &Policy::default());
+        assert_eq!(rate.frequency_ppm, None);
+        assert!(
+            rate.unclaimed_frequency_ppm >= 50.0,
+            "{}",
+            rate.unclaimed_frequency_ppm
+        );
+        // And one outside the band carries its own magnitude, which is the larger.
+        let outside = Fit {
+            frequency_ppm: -80.0,
+            frequency_stderr_ppm: 1.0,
+            ..fit
+        };
+        let rate = RateKnowledge::from_fit(&outside, &Policy::default());
+        assert_eq!(rate.frequency_ppm, None);
+        assert!(
+            rate.unclaimed_frequency_ppm >= 80.0,
+            "{}",
+            rate.unclaimed_frequency_ppm
         );
     }
 
