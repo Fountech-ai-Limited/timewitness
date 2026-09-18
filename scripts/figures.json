@@ -1247,6 +1247,162 @@
    "conditions": "a round figure for how long a build runner exists, used to say there is nothing for an agent to be resident on. Not a measurement",
    "evidence": "docs/what-timewitness-cannot-prove.md, the section on what is built today, the paragraph on the one line a workflow installs",
    "of": "a setting or a condition"
+  },
+  {
+   "figure": [
+    "102",
+    "101",
+    "3",
+    "9",
+    "37",
+    "43",
+    "48",
+    "67",
+    "10"
+   ],
+   "unit": "s",
+   "precision": "1 s",
+   "whose": "ours",
+   "conditions": "uptime marks of two fresh resident agents on an ordinary Windows desktop, 2026-09-18 from 22:55:55, nine published servers, thirty-two second cadence, 250 ms ceiling, one asked every five seconds for forty minutes and one every ten seconds for seven minutes; and the ten second interval between readings on the second",
+   "evidence": {
+    "kind": "record",
+    "artefact": "docs/records/2026-09-18-resident-agent-uptime-marks.json"
+   },
+   "of": "a setting or a condition",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   },
+   "setup": {
+    "date": "2026-09-18",
+    "cadenceSeconds": 32
+   }
+  },
+  {
+   "figure": [
+    "7",
+    "2"
+   ],
+   "unit": "minutes",
+   "precision": "1 minutes",
+   "whose": "ours",
+   "conditions": "the length of the seven-minute run of 2026-09-18, one of two resident agents started in the same minute on an ordinary Windows desktop, and the two minutes of uptime inside which both had their last refusal",
+   "evidence": {
+    "kind": "record",
+    "artefact": "docs/records/2026-09-18-resident-agent-run-length.json"
+   },
+   "of": "a setting or a condition",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   },
+   "setup": {
+    "date": "2026-09-18",
+    "cadenceSeconds": 32
+   }
+  },
+  {
+   "figure": [
+    "130.988",
+    "203.677"
+   ],
+   "unit": "ms",
+   "precision": "0.001 ms",
+   "whose": "ours",
+   "conditions": "the narrowest and the widest signed reading from three to twelve minutes of uptime on an ordinary Windows desktop, 2026-09-18, one reading every five seconds, 101 readings and nought refused, 250 ms ceiling",
+   "evidence": {
+    "kind": "record",
+    "artefact": "docs/records/2026-09-18-resident-agent-widths.json"
+   },
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   },
+   "setup": {
+    "date": "2026-09-18",
+    "cadenceSeconds": 32,
+    "uptimeMinutes": [
+     3,
+     12
+    ]
+   }
+  },
+  {
+   "figure": [
+    "149.224",
+    "197.686"
+   ],
+   "unit": "ms",
+   "precision": "0.001 ms",
+   "whose": "ours",
+   "conditions": "the narrowest and the widest signed reading from three to seven minutes of uptime on a second resident agent started in the same minute on the same desktop, 2026-09-18, one reading every ten seconds, 23 readings and nought refused, 250 ms ceiling",
+   "evidence": {
+    "kind": "record",
+    "artefact": "docs/records/2026-09-18-resident-agent-widths.json"
+   },
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   },
+   "setup": {
+    "date": "2026-09-18",
+    "cadenceSeconds": 32,
+    "uptimeMinutes": [
+     3,
+     7
+    ]
+   }
+  },
+  {
+   "figure": [
+    "130.346",
+    "115.308",
+    "115.260"
+   ],
+   "unit": "ms",
+   "precision": "0.001 ms",
+   "whose": "ours",
+   "conditions": "an ordinary Windows desktop, 2026-09-18 at 23:32, three readings through the resident agent at thirty-six minutes of uptime and a thirty-two second polling cadence, nine servers behind six operators and nine kept, after the ageing of a source's interval was bounded by the band",
+   "evidence": {
+    "kind": "record",
+    "artefact": "docs/records/2026-09-18-resident-agent-widths.json"
+   },
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   },
+   "setup": {
+    "date": "2026-09-18",
+    "cadenceSeconds": 32,
+    "uptimeMinutes": 36
+   }
+  },
+  {
+   "figure": [
+    "37.991",
+    "36.830"
+   ],
+   "unit": "ms",
+   "precision": "0.001 ms",
+   "whose": "ours",
+   "conditions": "the sources overlapping, halved, on the three readings through the resident agent at thirty-six minutes of uptime on an ordinary Windows desktop, 2026-09-18 at 23:32, read off timewitness verify on each receipt",
+   "evidence": {
+    "kind": "record",
+    "artefact": "docs/records/2026-09-18-resident-agent-sources-overlapping.json"
+   },
+   "of": "the sources overlapping",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   },
+   "setup": {
+    "date": "2026-09-18",
+    "cadenceSeconds": 32,
+    "uptimeMinutes": 36
+   }
   }
  ]
 }

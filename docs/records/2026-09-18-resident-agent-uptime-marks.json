@@ -1,0 +1,21 @@
+{
+ "machine": "an ordinary desktop",
+ "path": "the resident agent",
+ "date": "2026-09-18",
+ "cadenceSeconds": 32,
+ "how": "Two resident agents started within eight seconds of each other at 22:55:55 on an ordinary Windows desktop against the nine published servers, thirty-two second cadence, 250 ms ceiling, each asked for a reading with timewitness stamp --agent --no-evidence: one every five seconds for forty minutes and one every ten seconds for seven minutes. The raw readings, the receipts taken at thirty-six minutes and their verify output are on the desktop that took them, beside the raw readings.",
+ "figures": [
+  "102",
+  "101",
+  "3",
+  "9",
+  "37",
+  "43",
+  "48",
+  "67",
+  "10"
+ ],
+ "unit": "s",
+ "of": "a setting or a condition",
+ "what": "Uptime marks of the two agents: the last refusal at 102 s on the forty-minute run and 101 s on the seven-minute run; on the forty-minute run a signature at 3 s, refusals from 9 s to 37 s, a signature at 43 s, refusals from 48 s to 67 s; and the ten second interval between readings on the seven-minute run"
+}

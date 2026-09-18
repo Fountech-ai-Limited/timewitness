@@ -386,7 +386,7 @@ fifteen microseconds and signs nothing at all.
 Measured against Roughtime alone on 2026-09-08, every one of them at the four rounds the Action
 shipped that day: a bound of 16.219 s from a GitHub runner, a bound of 16.424 s on an ordinary desktop's receipt committed at that path then and since replaced, and a bound of 16.439 s from that same desktop, stamped at 11:08. Measured against two kinds
 on 2026-09-09 at the sixteen rounds the Action ships now, on an ordinary desktop: 153.6 ms and 164.8 ms wide over the first two of three passes at 14:52, and a bound of 176.7 ms on that desktop's receipt committed at that path then and since replaced, taken at 15:05. At 12:09 UTC a GitHub runner reached a bound of 211.3 ms, and that desktop reached the same on the remaining one of its three. Every one of those is our own measurement on
-the machine it names, and none of them is a figure for anybody else's machine. Measured with all three kinds on 2026-09-09 at the sixteen rounds the Action ships: 154.1 ms, 159.2 ms and 154.7 ms wide over three passes on an ordinary desktop at 20:28, and a bound of 149.8 ms on the receipt committed at that path then and since replaced, taken at 20:32, nine servers answering and nine kept. Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms wide over three passes at 21:39, and a bound of 153.9 ms on the receipt committed in this repository at 21:41, nine servers behind six operators and nine kept. Enforcing independence narrowed nothing and was never going to, because the rule refuses rounds rather than narrowing them: the sources overlapping is 35.1 ms of half width on that receipt against 34.9 ms on the one before it. Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 128.7 ms, 128.8 ms and 129.1 ms wide over three readings at 22:17, against 122.7 ms, 122.8 ms and 122.6 ms wide from the same agent at the same uptime and the same cadence before the rule at 21:04. The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did. The third kind narrowed nothing and the breakdown says so: the sources overlapping is 34.9 ms of half width on that nine-source receipt against 34.5 ms on the six-source one taken at 15:05, and what moved between the two receipts is the oscillator, 0.5 ms against 17.3 ms, which is how long after the last exchange each stamp was taken. Measured through the resident agent with all three kinds on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 122.7 ms, 122.8 ms and 122.6 ms wide over three readings at 21:04, against 133.5 ms, 136.8 ms and 128.9 ms wide from the same agent at the same uptime and the same cadence with two kinds at 16:27. The sources overlapping did not move there either, 37.6 ms of half width against 37.1 to 38.3 ms, so the ten milliseconds between the two sets is the fit and the oscillator rather than the sources. Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms wide over three readings at 16:27, against 161.1 ms, 159.4 ms and 162.2 ms wide from the one-shot command on the same machine twelve minutes earlier. What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit. Of the 153.875 ms of width on the receipt committed in this repository, the largest single part is the model's own regression residual doubled by the coverage factor, 38.011 ms of half width, with 35.081 ms of the sources overlapping and 3.586 ms of the oscillator beside it, all four read 2026-09-10 off the verify command run on that receipt, which prints half widths.
+the machine it names, and none of them is a figure for anybody else's machine. Measured with all three kinds on 2026-09-09 at the sixteen rounds the Action ships: 154.1 ms, 159.2 ms and 154.7 ms wide over three passes on an ordinary desktop at 20:28, and a bound of 149.8 ms on the receipt committed at that path then and since replaced, taken at 20:32, nine servers answering and nine kept. Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms wide over three passes at 21:39, and a bound of 153.9 ms on the receipt committed in this repository at 21:41, nine servers behind six operators and nine kept. Enforcing independence narrowed nothing and was never going to, because the rule refuses rounds rather than narrowing them: the sources overlapping is 35.1 ms of half width on that receipt against 34.9 ms on the one before it. Measured through the resident agent on the same desktop on 2026-09-18, after the ageing of a source's interval over the local counter was bounded by the band, at thirty-six minutes of uptime and a thirty-two second polling cadence: 130.346 ms, 115.308 ms and 115.260 ms wide over three readings at 23:32, nine servers behind six operators and nine kept, with the sources overlapping at 37.991 ms of half width on the first and 36.830 ms on the other two. Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at the same uptime and the same cadence: 128.7 ms, 128.8 ms and 129.1 ms wide over three readings at 22:17, against 122.7 ms, 122.8 ms and 122.6 ms wide from the same agent at the same uptime and the same cadence before the rule at 21:04. The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did. The third kind narrowed nothing and the breakdown says so: the sources overlapping is 34.9 ms of half width on that nine-source receipt against 34.5 ms on the six-source one taken at 15:05, and what moved between the two receipts is the oscillator, 0.5 ms against 17.3 ms, which is how long after the last exchange each stamp was taken. Measured through the resident agent with all three kinds on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 122.7 ms, 122.8 ms and 122.6 ms wide over three readings at 21:04, against 133.5 ms, 136.8 ms and 128.9 ms wide from the same agent at the same uptime and the same cadence with two kinds at 16:27. The sources overlapping did not move there either, 37.6 ms of half width against 37.1 to 38.3 ms, so the ten milliseconds between the two sets is the fit and the oscillator rather than the sources. Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms wide over three readings at 16:27, against 161.1 ms, 159.4 ms and 162.2 ms wide from the one-shot command on the same machine twelve minutes earlier. What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit. Of the 153.875 ms of width on the receipt committed in this repository, the largest single part is the model's own regression residual doubled by the coverage factor, 38.011 ms of half width, with 35.081 ms of the sources overlapping and 3.586 ms of the oscillator beside it, all four read 2026-09-10 off the verify command run on that receipt, which prints half widths.
 Polling more times does help and it is the shipped default that was wrong about which way: below
 three rounds no line is fitted, so the scatter of the measurements is never measured and never
 enters the width, and the bound at one round is narrower because less was measured rather than
@@ -429,32 +429,43 @@ build runner is a machine that has existed for ninety seconds, so there is nothi
 be resident on, and the answer to that is not a longer baseline: it is a bound resting on
 third-party evidence.
 
-**A fresh agent refuses to answer at all for its first two to three minutes.** The four settling
-rounds a second apart buy the model a line to fit and nothing more. A reading is extrapolated over
-however long ago the last round was, so once the agent settles into its thirty-two second cadence
-the width sweeps up across each gap, and a fit whose baseline is three seconds is being asked to
-reach thirty. The residual that comes out of that is far past the shipped 250 ms ceiling, and the
-agent refuses rather than signing an interval wider than the one it said it would sign. Measured
-2026-09-10 on an ordinary Windows desktop against the nine published servers, at the shipped
-thirty-two second cadence and 250 ms ceiling, one reading every five seconds for twelve minutes,
-twice: the last refusal was at 166 s of uptime on the first run and at 168 s on the second, and 25
-and 24 of the first 34 readings were refused. It can sign once in its first seconds and then stop,
-which is worse than not signing at all for somebody who reads the first answer as the settled one:
-the second run signed at 6 s of uptime, right after the settling rounds, and then refused every
-reading from 11 s to 69 s. What the settling rounds buy is a fit that exists, and not a fit worth
-signing.
+**A fresh agent refuses most readings for its first two minutes.** The four settling rounds a
+fraction of a second apart buy the model a line to fit and nothing more. A reading is extrapolated
+over however long ago the last round was, so once the agent settles into its thirty-two second
+cadence the width sweeps up across each gap, and a fit whose baseline is under a second is being
+asked to reach thirty. The residual that comes out of that is far past the shipped 250 ms ceiling,
+and the agent refuses rather than signing an interval wider than the one it said it would sign.
+Measured 2026-09-18 on an ordinary Windows desktop against the nine published servers, at the
+shipped thirty-two second cadence and 250 ms ceiling, on two agents started in the same minute: one
+asked every five seconds for forty minutes, where the last refusal was at 102 s of uptime and 13 of
+the first 34 readings were refused, and one asked every ten seconds for seven minutes, where the
+last refusal was at 101 s and 8 of the first 17 were refused. It can sign once in its first seconds
+and then stop, which is worse than not signing at all for somebody who reads the first answer as the
+settled one: the first of those two signed at 3 s of uptime, right after the settling rounds,
+refused every reading from 9 s to 37 s, signed once at 43 s and refused again from 48 s to 67 s.
+What the settling rounds buy is a fit that exists, and not a fit worth signing. Measured the same
+way on the same machine on 2026-09-10, one reading every five seconds for twelve minutes, twice, the
+last refusal was at 166 s of uptime on one run and 168 s on the other, with 25 and 24 of the first
+34 readings refused; the ageing of a source's interval changed on 2026-09-18, and the figures from
+that day are the ones that describe the code that ships.
 
 **After it settles the agent still refuses a reading whenever the bound crosses the ceiling, and the
 share is not a fixed number.** The shipped cadence is thirty-two seconds and the shipped ceiling is
 250 ms, so the width sweeps up across each polling gap and where the top of that sweep lands is what
 decides whether a reading is signed. On an ordinary desktop the top of it sits close enough to the
-ceiling that the answer moves with the network. Measured 2026-09-10 on an ordinary Windows desktop
-at those settings, one reading every five seconds: nought refused of 100 readings from three to
-twelve minutes of uptime on one run and nought of 103 on a second, at widths of 144.636 to 238.409 ms and widths of 140.933 to 217.723 ms. Measured again the same morning on the same machine, forty
-readings five seconds apart at five to eight minutes of uptime: one refused, at 254.047 ms of width against the 250 ms ceiling. So the share on one machine on one day is somewhere between nought and
-one in forty, and a deployment should expect a refusal now and then rather than never. The refusal
-is the design working rather than a fault: a wider interval says something true and a narrow wrong
-one does not, and the last good reading is never offered.
+ceiling that the answer moves with the network. Measured 2026-09-18 on an ordinary Windows desktop
+at those settings, one reading every five seconds: nought refused of 101 readings from three to
+twelve minutes of uptime, at widths of 130.988 to 203.677 ms, and nought of 23 readings ten seconds
+apart from three to seven minutes on a second agent started in the same minute, at widths of 149.224
+to 197.686 ms. Measured 2026-09-10 on the same machine, before the ageing of a source's interval
+changed, one reading every five seconds: nought refused of 100 readings from three to twelve minutes
+of uptime on one run and nought of 103 on a second, at widths of 144.636 to 238.409 ms and widths of
+140.933 to 217.723 ms, and one refused of forty readings five seconds apart at five to eight
+minutes, at 254.047 ms of width against the 250 ms ceiling. So the share on one machine, measured on
+2026-09-10 and 2026-09-18, is somewhere between nought and one in forty, and a deployment should
+expect a refusal now and then rather than never. The refusal is the design working rather than a
+fault: a wider interval says something true and a narrow wrong one does not, and the last good
+reading is never offered.
 
 **The agent answers sixty-four callers at once and refuses the sixty-fifth.** A cap is a refusal, so
 it is on this list with the rest of them. Every caller gets a thread of its own from 2026-09-10, and

@@ -169,7 +169,7 @@ sentences=(
   # receipt on disk, and that is read from the receipt rather than pinned here.
   "Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms wide over three passes at 21:39,"
   "Enforcing independence narrowed nothing and was never going to, because the rule refuses rounds rather than narrowing them: the sources overlapping is 35.1 ms of half width on that receipt against 34.9 ms on the one before it."
-  "Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 128.7 ms, 128.8 ms and 129.1 ms wide over three readings at 22:17, against 122.7 ms, 122.8 ms and 122.6 ms wide from the same agent at the same uptime and the same cadence before the rule at 21:04."
+  "Measured through the resident agent on the same desktop on 2026-09-18, after the ageing of a source's interval over the local counter was bounded by the band, at thirty-six minutes of uptime and a thirty-two second polling cadence: 130.346 ms, 115.308 ms and 115.260 ms wide over three readings at 23:32, nine servers behind six operators and nine kept, with the sources overlapping at 37.991 ms of half width on the first and 36.830 ms on the other two."
   "The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did."
   "NTS authenticates a source and can never be evidence for a bound."
   # Rewritten 2026-09-15, when the one-shot ceiling moved from 30 s to 2 s. The sentence it replaces
@@ -181,7 +181,7 @@ sentences=(
   # Added 2026-09-10. All three are refusals the agent makes that no surface said it made, and
   # every claim ships beside what it cannot prove: a refusal a reader has not been told about is a
   # surprise, and this list exists so that nothing about this product is a surprise.
-  "A fresh agent refuses to answer at all for its first two to three minutes."
+  "A fresh agent refuses most readings for its first two minutes."
   "After it settles the agent still refuses a reading whenever the bound crosses the ceiling, and the share is not a fixed number."
   "The agent answers sixty-four callers at once and refuses the sixty-fifth."
 )

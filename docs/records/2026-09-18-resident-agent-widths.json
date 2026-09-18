@@ -1,0 +1,19 @@
+{
+ "machine": "an ordinary desktop",
+ "path": "the resident agent",
+ "date": "2026-09-18",
+ "cadenceSeconds": 32,
+ "how": "Two resident agents started within eight seconds of each other at 22:55:55 on an ordinary Windows desktop against the nine published servers, thirty-two second cadence, 250 ms ceiling, each asked for a reading with timewitness stamp --agent --no-evidence: one every five seconds for forty minutes and one every ten seconds for seven minutes. The raw readings, the receipts taken at thirty-six minutes and their verify output are on the desktop that took them, beside the raw readings.",
+ "figures": [
+  "130.988",
+  "203.677",
+  "149.224",
+  "197.686",
+  "130.346",
+  "115.308",
+  "115.260"
+ ],
+ "unit": "ms",
+ "of": "the whole interval",
+ "what": "The narrowest and widest signed width from three to twelve minutes of uptime on the forty-minute run, 130.988 and 203.677 ms over 101 readings with nought refused, and from three to seven minutes on the seven-minute run, 149.224 and 197.686 ms over 23 readings with nought refused. And the three readings at thirty-six minutes of uptime on the forty-minute run, 23:32:01 to 23:32:12, 130.346, 115.308 and 115.260 ms, whose receipts and verify output are kept beside the raw readings"
+}

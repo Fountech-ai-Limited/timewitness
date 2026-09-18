@@ -62,6 +62,12 @@ pub struct Cadence {
     /// signature as the agent having settled.** The second run signed at 6 s, straight after these
     /// rounds and before the first full gap had to be extrapolated across, and then refused every
     /// reading from 11 s to 69 s. The first run refused at 0 s and 5 s and did not sign until 73 s.
+    /// Measured again on 2026-09-18 on the same desktop at the same settings, after the ageing of a
+    /// source's interval was bounded by the band, on two agents started in the same minute: the
+    /// last refusal was at 102 s of uptime on the run asked every five seconds for forty minutes
+    /// and at 101 s on the run asked every ten seconds for seven minutes, with 13 of the first 34
+    /// and 8 of the first 17 readings refused. The first of those signed at 3 s, refused from 9 s
+    /// to 37 s, signed once at 43 s and refused again from 48 s to 67 s, so the warning above stands.
     /// The whole curve is written down for a reader in `docs/what-timewitness-cannot-prove.md`
     /// rather than only here, because a refusal nobody was told about is a surprise, and every
     /// claim this product makes ships beside what it cannot prove to stop those.
