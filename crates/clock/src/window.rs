@@ -1,13 +1,19 @@
 //! A window of recent exchanges, one per source.
 //!
-//! The model keeps the last few exchanges from each source and works from the one with the shortest
-//! round trip. A packet that took longer than its neighbours spent that extra time queued
+//! The model keeps the last few exchanges from each source and works from the one whose interval
+//! is narrowest once it has been aged to the moment it is used. That is usually the one with the
+//! shortest round trip: a packet that took longer than its neighbours spent that extra time queued
 //! somewhere, and queuing is almost never symmetric, so the slow sample is the one most likely to
 //! have its delay piled onto one leg. Taking the quickest of the recent samples is the oldest trick
-//! in NTP's book and it is still the right one.
+//! in NTP's book.
 //!
-//! The cost is that the chosen sample may be older than the newest one, which is why every interval
-//! is aged forward before it is used.
+//! It was the whole rule until 2026-09-18, and the cost of it is that the chosen sample may be
+//! older than the newest one. While a sample aged at fifteen parts per million that cost nothing
+//! worth measuring. Aged at the band, which is what a raw counter can honestly do, an eight-round
+//! old sample on a thirty-two second cadence carries 13 ms of half width for its age, and a quick
+//! round trip does not buy that back. So the choice is made on the aged interval, which is the
+//! quantity the intersection is built from, and the age a candidate carries is bounded by the
+//! cadence wherever ageing costs more than the round trip differences do.
 
 use std::collections::VecDeque;
 
@@ -61,7 +67,8 @@ impl SourceWindow {
         self.samples.push_back(sample);
     }
 
-    /// The held sample with the shortest round trip.
+    /// The held sample with the shortest round trip, which is what a source's reported state is
+    /// read off. A selection round uses `best_within` instead, because there the age matters.
     ///
     /// Ties go to the more recent one, because between two samples with equally short round trips
     /// the newer one needs less ageing.
@@ -80,7 +87,12 @@ impl SourceWindow {
         self.samples.iter().rev().min_by_key(|s| s.round_trip)
     }
 
-    /// The same, over the samples no older than `max_age` at `now`.
+    /// The held sample whose interval is narrowest once aged to `now`, over the samples no older
+    /// than `max_age`. This is the sample a selection round uses.
+    ///
+    /// Ties go to the more recent one. Narrowest after ageing rather than shortest round trip from
+    /// 2026-09-18, for the reason at the head of this file: the round trip is what the sample knew
+    /// when it was taken and the aged interval is what it knows now.
     ///
     /// The window had no expiry until 2026-09-08, which was half of one fault: a source that
     /// answered once and then went silent went on offering that one answer for as long as the
@@ -91,15 +103,21 @@ impl SourceWindow {
     /// A sample exactly at the limit is still taken. The limit is how far the model will
     /// extrapolate, and extrapolating to the edge of what it allows is allowed.
     #[must_use]
-    pub fn best_within(&self, now: MonotonicNanos, max_age: Nanos) -> Option<&Sample> {
+    pub fn best_within(
+        &self,
+        now: MonotonicNanos,
+        max_age: Nanos,
+        ageing: &CounterAgeing,
+        source_floor: Nanos,
+    ) -> Option<&Sample> {
         self.samples
             .iter()
             .rev()
             .filter(|s| now.since(s.taken_at) <= max_age)
-            .min_by_key(|s| s.round_trip)
+            .min_by_key(|s| s.interval_at(now, ageing, source_floor).width())
     }
 
-    /// The interval that sample supports, aged forward to `now`.
+    /// The narrowest interval any held sample supports at `now`, aged forward to it.
     #[must_use]
     pub fn interval_at(
         &self,
@@ -107,7 +125,7 @@ impl SourceWindow {
         ageing: &CounterAgeing,
         source_floor: Nanos,
     ) -> Option<OffsetInterval> {
-        self.best()
+        self.best_within(now, Nanos::MAX, ageing, source_floor)
             .map(|s| s.interval_at(now, ageing, source_floor))
     }
 
@@ -215,6 +233,37 @@ mod tests {
             )
             .unwrap();
         assert!(aged.width() > fresh.width());
+    }
+
+    #[test]
+    fn a_quick_old_sample_loses_to_a_fresh_slower_one_once_its_age_costs_more() {
+        // Six milliseconds of round trip taken five minutes ago against ten milliseconds taken
+        // now. Aged at fifty parts per million the old one carries fifteen milliseconds for its
+        // age on top of its three, and the fresh one carries five. The round trip alone would pick
+        // the old one, and did until 2026-09-18.
+        let mut w = SourceWindow::new(SourceId::new("s"), 8);
+        w.push(sample(1, 6 * NANOS_PER_MILLI, 0));
+        w.push(sample(2, 10 * NANOS_PER_MILLI, 300 * NANOS_PER_SEC as u64));
+        let now = MonotonicNanos(300 * NANOS_PER_SEC as u64);
+        let chosen = w.best_within(now, Nanos::MAX, &ageing_at(50.0), 0).unwrap();
+        assert_eq!(chosen.offset, 2);
+        // And at an age that costs nothing, the quick one is still the one.
+        let chosen = w
+            .best_within(MonotonicNanos(1), Nanos::MAX, &ageing_at(50.0), 0)
+            .unwrap();
+        assert_eq!(chosen.offset, 1);
+    }
+
+    #[test]
+    fn a_sample_past_the_age_limit_is_not_offered_however_narrow() {
+        let mut w = SourceWindow::new(SourceId::new("s"), 8);
+        w.push(sample(1, NANOS_PER_MILLI, 0));
+        w.push(sample(2, 40 * NANOS_PER_MILLI, 200 * NANOS_PER_SEC as u64));
+        let now = MonotonicNanos(300 * NANOS_PER_SEC as u64);
+        let chosen = w
+            .best_within(now, 200 * NANOS_PER_SEC, &ageing_at(15.0), 0)
+            .unwrap();
+        assert_eq!(chosen.offset, 2);
     }
 
     #[test]

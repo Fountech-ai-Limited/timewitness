@@ -77,7 +77,13 @@ pub struct Cadence {
     /// moved, which is a rate per second, so the cost grows with the square of the gap. Fifteen
     /// parts per million plus one per second, over the gap: 0.5 ms at sixteen seconds, 1.5 ms at
     /// thirty-two, 5.1 ms at sixty-four. Against a residual this whole crate exists to bring down
-    /// from 36.4 ms, five milliseconds of it back is not free.
+    /// from 36.4 ms, five milliseconds of it back is not free. Each source's interval is aged
+    /// across the same gap before the next round selects, at no more than half the band the
+    /// policy states for the counter, which is 0.8 ms of half width at sixteen seconds, 1.6 ms at
+    /// thirty-two and 3.2 ms at sixty-four. The cadence and that ageing are one trade: on
+    /// 2026-09-18 an ageing term that carried a fresh fit's own error bar, tens of thousands of
+    /// parts per million on a sub-second baseline, stopped the agent converging at this cadence at
+    /// all, and the fix was to bound the term by the band rather than to shorten the gap.
     ///
     /// Shorter costs somebody else's servers. The sources are three public NTP servers and three
     /// public Roughtime servers, run by other people at their own expense. RFC 5905 sets sixteen

@@ -769,7 +769,7 @@ impl ClockModel {
         self.windows
             .values()
             .filter_map(|w| {
-                let best = w.best_within(now, oldest)?;
+                let best = w.best_within(now, oldest, &ageing, source_floor)?;
                 Some(Candidate {
                     id: w.id().clone(),
                     operator: best.operator.clone(),
@@ -1170,6 +1170,25 @@ fn read_against_the_band(fit: &Fit, policy: &Policy) -> BandReading {
 ///    above nought, and they are separate fields because they are different facts.
 /// 4. How far the rate may have moved over the age, which is `rate_movement_ppm`.
 ///
+/// **And the band caps the sum, because the band is what the sum rests on.** The first assumption
+/// of this arithmetic is that the counter's true rate magnitude never passes half the band, at any
+/// instant. Under that assumption half the band over the age is a widening that holds whatever a
+/// fit says, and a fit can narrow it and never needs to widen it. So a fit that puts the machine
+/// inside the band carries the smaller of the sum and half the band; a fit that puts the machine
+/// outside the band has broken the assumption and carries the sum; and a fit whose error bar is
+/// wider than the band, which is the fit the settling rounds produce, has measured nothing about
+/// this counter and carries half the band, which is what `before_a_fit` carries.
+///
+/// The cap went in on the evening of 2026-09-18, and what it stopped is the defect of that
+/// afternoon. From 15:09 the sum was carried whole, so the error bar of a fit on a sub-second
+/// baseline, which is the sources' scatter divided by almost nothing, widened every source
+/// interval on the next round. Wider intervals made a wider intersection, the wider intersection
+/// made a regression point with almost no weight against the settling points, the fit stayed on
+/// the sub-second baseline, and the next round was wider again. On an ordinary desktop against the
+/// nine published servers the agent signed once at 3 s of uptime and then refused every reading,
+/// at sixteen to twenty-two seconds of width. The rig is
+/// `crates/clock/tests/a_fresh_agent_at_the_shipped_cadence.rs`.
+///
 /// The invariant, and it rests on the same first assumption as `oscillator_holdover`: on a machine
 /// whose true rate magnitude never passes `frequency_span_ppm / 2`, a sample that held the truth
 /// when it was taken still holds it after ageing. A machine outside the band is [`BandReading`], is
@@ -1177,6 +1196,8 @@ fn read_against_the_band(fit: &Fit, policy: &Policy) -> BandReading {
 ///
 /// A term that cannot be read is infinite and never nought; see `readable`. `ppm_over` carries an
 /// infinite rate as [`WIDEST`] and the ceiling refuses it, which is the same refusal said plainly.
+/// The cap is applied only once every term has been read, so an unreadable input is never capped
+/// down to the band.
 #[derive(Clone, Copy, Debug)]
 pub struct CounterAgeing {
     policy: Policy,
@@ -1221,7 +1242,29 @@ impl CounterAgeing {
             .frequency_ppm
             .map_or(0.0, |ppm| readable(ppm.abs()));
         let unclaimed = readable(self.rate.unclaimed_frequency_ppm);
-        measured.max(floor) + claimed + unclaimed + rate_movement_ppm(&self.policy, age)
+        let half = half_band(&self.policy);
+
+        let everything =
+            measured.max(floor) + claimed + unclaimed + rate_movement_ppm(&self.policy, age);
+        // Read every term before capping anything: a term that could not be read is infinite, and
+        // capping it to the band would be the permitting answer on the input that says the
+        // widening cannot be known.
+        if !everything.is_finite() || !half.is_finite() {
+            return f64::INFINITY;
+        }
+        // A fit that cannot separate one rate in the band from another has measured nothing about
+        // this counter. Its error bar is not knowledge and is not carried.
+        if !separates_the_band(measured, &self.policy) {
+            return half;
+        }
+        // Inside the band the assumption holds and caps the sum. A magnitude past half the band,
+        // claimed or unclaimed, is the machine saying the band is wrong about it, and the sum is
+        // carried whole.
+        if claimed + unclaimed <= half {
+            everything.min(half)
+        } else {
+            everything
+        }
     }
 
     /// How much wider a sample's interval is for having aged `age` over the counter.
@@ -1343,9 +1386,20 @@ fn supports_a_rate(fit: &Fit, policy: &Policy) -> bool {
     if !fit.frequency_ppm.is_finite() || !fit.frequency_stderr_ppm.is_finite() {
         return false;
     }
-    let separates_the_band = fit.frequency_stderr_ppm * policy.coverage_factor <= band;
     let inside_the_band = fit.frequency_ppm.abs() <= band / 2.0;
-    separates_the_band && inside_the_band
+    separates_the_band(fit.frequency_stderr_ppm * policy.coverage_factor, policy) && inside_the_band
+}
+
+/// Whether a measurement of the rate, its standard error already scaled by the coverage factor,
+/// can tell one rate in the band from another.
+///
+/// One definition, read by `supports_a_rate` when a fit is taken in and by `CounterAgeing::ppm`
+/// when the same knowledge ages a source interval, so the two cannot disagree about which fits are
+/// measurements. A measurement that is not a finite number, or a band that is not one above nought,
+/// separates nothing.
+fn separates_the_band(measured_ppm: f64, policy: &Policy) -> bool {
+    let band = policy.frequency_span_ppm;
+    band.is_finite() && band > 0.0 && measured_ppm.is_finite() && measured_ppm <= band
 }
 
 /// How far the oscillator's rate may have moved in `elapsed`, in parts per million.
