@@ -3289,20 +3289,28 @@ def the_fetch_refuses_a_redirect():
 FITTED = ROOT / 'scripts' / 'policy-sentences-fitted.txt'
 FITTED_SENTENCES = ROOT / 'scripts' / 'policy-sentences-fitted-sentences.txt'
 
-# The share of a set's sentences that may be sentences of a fitted set before the whole set is refused.
+# What a set is scored on, and when there is too little of it.
 #
-# One in ten. A sentence two writers arrive at independently, from the same rules, is a coincidence
-# and is taken out of the count by name. More than one in ten is not a coincidence, it is a set built
-# out of material this file was shaped around, and no number taken on it measures anything. A
-# fitted sentence never counts whichever side of the line a set falls, so padding a fitted set with
-# new sentences to get under the share buys nothing: what is left to score is only the new sentences.
-# The share is counted over the lines the set marks to be refused, and over a line whose marker this
-# cannot read, because those are what the number a set produces is taken on. It is never counted over
-# `~` lines, which the set excludes by name and three hundred of which padded a fitted set under the
-# share on 2026-09-17, and never over the honest `+` lines: two writers quoting one specification land
+# Every line of a set that is recorded material, or a light rewrite of it, is named, with the
+# recorded sentence it matches, and taken out of the count; the score is taken on the residue, the
+# lines marked to be refused that nothing here has seen, and the size of that residue is printed
+# beside the score. A set is refused where fewer than `SENTENCE_FLOOR` such lines are left, which
+# is the floor this file already applies to a surface, because a number taken on four sentences is
+# not a number. Until 2026-09-18 there was a threshold beside this, one in ten of a set's lines
+# recorded here and the whole set refused. It was answering two questions and neither well: whether a
+# set was written by reading this file's material is answered by the sha256 frozen before this file
+# is opened and by the author saying they had not; how much of a set this file has already seen is
+# what the matching measures, and it is reported now rather than thresholded. Recorded material grows
+# with every set that measures this file and the matching improves with every fix to it, so a fixed
+# share is crossed by more sets each week, and the five sentences that first crossed it were the
+# obvious false claims about bounded time, which any competent set writes on its own. A fitted line
+# never counts whichever side of the floor a set falls, so padding a fitted set with new sentences
+# buys nothing: what is left to score is only the new sentences. The residue is counted over the
+# lines the set marks to be refused, and over a line whose marker this cannot read, because those are
+# what the number a set produces is taken on. It is never counted over `~` lines, which the set
+# excludes by name, and never over the honest `+` lines: two writers quoting one specification land
 # on the same honest sentence, and a cold set whose honest half is the specification's own wording is
 # still cold on the half that is scored. Every match on either side is named and out of the count.
-FITTED_SHARE = 0.1
 
 # What a light rewrite of a recorded sentence is, said once and closed.
 #
@@ -3312,8 +3320,9 @@ FITTED_SHARE = 0.1
 # Every change `sentence_tokens` folds: case, marks, format and invisible characters, look-alike
 # letters, whitespace, punctuation, numbering and markup. Word edits, at most this many for a sentence
 # of ten words or more, one in five to nine words and none under five, where an edit is a word
-# substituted, inserted or deleted, a negation included, or two words swapped; the words are read as
-# a bag, so clauses in another order cost nothing. The result held whole inside a longer line, or a
+# substituted, inserted or deleted, a negation included, or two words of the sentence swapped,
+# whether or not they are neighbours; the words are read as a bag, so clauses in another order cost
+# nothing. The result held whole inside a longer line, or a
 # line of at least `FEWEST_LETTERS` letters held whole inside it. Lines or clauses reordered, up to
 # three sentences merged on one line, or a sentence split into parts that are each at least
 # `FEWEST_LETTERS` letters or sit on adjacent lines in order.
@@ -3327,6 +3336,24 @@ FITTED_SHARE = 0.1
 # an honest sentence and is not seen; nothing made of words can see it.
 EDITS_IN_A_LONG_SENTENCE = 2
 EDITS_IN_A_SHORT_SENTENCE = 1
+# The members of that list, one name each. The self-test holds a walk to every one of them and goes
+# red where a member has none, because on 2026-09-17 the walk for two words swapped used neighbours
+# only, which is the one arm the code had, so the walk and the code agreed about a case neither
+# covered. A walk written by the hand that wrote the guard tests the understanding and not the code;
+# a list the walks are held to at least says what the understanding has to cover.
+LIGHT_REWRITES = (
+    'case', 'marks and invisible characters', 'look-alike letters', 'whitespace', 'punctuation',
+    'numbering', 'markup', 'a digit drawn for a letter', 'a letter doubled',
+    'a word substituted', 'a word inserted', 'a word deleted', 'a negation included',
+    'two neighbouring words swapped', 'two words swapped across a gap of two',
+    'two words swapped across a gap of three', 'two words swapped across a gap of five',
+    'a swap across a gap with a word substituted', 'a swap across a gap with a word deleted',
+    'a swap across a gap with a word inserted', 'two swaps across gaps',
+    'a swap across a gap in a sentence of five to nine words',
+    'held whole inside a longer line', 'a part of at least the fewest letters', 'lines reordered',
+    'clauses reordered', 'three sentences merged on one line', 'split into parts on adjacent lines',
+    'the seeds, one word changed', 'the honest sentences, marked to be refused',
+)
 LONG_SENTENCE = 10
 SHORT_SENTENCE = 5
 # A run of letters shorter than this is not compared whole, because a short honest clause quoted from
@@ -3572,7 +3599,12 @@ def arrangements(tokens, clauses):
 
 def edits_along(a, b, limit):
     """The fewest words substituted, inserted, deleted or swapped with a neighbour to turn `a` into
-    `b`, counted along the two sequences, or `limit + 1` once it is past the limit."""
+    `b`, counted along the two sequences, or `limit + 1` once it is past the limit.
+
+    Where every cell of one step of the table is past the limit the answer is decided rather than
+    abandoned: every alignment passes through that step and costs at least that much, so the
+    distance is past the limit too.
+    """
     if abs(len(a) - len(b)) > limit:
         return limit + 1
     previous2 = None
@@ -3589,6 +3621,135 @@ def edits_along(a, b, limit):
             return limit + 1
         previous2, previous = previous, current
     return previous[len(b)]
+
+
+def swaps_among(have, want, budget):
+    """The fewest swaps of two positions turning `have` into `want`, both short lists of the words at
+    the positions where two arrangements differ, or None past `budget`. Two arrangements of one bag
+    differ at no more than two positions per swap, so with a budget of two there are at most four
+    positions here and the pairings among them are a constant to try; a swap of a position where the
+    two already agree can only be undone by another, so none is tried."""
+    if len(have) > 2 * budget:
+        return None
+    frontier = [tuple(have)]
+    seen = {tuple(have)}
+    target = tuple(want)
+    for depth in range(budget + 1):
+        if target in frontier:
+            return depth
+        if depth == budget:
+            return None
+        grown = []
+        for state in frontier:
+            for i in range(len(state)):
+                for j in range(i + 1, len(state)):
+                    if state[i] == state[j]:
+                        continue
+                    swapped = list(state)
+                    swapped[i], swapped[j] = swapped[j], swapped[i]
+                    swapped = tuple(swapped)
+                    if swapped not in seen:
+                        seen.add(swapped)
+                        grown.append(swapped)
+        frontier = grown
+    return None
+
+
+def swaps_between(a, b, budget):
+    """The fewest swaps of two words, wherever they sit, turning `a` into `b`, two arrangements of
+    the same length, or None past `budget`."""
+    if len(a) != len(b):
+        return None
+    apart = [i for i in range(len(a)) if a[i] != b[i]]
+    return swaps_among([a[i] for i in apart], [b[i] for i in apart], budget)
+
+
+def one_edit_and_swaps(a, b, budget):
+    """Whether `a` becomes `b` by one word substituted, inserted or deleted and then up to `budget`
+    swaps of two words of the sentence. Gives the swaps spent, or None.
+
+    Two words of the sentence swapped: the swap moves words the recorded sentence has, so where a
+    word is inserted the swap is between two of the others, and a swap that moves the inserted word
+    is not read as one edit. It is a word moved across the sentence beside a word inserted, which is
+    three edits counted along the sentence, and it is not seen.
+    """
+    if len(a) == len(b):
+        # One word substituted, at a position where the two differ, for a word that sits at one of
+        # those positions in the other; then the positions still differing are a swap or nothing.
+        apart = [i for i in range(len(a)) if a[i] != b[i]]
+        if len(apart) > 1 + 2 * budget:
+            return None
+        best = None
+        for at in apart:
+            for word in {b[i] for i in apart}:
+                if word == a[at]:
+                    continue
+                changed = list(a)
+                changed[at] = word
+                still = [i for i in apart if changed[i] != b[i]]
+                spent = swaps_among([changed[i] for i in still], [b[i] for i in still], budget)
+                if spent is not None and (best is None or spent < best):
+                    best = spent
+        return best
+    longer, shorter = (a, b) if len(a) > len(b) else (b, a)
+    if len(longer) != len(shorter) + 1:
+        return None
+    # One word taken out of the longer at position `at`; before it the two are read in step and
+    # after it the longer is one ahead. The positions where they still differ are found once for
+    # each half and counted per `at` with two pointers, so the whole sweep is linear.
+    forward = [i for i in range(len(shorter)) if longer[i] != shorter[i]]
+    backward = [i for i in range(1, len(longer)) if longer[i] != shorter[i - 1]]
+    best = None
+    ahead = 0
+    behind = 0
+    for at in range(len(longer)):
+        while ahead < len(forward) and forward[ahead] < at:
+            ahead += 1
+        while behind < len(backward) and backward[behind] <= at:
+            behind += 1
+        if ahead > 2 * budget:
+            break
+        if ahead + (len(backward) - behind) > 2 * budget:
+            continue
+        positions = forward[:ahead] + [i - 1 for i in backward[behind:]]
+        have = [longer[i] if i < at else longer[i + 1] for i in positions]
+        want = [shorter[i] for i in positions]
+        spent = swaps_among(have, want, budget)
+        if spent is not None and (best is None or spent < best):
+            best = spent
+    return best
+
+
+def edits_within(a, b, limit):
+    """The fewest word edits turning `a` into `b`, or `limit + 1` once past the limit, where an edit
+    is a word substituted, inserted or deleted, or two words of the sentence swapped, whether or not
+    they are neighbours.
+
+    Counted along the sentence first, which reads a swap of neighbours as one edit and a swap across
+    a gap as two substitutions. Where that is past the limit, the decision is taken in two parts the
+    file already computes: the bags of words say how many edits have to be substitutions, insertions
+    or deletions, because a swap leaves the bag as it was, and what is left of the limit goes on
+    swaps, found among the positions where the two arrangements still differ. With a limit of two
+    that is the whole bag as it is and up to two swaps, or one word changed and one swap. A limit
+    above two never arises, `EDITS_IN_A_LONG_SENTENCE`, and two words changed with a swap beside
+    them is not read.
+    """
+    along = edits_along(a, b, limit)
+    if along <= limit or limit < 1:
+        return along
+    apart = edits_between(collections.Counter(a), collections.Counter(b))
+    if apart >= limit:
+        # Every edit has to change the bag, so none is a swap, and the count along the sentence has
+        # already decided that.
+        return limit + 1
+    budget = limit - apart
+    if apart == 0:
+        spent = swaps_between(a, b, budget)
+        return spent if spent is not None else limit + 1
+    if apart == 1:
+        spent = one_edit_and_swaps(a, b, budget)
+        return 1 + spent if spent is not None else limit + 1
+    return limit + 1
 
 
 def light_rewrite_of(tokens, fitted, whole_only=False, clauses=()):
@@ -3613,7 +3774,7 @@ def light_rewrite_of(tokens, fitted, whole_only=False, clauses=()):
         # unless the bags are within k, so most recorded sentences are passed over here.
         if shared >= len(f.tokens) - k and edits_between(bag, f.bag) <= k:
             for arranged in arrangements(tokens, clauses):
-                edits = edits_along(arranged, f.tokens, k)
+                edits = edits_within(arranged, f.tokens, k)
                 if edits <= k:
                     if edits == 0:
                         return f, 'the same words' if arranged == tokens else 'the same words with the clauses in another order'
@@ -3624,12 +3785,12 @@ def light_rewrite_of(tokens, fitted, whole_only=False, clauses=()):
             for arranged in arrangements(tokens, clauses):
                 for size in range(max(1, len(f.tokens) - k), len(f.tokens) + k + 1):
                     for at in range(len(arranged) - size + 1):
-                        if edits_along(arranged[at:at + size], f.tokens, k) <= k:
+                        if edits_within(arranged[at:at + size], f.tokens, k) <= k:
                             return f, 'held whole inside the line'
         if len(letters) >= FEWEST_LETTERS and len(tokens) < len(f.tokens) and shared >= len(tokens) - k:
             for size in range(max(1, len(tokens) - k), min(len(f.tokens), len(tokens) + k) + 1):
                 for at in range(len(f.tokens) - size + 1):
-                    if edits_along(tokens, f.tokens[at:at + size], k) <= k:
+                    if edits_within(tokens, f.tokens[at:at + size], k) <= k:
                         return f, 'a part of it'
         shorter = min(len(letters), len(f.letters))
         if shorter >= FEWEST_LETTERS and (letters in f.letters or f.letters in letters):
@@ -3728,34 +3889,32 @@ def score(path, policy):
     from_fitted.sort()
     in_count = [(number, line, names, how) for number, line, names, how in from_fitted
                 if line[:1] not in ('~', '+')]
-    if counted and len(in_count) > FITTED_SHARE * len(counted):
-        sets = sorted({name for _, _, names, _ in in_count for name in names})
-        print(f'policy sentences: {len(in_count)} of the {len(counted)} sentences to be refused in {file.name} are '
-              f'sentences of {", ".join(sets)}, recorded here, whatever this file is called '
-              f'and however they are written. That is more than one in {round(1 / FITTED_SHARE)}, so '
-              f'the set was built out of material this file was shaped around and a number taken on it '
-              f'measures nothing.', file=sys.stderr)
-        for number, line, names, how in in_count[:12]:
-            print(f'policy sentences:   line {number}, {how}, as {", ".join(names)}: "{line[:90]}"',
-                  file=sys.stderr)
-        return 2
-    # Fewer than the share: each is named and taken out of the count, a line marked to pass among
-    # them too. Two people quoting one document land on the same words, and two of the three
-    # overlaps on 2026-09-16 were the rule about NTS never being portable evidence and the one about
-    # a private root being admissible and never presumed, both quoted from the source; so the line
-    # is set aside rather than the set being thrown away, which keeps the number honest without
-    # wasting a cold set on a coincidence.
+    # Each match is named and taken out of the count, a line marked to pass among them too. Two
+    # people quoting one document land on the same words, and two of the three overlaps on
+    # 2026-09-16 were the rule about NTS never being portable evidence and the one about a private
+    # root being admissible and never presumed, both quoted from the source; so the line is set aside
+    # rather than the set being thrown away, which keeps the number honest without wasting a cold
+    # set on a coincidence.
     for number, line, names, how in from_fitted:
         print(f'policy sentences: line {number} is a sentence of {", ".join(names)}, which is recorded '
               f'here, {how}, and is out of the count: "{line[:90]}"')
+    residue = len(counted) - len(in_count)
+    if residue < SENTENCE_FLOOR:
+        sets = sorted({name for _, _, names, _ in in_count for name in names})
+        if in_count:
+            print(f'policy sentences: {len(in_count)} of the {len(counted)} sentences to be refused in {file.name} are '
+                  f'sentences of {", ".join(sets)}, recorded here, whatever this file is called and '
+                  f'however they are written, and {residue} {"is" if residue == 1 else "are"} left, under the '
+                  f'floor of {SENTENCE_FLOOR} this file scores on. A number taken on what is left would '
+                  f'measure nothing. Freeze a set this file has not been shaped around.', file=sys.stderr)
+        else:
+            print(f'policy sentences: {file.name} holds {residue} sentences to be refused, under the floor of '
+                  f'{SENTENCE_FLOOR} this file scores on, so there is nothing here to score', file=sys.stderr)
+        return 2
 
     wanted = marked(text)
     out_of_count = {number for number, _, _, _ in from_fitted}
     wanted = [(refuse, s, n) for refuse, s, n in wanted if n not in out_of_count]
-    if not wanted:
-        print(f'policy sentences: every sentence in {file.name} is one this file has been shaped '
-              f'around, so there is nothing here to score', file=sys.stderr)
-        return 2
 
     if seen:
         print(f'policy sentences: {file.name} is {seen["name"]}, which has scored this file before, '
@@ -3781,9 +3940,10 @@ def score(path, policy):
 
     refusable = sum(1 for refuse, _, _ in wanted if refuse)
     caught = sum(1 for refuse, sentence, _ in wanted if refuse and refusals(sentence, policy))
-    print(f'policy sentences: {caught} of {refusable} refused, {right} of {len(wanted)} right, on '
-          f'{file.name} at sha256 {sha[:16]}. Record that sha in {FITTED.name} before this file is '
-          f'changed on the strength of it.')
+    print(f'policy sentences: {caught} of {refusable} refused, {right} of {len(wanted)} right, on a residue of '
+          f'{residue} of {len(counted)} sentences to be refused ({len(in_count)} recorded here and out of the '
+          f'count), on {file.name} at sha256 {sha[:16]}. Record that sha in {FITTED.name} before this file '
+          f'is changed on the strength of it.')
     return 0 if not missed else 1
 
 
@@ -3852,10 +4012,12 @@ def the_score_refuses_a_fitted_set_however_it_is_written(policy):
     Until 2026-09-17 the list knew a fitted set only by the sha256 of its file, so one comment line
     appended to it gave a different sha and the set scored 45 of 45; by that afternoon a print of the
     words was in and one space deleted per line, every item numbered, a trailing clause and two
-    sentences joined each gave a fresh print. Each walk-round here is one class of edit, built on a
-    stand-in set recorded as fitted for the length of the check, and each has to come back 2 with the
-    stand-in named. The list entry is deleted in one of them and the sentences recorded for it are
-    not, which is the walk-round a list alone cannot see.
+    sentences joined each gave a fresh print. Each walk-round here is one member of the closed list
+    of light rewrites, built on a stand-in set recorded as fitted for the length of the check, and
+    each has to come back 2 with the stand-in named. The list entry is deleted in one of them and the
+    sentences recorded for it are not, which is the walk-round a list alone cannot see. Every member
+    of `LIGHT_REWRITES` has to be covered by some walk, and the swaps are generated at their
+    distances rather than typed, so a swap across a gap is what the walk says it is.
     """
     import contextlib
     import io
@@ -3866,19 +4028,151 @@ def the_score_refuses_a_fitted_set_however_it_is_written(policy):
     body = [
         '- TimeWitness keeps every build on true UTC to the nanosecond.',
         '- The receipt proves the deploy was blocked when the clock was wrong.',
+        '- A refusal blocks the pipeline outright.',
         '+ The bound is what the receipt carries, beside the reading.',
         '+ A refusal records that the agent declined to sign.',
     ]
     text = NEWLINE.join(['# a stand-in for a set this file has been shaped around'] + body + [''])
-    # A line recorded nowhere, for the walks whose other lines have to carry the share on their own.
+    # A line recorded nowhere, for the walks whose other lines are all that is left to score; and
+    # five of them, for the sets outside the list, which have to reach the floor to score at all.
     FRESH = '- Nothing written on this particular line is recorded anywhere in this file.'
+    FRESH_FIVE = [
+        FRESH,
+        '- The kettle in the corner of the office boils in about the time a long test suite takes to link.',
+        '- The car park has forty spaces and the lift has been out of order since the spring.',
+        '- A footnote about the weather on the day of the demo says nothing about any clock anywhere.',
+        '- Whoever reads this far will find only a remark about the length of the corridor outside.',
+    ]
     work = Path(tempfile.mkdtemp(prefix='tw-walk-'))
     manifest = FITTED.read_bytes()
     recorded = FITTED_SENTENCES.read_bytes() if FITTED_SENTENCES.is_file() else None
 
-    def rewritten(first, second):
-        return NEWLINE.join(['# rewritten', first, second] + body[2:] + [''])
+    def rewritten(first, second, third=None):
+        return NEWLINE.join(['# rewritten', first, second, third or body[2]] + body[3:] + [''])
 
+    def words(line):
+        return line[2:].split()
+
+    def joined(parts):
+        return '- ' + ' '.join(parts)
+
+    def swapped(line, i, j):
+        """The line with the words at positions `i` and `j` swapped, `j - i` being the gap."""
+        out = words(line)
+        out[i], out[j] = out[j], out[i]
+        return joined(out)
+
+    def replaced(line, old, new):
+        return joined([new if w == old else w for w in words(line)])
+
+    def without(line, word):
+        out = words(line)
+        out.remove(word)
+        return joined(out)
+
+    def inserted(line, at, word):
+        out = words(line)
+        out.insert(at, word)
+        return joined(out)
+
+    # Each walk: the file name, its content, whether the list entry is dropped, and the members of
+    # the closed list it covers.
+    walks = {
+        'a comment line appended': (name, text + '# one more line' + NEWLINE, False, ()),
+        'the sentences reordered': (name, NEWLINE.join(['# reordered'] + body[::-1] + ['']), False, ('lines reordered',)),
+        'the file renamed and one space doubled': ('renamed.txt', text.replace('keeps every', 'keeps  every'), False, ('whitespace',)),
+        'one space deleted in every sentence': (name, text.replace('the nanosecond', 'thenanosecond').replace('was wrong', 'waswrong'), False, ('whitespace',)),
+        'every item numbered': (name, rewritten('- 1) ' + body[0][2:], '- 2) ' + body[1][2:]), False, ('numbering',)),
+        'a trailing clause on every sentence': (name, text.replace('nanosecond.', 'nanosecond, as it says.').replace('wrong.', 'wrong, as it says.'), False, ('held whole inside a longer line',)),
+        'two sentences joined into one': (name, NEWLINE.join(['# joined', body[0] + ' ' + body[1][2:], body[2]] + body[3:] + ['']), False, ('held whole inside a longer line',)),
+        'a sentence cut in two': (name, NEWLINE.join(['# cut', '- TimeWitness keeps every build', '- on true UTC to the nanosecond.', FRESH] + body[3:] + ['']), False, ('split into parts on adjacent lines',)),
+        'a sentence cut in two with the parts apart': (name, NEWLINE.join(['# cut apart', '- on true UTC to the nanosecond.', FRESH, '- TimeWitness keeps every build'] + body[3:] + ['']), False, ('a part of at least the fewest letters',)),
+        'a sentence cut in two with a word changed in each part': (name, NEWLINE.join(['# cut and changed', '- on true UTC to a nanosecond.', FRESH, '- TimeWitness holds every build'] + body[3:] + ['']), False, ('a part of at least the fewest letters',)),
+        # Until 2026-09-18 this walk moved a phrase with no clause break, "to the nanosecond on true
+        # UTC", which is outside the list, and it stayed green because the set was refused on its
+        # other line; the walk now reorders at the comma, which is the member it stands for.
+        'the clauses in another order': (name, rewritten('- On true UTC to the nanosecond, TimeWitness keeps every build.', body[1]), False, ('clauses reordered',)),
+        'a word swapped for a synonym': (name, rewritten(body[0].replace('keeps', 'holds'), body[1].replace('proves', 'shows')), False, ('a word substituted',)),
+        'the articles deleted': (name, rewritten('- TimeWitness keeps every build on true UTC to nanosecond.', '- Receipt proves deploy was blocked when clock was wrong.'), False, ('a word deleted',)),
+        'a look-alike letter in every sentence': (name, text.replace('a', '\u0430'), False, ('look-alike letters',)),
+        'a zero-width space inside a word': (name, text.replace('nanosecond', 'nano\u200bsecond').replace('blocked', 'blo\u200bcked'), False, ('marks and invisible characters',)),
+        'a soft hyphen inside a word': (name, text.replace('nanosecond', 'nano\u00adsecond').replace('blocked', 'blo\u00adcked'), False, ('marks and invisible characters',)),
+        'a combining mark on a letter': (name, text.replace('nanosecond', 'nanose\u0301cond').replace('blocked', 'blo\u0301cked'), False, ('marks and invisible characters',)),
+        'the case changed throughout': (name, text.upper().replace('# A STAND-IN', '# a stand-in'), False, ('case',)),
+        'the full stops gone and the commas in': (name, text.replace('nanosecond.', 'nanosecond,').replace('wrong.', 'wrong').replace('outright.', 'outright;'), False, ('punctuation',)),
+        'wrapped in markup': (name, rewritten('- **TimeWitness** keeps _every_ build on `true UTC` to the nanosecond.', '- > The receipt proves the deploy was blocked when the clock was wrong.'), False, ('markup',)),
+        'padded with three hundred excluded lines': (name, text + NEWLINE.join(f'~ excluded line {i}' for i in range(300)) + NEWLINE, False, ()),
+        'its list entry deleted': (name, text, True, ()),
+        # The closed list of light rewrites, one walk each, added on the evening of 2026-09-17.
+        'two words changed in a sentence of ten words or more': (name, rewritten(
+            '- TimeWitness holds every release on true UTC to the nanosecond.',
+            '- The voucher proves the deploy was halted when the clock was wrong.'), False, ('a word substituted',)),
+        'a word inserted and two neighbours swapped': (name, rewritten(
+            '- TimeWitness really keeps build every on true UTC to the nanosecond.',
+            '- The receipt proves the deploy was blocked when clock the was really wrong.'), False, ('a word inserted', 'two neighbouring words swapped')),
+        'a negation added': (name, rewritten(
+            '- TimeWitness never keeps every build on true UTC to the nanosecond.',
+            '- The receipt proves the deploy was not blocked when the clock was wrong.'), False, ('a negation included',)),
+        'the clauses reordered and a word changed': (name, rewritten(
+            '- On true UTC to the nanosecond, TimeWitness holds every build.',
+            '- When the clock was wrong, the voucher proves the deploy was blocked.'), False, ('clauses reordered', 'a word substituted')),
+        'the rewritten sentence held inside a longer line': (name, rewritten(
+            '- As the brochure says, TimeWitness holds every build on true UTC to the nanosecond, and more besides.',
+            '- In short, the voucher proves the deploy was blocked when the clock was wrong, which is the offer.'), False, ('held whole inside a longer line',)),
+        'three sentences merged on one line': (name, NEWLINE.join(['# merged',
+            '- ' + body[0][2:] + ' ' + body[1][2:] + ' ' + body[3][2:]] + ['']), False, ('three sentences merged on one line',)),
+        'split into parts under twenty letters on adjacent lines': (name, NEWLINE.join(['# split',
+            '- TimeWitness keeps', '- every build on true', '- UTC to the nanosecond.', FRESH] + body[3:] + ['']), False, ('split into parts on adjacent lines',)),
+        'a seed of this file one word changed, marked to be refused': (name, NEWLINE.join(['# seeds'] + [
+            '- ' + ' '.join(('this' if w == 'the' else w) for w in seed.split()) for _, seed in SEEDS[:4]] + body[3:] + ['']), False, ('the seeds, one word changed',)),
+        'the honest sentences of this file marked to be refused': (name, NEWLINE.join(['# honest'] + [
+            '- ' + honest for honest in HONEST[:4]] + body[3:] + ['']), False, ('the honest sentences, marked to be refused',)),
+        'a digit drawn for a letter in every word it fits': (name, rewritten(
+            '- TimeWitne55 keep5 ev3ry bui1d 0n tru3 UTC t0 th3 nan0sec0nd.',
+            '- Th3 rec3ipt pr0ves the dep10y wa5 b10cked when the c10ck wa5 wr0ng.'), False, ('a digit drawn for a letter',)),
+        'a letter doubled in every word': (name, rewritten(
+            '- Timmewitness keeeps evvery buiild on truue UTTC to thhe nannosecond.',
+            '- Thhe receeipt provves thhe depploy waas bloocked whhen thhe cloock waas wroong.'), False, ('a letter doubled',)),
+        # Two words swapped across a gap, generated at the distance each walk names, added
+        # 2026-09-18 after the walk above, with neighbours only, stayed green while the code charged
+        # a swap across a gap as two substitutions and a third edit beside it went unseen.
+        'two words swapped across a gap of two': (name, rewritten(swapped(body[0], 2, 4), swapped(body[1], 3, 5)), False, ('two words swapped across a gap of two',)),
+        'two words swapped across a gap of three': (name, rewritten(swapped(body[0], 1, 4), swapped(body[1], 4, 7)), False, ('two words swapped across a gap of three',)),
+        'two words swapped across a gap of five': (name, rewritten(swapped(body[0], 2, 7), swapped(body[1], 1, 6)), False, ('two words swapped across a gap of five',)),
+        'a swap across a gap of three and a word substituted': (name, rewritten(
+            replaced(swapped(body[0], 1, 4), 'keeps', 'holds'), replaced(swapped(body[1], 4, 7), 'receipt', 'voucher')), False, ('a swap across a gap with a word substituted',)),
+        'a swap across a gap of four and a word deleted': (name, rewritten(
+            without(swapped(body[0], 2, 6), 'the'), without(swapped(body[1], 3, 7), 'the')), False, ('a swap across a gap with a word deleted',)),
+        'a swap across a gap of five and a word inserted': (name, rewritten(
+            inserted(swapped(body[0], 2, 7), 5, 'plainly'), inserted(swapped(body[1], 1, 6), 9, 'plainly')), False, ('a swap across a gap with a word inserted',)),
+        'two swaps across gaps of two and four': (name, rewritten(
+            swapped(swapped(body[0], 1, 3), 5, 9), swapped(swapped(body[1], 2, 4), 6, 10)), False, ('two swaps across gaps',)),
+        'a swap across a gap of two in a sentence of five to nine words': (name, rewritten(body[0], body[1], swapped(body[2], 1, 3)), False, ('a swap across a gap in a sentence of five to nine words',)),
+    }
+    covered = {member for _, _, _, members in walks.values() for member in members}
+    for member in LIGHT_REWRITES:
+        if member not in covered:
+            faults.append(f'the light-rewrite list has "{member}" and no walk covers it')
+    # Outside the list, so not a match by name: three words changed in a sentence of ten, and a
+    # fragment under twenty letters. Each has to score, with no line named as recorded material,
+    # so each carries five fresh lines to reach the floor a score needs.
+    outside = {
+        'three words changed in a sentence of ten words': NEWLINE.join(['# outside',
+            '- TimeWitness holds every release on true UTC to this nanosecond.',
+            '- The voucher shows the deploy was halted when the clock was wrong.'] + FRESH_FIVE + body[3:] + ['']),
+        'two words changed in a sentence of five to nine words': NEWLINE.join(['# short',
+            '- Our voucher shows the deploy blocked.',
+            '- The voucher shows the deploy was halted when the clock was wrong.'] + FRESH_FIVE + body[3:] + ['']),
+        'a fragment under twenty letters': NEWLINE.join(['# fragment',
+            '- Keeps every build.',
+            '- The voucher shows the deploy was halted when the clock was wrong.'] + FRESH_FIVE + body[3:] + ['']),
+        'a swap across a gap and two words substituted, three edits': NEWLINE.join(['# three edits',
+            replaced(replaced(swapped(body[0], 1, 4), 'keeps', 'holds'), 'build', 'release'),
+            replaced(replaced(swapped(body[1], 4, 7), 'receipt', 'voucher'), 'blocked', 'halted')] + FRESH_FIVE + body[3:] + ['']),
+        'a swap across a gap in a short sentence and a word substituted, two edits': NEWLINE.join(['# short and two',
+            replaced(swapped(body[2], 1, 3), 'blocks', 'halts'),
+            '- The voucher shows the deploy was halted when the clock was wrong.'] + FRESH_FIVE + body[3:] + ['']),
+    }
     try:
         original = work / name
         original.write_text(text, encoding='utf-8')
@@ -3887,71 +4181,7 @@ def the_score_refuses_a_fitted_set_however_it_is_written(policy):
         rows = ''.join(f'{digest}  {name}  {" ".join(tokens)}{NEWLINE}' for digest, tokens in sentence_prints_of(text))
         FITTED_SENTENCES.write_bytes((recorded or b'') + rows.encode())
 
-        walks = {
-            'a comment line appended': (name, text + '# one more line' + NEWLINE, False),
-            'the sentences reordered': (name, NEWLINE.join(['# reordered'] + body[::-1] + ['']), False),
-            'the file renamed and one space doubled': ('renamed.txt', text.replace('keeps every', 'keeps  every'), False),
-            'one space deleted in every sentence': (name, text.replace('the nanosecond', 'thenanosecond').replace('was wrong', 'waswrong'), False),
-            'every item numbered': (name, rewritten('- 1) ' + body[0][2:], '- 2) ' + body[1][2:]), False),
-            'a trailing clause on every sentence': (name, text.replace('nanosecond.', 'nanosecond, as it says.').replace('wrong.', 'wrong, as it says.'), False),
-            'two sentences joined into one': (name, NEWLINE.join(['# joined', body[0] + ' ' + body[1][2:]] + body[2:] + ['']), False),
-            'a sentence cut in two': (name, NEWLINE.join(['# cut', '- TimeWitness keeps every build', '- on true UTC to the nanosecond.', FRESH] + body[2:] + ['']), False),
-            'a sentence cut in two with the parts apart': (name, NEWLINE.join(['# cut apart', '- on true UTC to the nanosecond.', FRESH, '- TimeWitness keeps every build'] + body[2:] + ['']), False),
-            'a sentence cut in two with a word changed in each part': (name, NEWLINE.join(['# cut and changed', '- on true UTC to a nanosecond.', FRESH, '- TimeWitness holds every build'] + body[2:] + ['']), False),
-            'the words of a sentence in another order': (name, rewritten('- TimeWitness keeps every build to the nanosecond on true UTC.', body[1]), False),
-            'a word swapped for a synonym': (name, rewritten(body[0].replace('keeps', 'holds'), body[1].replace('proves', 'shows')), False),
-            'the articles deleted': (name, rewritten('- TimeWitness keeps every build on true UTC to nanosecond.', '- Receipt proves deploy was blocked when clock was wrong.'), False),
-            'a look-alike letter in every sentence': (name, text.replace('a', '\u0430'), False),
-            'a zero-width space inside a word': (name, text.replace('nanosecond', 'nano\u200bsecond').replace('blocked', 'blo\u200bcked'), False),
-            'a soft hyphen inside a word': (name, text.replace('nanosecond', 'nano\u00adsecond').replace('blocked', 'blo\u00adcked'), False),
-            'a combining mark on a letter': (name, text.replace('nanosecond', 'nanose\u0301cond').replace('blocked', 'blo\u0301cked'), False),
-            'padded with three hundred excluded lines': (name, text + NEWLINE.join(f'~ excluded line {i}' for i in range(300)) + NEWLINE, False),
-            'its list entry deleted': (name, text, True),
-            # The closed list of light rewrites, one walk each, added on the evening of 2026-09-17.
-            'two words changed in a sentence of ten words or more': (name, rewritten(
-                '- TimeWitness holds every release on true UTC to the nanosecond.',
-                '- The voucher proves the deploy was halted when the clock was wrong.'), False),
-            'a word inserted and two swapped': (name, rewritten(
-                '- TimeWitness really keeps build every on true UTC to the nanosecond.',
-                '- The receipt proves the deploy was blocked when clock the was really wrong.'), False),
-            'a negation added': (name, rewritten(
-                '- TimeWitness never keeps every build on true UTC to the nanosecond.',
-                '- The receipt proves the deploy was not blocked when the clock was wrong.'), False),
-            'the clauses reordered and a word changed': (name, rewritten(
-                '- On true UTC to the nanosecond, TimeWitness holds every build.',
-                '- When the clock was wrong, the voucher proves the deploy was blocked.'), False),
-            'the rewritten sentence held inside a longer line': (name, rewritten(
-                '- As the brochure says, TimeWitness holds every build on true UTC to the nanosecond, and more besides.',
-                '- In short, the voucher proves the deploy was blocked when the clock was wrong, which is the offer.'), False),
-            'three sentences merged on one line': (name, NEWLINE.join(['# merged',
-                '- ' + body[0][2:] + ' ' + body[1][2:] + ' ' + body[2][2:]] + ['']), False),
-            'split into parts under twenty letters on adjacent lines': (name, NEWLINE.join(['# split',
-                '- TimeWitness keeps', '- every build on true', '- UTC to the nanosecond.', FRESH] + body[2:] + ['']), False),
-            'a seed of this file one word changed, marked to be refused': (name, NEWLINE.join(['# seeds'] + [
-                '- ' + ' '.join(('this' if w == 'the' else w) for w in seed.split()) for _, seed in SEEDS[:4]] + body[2:] + ['']), False),
-            'the honest sentences of this file marked to be refused': (name, NEWLINE.join(['# honest'] + [
-                '- ' + honest for honest in HONEST[:4]] + body[2:] + ['']), False),
-            'a digit drawn for a letter in every word it fits': (name, rewritten(
-                '- TimeWitne55 keep5 ev3ry bui1d 0n tru3 UTC t0 th3 nan0sec0nd.',
-                '- Th3 rec3ipt pr0ves the dep10y wa5 b10cked when the c10ck wa5 wr0ng.'), False),
-            'a letter doubled in every word': (name, rewritten(
-                '- Timmewitness keeeps evvery buiild on truue UTTC to thhe nannosecond.',
-                '- Thhe receeipt provves thhe depploy waas bloocked whhen thhe cloock waas wroong.'), False),
-        }
-        # Outside the list, so not a match by name: three words changed in a sentence of ten, and a
-        # fragment under twenty letters. Each has to score, with no line named as recorded material.
-        outside = {
-            'three words changed in a sentence of ten words': NEWLINE.join(['# outside',
-                '- TimeWitness holds every release on true UTC to this nanosecond.',
-                '- The voucher shows the deploy was halted when the clock was wrong.'] + body[2:] + ['']),
-            'two words changed in a sentence of five to nine words': NEWLINE.join(['# short',
-                '- Our voucher shows the deploy blocked.',
-                '- The voucher shows the deploy was halted when the clock was wrong.'] + body[2:] + ['']),
-            'a fragment under twenty letters': NEWLINE.join(['# fragment',
-                '- Keeps every build.',
-                '- The voucher shows the deploy was halted when the clock was wrong.'] + body[2:] + ['']),
-        }
-        for walk, (file_name, content, drop_row) in walks.items():
+        for walk, (file_name, content, drop_row, _) in walks.items():
             target = work / file_name
             target.write_text(content, encoding='utf-8')
             # The list entry is put back before every walk, because the walk that deletes it
@@ -3967,6 +4197,18 @@ def the_score_refuses_a_fitted_set_however_it_is_written(policy):
                     code = 2
             if code != 2 or name not in said.getvalue():
                 faults.append(f'a fitted set with {walk} came back {code} rather than 2 with the set named')
+            # Exit 2 with the set named is not enough on its own: a stand-in of three lines is under
+            # the floor whether or not its lines were seen, and the floor refusal names the file.
+            # Every line marked to be refused that is a rewrite has to have been named as recorded
+            # material, line by line, or the walk watched the floor and not the matching.
+            if drop_row:
+                if 'has sentences recorded' not in said.getvalue():
+                    faults.append(f'a fitted set with {walk} was not refused for its sentences outliving its entry')
+                continue
+            for number, line in enumerate(content.splitlines(), 1):
+                if line.startswith('- ') and line not in FRESH_FIVE and not re.search(rf'line {number} is a sentence of', said.getvalue()):
+                    faults.append(f'a fitted set with {walk} had line {number} unnamed, so the set was refused on '
+                                  f'the floor and not on what it holds: "{line[:70]}"')
         # The last walk above dropped the stand-in's list entry; put it back for these.
         FITTED.write_bytes(manifest + f'{sha}  fitted  2026-09-17  {name}{NEWLINE}'.encode())
         for walk, content in outside.items():
@@ -4022,6 +4264,12 @@ def self_test(policy):
 
 
 def main(argv):
+    # A line of a set is printed back when it is named, and a set that walked round the print with
+    # a look-alike letter holds characters a console may not be able to write. Until 2026-09-18 that
+    # was a traceback at exit 1, which reads as a score; the character is written escaped instead.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(errors='backslashreplace')
     try:
         policy = the_policy()
     except (Unreadable, OSError) as e:
