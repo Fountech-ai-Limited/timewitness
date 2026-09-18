@@ -12,8 +12,19 @@
 //! model as it stands, so it reads red before the fix and green after, and what it reads either way
 //! is written to `R181_OUT` as one TSV per policy, one line per read.
 //!
-//! The grade. On every world whose true rate magnitude never passes half the band, every read is a
-//! refusal or an interval holding `World::utc`. A world outside the band is outside what the bound
+//! The grade, and the assumption inside it. On every world whose true rate magnitude never passes
+//! half the band, **and on which every source is polled at one counter value**, every read is a
+//! refusal or an interval holding `World::utc`. That second clause is not decoration. Every rig in
+//! this file polls its whole round at one instant, so what it grades is the worlds where the
+//! sources' intersection holds the truth at one synchronisation instant, which is the third of the
+//! three assumptions `oscillator_holdover` states and the one no rig here varies. The sentence
+//! claimed the whole band without it until 2026-09-18, and on that day a round spread out in time
+//! put the truth 140.001 us outside a signed bound on a machine well inside the band: worlds this
+//! file's own grade said it had covered. `a_round_spread_out_in_time.rs` and
+//! `a_round_spread_across_its_sources.rs` are what vary the poll instant, and a test file that
+//! claims more than it tests is how that class survived three swings on 2026-09-17.
+//!
+//! A world outside the band is outside what the bound
 //! claims and is INFO, except one set of cells: `Policy::default()` on a machine
 //! drifting at a hundred parts per million after one and two rounds, read from nought to sixty
 //! seconds, which the default's fixed allowances are calculated to hold and which this file measures

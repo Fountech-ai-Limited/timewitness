@@ -30,7 +30,7 @@ use timewitness_clock::policy::{
     WIDEST_RATE_PPM,
 };
 use timewitness_clock::regression::Fit;
-use timewitness_clock::{oscillator_holdover, Policy, RateKnowledge};
+use timewitness_clock::{oscillator_holdover, BandReading, Policy, RateKnowledge};
 use timewitness_core::time::{Nanos, NANOS_PER_MICRO, NANOS_PER_SEC};
 
 fn d() -> Policy {
@@ -275,6 +275,7 @@ fn a_measurement_nobody_can_read_widens_and_never_falls_to_the_floor() {
             frequency_ppm: Some(0.0),
             frequency_stderr_ppm: error,
             unclaimed_frequency_ppm: 0.0,
+            band: BandReading::NotRead,
         };
         assert_eq!(
             oscillator_holdover(&d(), &rate, NANOS_PER_SEC),
@@ -286,6 +287,7 @@ fn a_measurement_nobody_can_read_widens_and_never_falls_to_the_floor() {
         frequency_ppm: Some(0.0),
         frequency_stderr_ppm: 1.0,
         unclaimed_frequency_ppm: 0.0,
+        band: BandReading::NotRead,
     };
     for coverage in [f64::NAN, f64::INFINITY, -1.0] {
         let policy = Policy {
@@ -318,6 +320,7 @@ fn an_unclaimed_magnitude_nobody_can_read_widens() {
             frequency_ppm: None,
             frequency_stderr_ppm: FREQUENCY_FLOOR_PPM,
             unclaimed_frequency_ppm: unclaimed,
+            band: BandReading::NotRead,
         };
         assert_eq!(
             oscillator_holdover(&d(), &rate, NANOS_PER_SEC),
@@ -334,6 +337,7 @@ fn a_rate_movement_nobody_can_read_is_an_infinite_allowance() {
         frequency_ppm: Some(0.0),
         frequency_stderr_ppm: 0.0,
         unclaimed_frequency_ppm: 0.0,
+        band: BandReading::NotRead,
     };
     for slew in [-1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         let policy = Policy {

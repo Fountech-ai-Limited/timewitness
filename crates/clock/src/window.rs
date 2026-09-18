@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 
 use timewitness_core::{MonotonicNanos, Nanos, OffsetInterval, SourceId, SourceState};
 
+use crate::model::CounterAgeing;
 use crate::sample::Sample;
 
 /// The recent history for one source.
@@ -103,11 +104,11 @@ impl SourceWindow {
     pub fn interval_at(
         &self,
         now: MonotonicNanos,
-        drift_floor_ppm: f64,
+        ageing: &CounterAgeing,
         source_floor: Nanos,
     ) -> Option<OffsetInterval> {
         self.best()
-            .map(|s| s.interval_at(now, drift_floor_ppm, source_floor))
+            .map(|s| s.interval_at(now, ageing, source_floor))
     }
 
     /// The state of this source, for the receipt to carry.
@@ -134,8 +135,27 @@ impl SourceWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{BandReading, RateKnowledge};
+    use crate::policy::Policy;
     use timewitness_core::time::{NANOS_PER_MILLI, NANOS_PER_SEC};
     use timewitness_core::{LeapIndicator, Operator, SmearPolicy, SourceKind, Timescale};
+
+    /// An ageing that widens at exactly `ppm` over an age and at nothing else, for arithmetic a
+    /// test writes down rather than arithmetic a world produced.
+    fn ageing_at(ppm: f64) -> CounterAgeing {
+        let policy = Policy {
+            frequency_floor_ppm: ppm,
+            frequency_slew_ppm_per_second: 0.0,
+            ..Policy::default()
+        };
+        let rate = RateKnowledge {
+            frequency_ppm: None,
+            frequency_stderr_ppm: 0.0,
+            unclaimed_frequency_ppm: 0.0,
+            band: BandReading::NotRead,
+        };
+        CounterAgeing::new(&policy, &rate)
+    }
 
     fn sample(offset: Nanos, round_trip: Nanos, at: u64) -> Sample {
         Sample {
@@ -184,9 +204,15 @@ mod tests {
     fn an_old_best_sample_is_aged_before_it_is_used() {
         let mut w = SourceWindow::new(SourceId::new("s"), 8);
         w.push(sample(0, NANOS_PER_MILLI, 0));
-        let fresh = w.interval_at(MonotonicNanos(0), 15.0, 0).unwrap();
+        let fresh = w
+            .interval_at(MonotonicNanos(0), &ageing_at(15.0), 0)
+            .unwrap();
         let aged = w
-            .interval_at(MonotonicNanos(300 * NANOS_PER_SEC as u64), 15.0, 0)
+            .interval_at(
+                MonotonicNanos(300 * NANOS_PER_SEC as u64),
+                &ageing_at(15.0),
+                0,
+            )
             .unwrap();
         assert!(aged.width() > fresh.width());
     }
@@ -195,7 +221,9 @@ mod tests {
     fn an_empty_window_supports_nothing() {
         let w = SourceWindow::new(SourceId::new("s"), 8);
         assert!(w.is_empty());
-        assert!(w.interval_at(MonotonicNanos(0), 15.0, 0).is_none());
+        assert!(w
+            .interval_at(MonotonicNanos(0), &ageing_at(15.0), 0)
+            .is_none());
         assert!(w.state(true).is_none());
     }
 }

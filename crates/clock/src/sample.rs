@@ -25,6 +25,7 @@ use timewitness_core::{
 };
 use timewitness_sources::Exchange;
 
+use crate::model::CounterAgeing;
 use crate::policy::WIDEST;
 
 /// Why an exchange was not taken into the model.
@@ -209,8 +210,14 @@ impl Sample {
     ///
     /// Three terms, and none of them is optional. Half the round trip is the split-direction
     /// residual. The stated uncertainty is what the source said about its own distance from its
-    /// reference. The dispersion term grows with the age of the sample at the assumed drift rate,
-    /// because a sample taken a minute ago describes a clock that has moved since.
+    /// reference. The dispersion term grows with the age of the sample at everything the model
+    /// knows about the local counter's rate, because a sample taken a minute ago describes a clock
+    /// that has moved since.
+    ///
+    /// That third term was the frequency floor alone until 2026-09-18, and the floor bounds how
+    /// wrong a fitted rate was rather than how fast a raw counter runs. [`CounterAgeing`] is the
+    /// whole of what replaced it and carries the reasoning, including why this widens and never
+    /// corrects.
     ///
     /// The first two are both the source's to choose, and a source willing to state that it spent
     /// the whole round trip thinking and that it knows its own time exactly makes both of them
@@ -226,13 +233,16 @@ impl Sample {
     pub fn interval_at(
         &self,
         now: MonotonicNanos,
-        drift_floor_ppm: f64,
+        ageing: &CounterAgeing,
         source_floor: Nanos,
     ) -> OffsetInterval {
         let age = now.since(self.taken_at);
-        let dispersion = crate::policy::ppm_over(drift_floor_ppm, age);
+        let dispersion = ageing.dispersion(age);
         let stated = self.split_direction_residual() + self.stated_uncertainty;
-        let half = stated.max(source_floor.max(0)) + dispersion;
+        // Saturating, because the dispersion is carried at `WIDEST` whenever a term of it could not
+        // be read, and a bound holding that is refused by the ceiling rather than wrapping on the
+        // way to it.
+        let half = stated.max(source_floor.max(0)).saturating_add(dispersion);
         OffsetInterval::centred(self.offset, half)
     }
 }
@@ -240,8 +250,27 @@ impl Sample {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{BandReading, RateKnowledge};
+    use crate::policy::Policy;
     use timewitness_core::time::{NANOS_PER_MILLI, NANOS_PER_SEC};
     use timewitness_core::UnixNanos;
+
+    /// An ageing that widens at exactly `ppm` over an age and at nothing else, for arithmetic a
+    /// test writes down rather than arithmetic a world produced.
+    fn ageing_at(ppm: f64) -> CounterAgeing {
+        let policy = Policy {
+            frequency_floor_ppm: ppm,
+            frequency_slew_ppm_per_second: 0.0,
+            ..Policy::default()
+        };
+        let rate = RateKnowledge {
+            frequency_ppm: None,
+            frequency_stderr_ppm: 0.0,
+            unclaimed_frequency_ppm: 0.0,
+            band: BandReading::NotRead,
+        };
+        CounterAgeing::new(&policy, &rate)
+    }
 
     /// Where the model's own anchor puts the start of the round trip in these tests.
     const LOCAL_T1: Nanos = 1_000_000_000_000_000_000;
@@ -321,7 +350,7 @@ mod tests {
         let s = sample_of(&e);
         assert_eq!(s.round_trip, 10 * NANOS_PER_MILLI);
         assert_eq!(s.split_direction_residual(), 5 * NANOS_PER_MILLI);
-        let interval = s.interval_at(s.taken_at, 0.0, 0);
+        let interval = s.interval_at(s.taken_at, &ageing_at(0.0), 0);
         assert!(
             interval.contains(true_offset),
             "the interval {interval:?} must hold the true offset {true_offset}"
@@ -349,9 +378,10 @@ mod tests {
         e.root_dispersion = 0;
         let s = sample_of(&e);
         assert_eq!(s.round_trip, 0);
-        assert_eq!(s.interval_at(s.taken_at, 0.0, 0).width(), 0);
+        assert_eq!(s.interval_at(s.taken_at, &ageing_at(0.0), 0).width(), 0);
         assert_eq!(
-            s.interval_at(s.taken_at, 0.0, NANOS_PER_MILLI).width(),
+            s.interval_at(s.taken_at, &ageing_at(0.0), NANOS_PER_MILLI)
+                .width(),
             2 * NANOS_PER_MILLI
         );
     }
@@ -450,8 +480,12 @@ mod tests {
     fn an_older_sample_supports_a_wider_interval() {
         let e = exchange(0, NANOS_PER_MILLI, NANOS_PER_MILLI, 0);
         let s = sample_of(&e);
-        let fresh = s.interval_at(s.taken_at, 15.0, 0);
-        let stale = s.interval_at(s.taken_at.advanced(600 * NANOS_PER_SEC), 15.0, 0);
+        let fresh = s.interval_at(s.taken_at, &ageing_at(15.0), 0);
+        let stale = s.interval_at(
+            s.taken_at.advanced(600 * NANOS_PER_SEC),
+            &ageing_at(15.0),
+            0,
+        );
         assert!(stale.width() > fresh.width());
         assert_eq!(
             stale.width() - fresh.width(),

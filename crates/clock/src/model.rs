@@ -123,6 +123,9 @@ pub struct SyncFit {
     /// The magnitude the model is not correcting for, in parts per million. See
     /// [`RateKnowledge::unclaimed_frequency_ppm`].
     pub unclaimed_frequency_ppm: f64,
+    /// What reading that fitted rate back against the band the policy assumes said. See
+    /// [`BandReading`].
+    pub band: BandReading,
     /// The largest half round trip among the surviving sources.
     pub widest_network_half: Nanos,
 }
@@ -243,6 +246,7 @@ impl ClockModel {
             frequency_ppm: sync.rate.frequency_ppm,
             frequency_stderr_ppm: sync.rate.frequency_stderr_ppm,
             unclaimed_frequency_ppm: sync.rate.unclaimed_frequency_ppm,
+            band: sync.rate.band,
             widest_network_half: sync.widest_network_half,
         })
     }
@@ -747,12 +751,13 @@ impl ClockModel {
     ///
     /// A sample older than the longest holdover the policy allows is not offered. The model is not
     /// prepared to extrapolate its own interval past that ceiling, and an old exchange is
-    /// extrapolation with a longer arm and a smaller allowance, since a sample ages at the
-    /// frequency floor while a holdover ages at the frequency uncertainty the model actually
-    /// measured. One ceiling covers both, so there is one number rather than two that could
-    /// disagree.
+    /// extrapolation with a longer arm. It was extrapolation with a *smaller allowance* too until
+    /// 2026-09-18, because a sample aged at the frequency floor while a holdover aged at everything
+    /// the model knew about the rate; both now age at the same knowledge, through
+    /// [`CounterAgeing`]. One ceiling covers both, so there is one number rather than two that
+    /// could disagree.
     fn candidates_at(&self, now: MonotonicNanos) -> Vec<Candidate> {
-        let floor = self.policy.frequency_floor_ppm;
+        let ageing = self.counter_ageing();
         let source_floor = self.policy.source_interval_floor;
         let oldest = self.policy.max_holdover;
         self.windows
@@ -765,7 +770,7 @@ impl ClockModel {
                     kind: best.kind,
                     sent_at: best.sent_at,
                     taken_at: best.taken_at,
-                    interval: best.interval_at(now, floor, source_floor),
+                    interval: best.interval_at(now, &ageing, source_floor),
                     network_half: best.split_direction_residual(),
                     timescale: best.timescale,
                     smear: best.smear,
@@ -773,6 +778,19 @@ impl ClockModel {
                 })
             })
             .collect()
+    }
+
+    /// What the model knows about its own counter at this moment, for ageing a source's interval
+    /// over it.
+    ///
+    /// The rate from the last synchronisation, because that is the only measurement there is when a
+    /// round is being selected; the round in progress has not been fitted yet. Before there has been
+    /// one, nothing has measured this counter and the whole band is carried.
+    fn counter_ageing(&self) -> CounterAgeing {
+        match &self.sync {
+            Some(sync) => CounterAgeing::new(&self.policy, &sync.rate),
+            None => CounterAgeing::before_a_fit(&self.policy),
+        }
     }
 
     fn push_history(&mut self, point: regression::Point) {
@@ -1001,6 +1019,43 @@ pub struct RateKnowledge {
     /// magnitude the fit found, since a fit outside the band is the machine saying the band was
     /// wrong about it and the larger figure is the one to carry.
     pub unclaimed_frequency_ppm: f64,
+    /// What reading the fitted rate back against the band said. See [`BandReading`].
+    pub band: BandReading,
+}
+
+/// What reading this machine's fitted rate back against the band the policy assumes about it said.
+///
+/// Every allowance the model derives from the band is sound only while the machine's true rate
+/// magnitude stays inside half of it, and until 2026-09-18 nothing in the tree read the fitted rate
+/// back against that band to find out. The arithmetic did use the answer, in
+/// [`RateKnowledge::from_fit`], which stops claiming a rate outside the band and carries the
+/// magnitude it found instead. What it never did was say so, so an operator could not tell a machine
+/// the assumption holds for from one it does not.
+///
+/// Four answers and not two, and the reason is the one this tree keeps relearning: a guard
+/// that answers "no finding" where it means "cannot tell" permits. Before a fit the model has not
+/// read this machine's rate against anything, which is not the same as having read it and found it
+/// inside, and a boolean would have said they were.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BandReading {
+    /// Nothing has been fitted, so the rate has not been read against the band at all.
+    NotRead,
+    /// The fit found a rate inside the band.
+    Inside {
+        /// The magnitude the fit found, in parts per million, inside half the band.
+        magnitude_ppm: f64,
+    },
+    /// The fit found a rate past half the band, by this many parts per million.
+    ///
+    /// The machine is saying the band is wrong about it. The model stops claiming the rate and
+    /// widens by the magnitude it found rather than by the one it assumed, so the bound still holds
+    /// what it measured; what it cannot do is promise the assumption on the next machine.
+    Outside {
+        /// How far past half the band the fit found this machine, in parts per million.
+        by_ppm: f64,
+    },
+    /// The fitted rate, or the band, is not a number a rate can be read against.
+    Unreadable,
 }
 
 impl RateKnowledge {
@@ -1024,6 +1079,7 @@ impl RateKnowledge {
             frequency_ppm: None,
             frequency_stderr_ppm: policy.frequency_floor_ppm,
             unclaimed_frequency_ppm: half_band(policy),
+            band: BandReading::NotRead,
         }
     }
 
@@ -1031,19 +1087,146 @@ impl RateKnowledge {
     /// it is not correcting for where it will not.
     #[must_use]
     pub fn from_fit(fit: &Fit, policy: &Policy) -> Self {
+        let band = read_against_the_band(fit, policy);
         if supports_a_rate(fit, policy) {
             Self {
                 frequency_ppm: Some(fit.frequency_ppm),
                 frequency_stderr_ppm: fit.frequency_stderr_ppm,
                 unclaimed_frequency_ppm: 0.0,
+                band,
             }
         } else {
             Self {
                 frequency_ppm: None,
                 frequency_stderr_ppm: fit.frequency_stderr_ppm,
                 unclaimed_frequency_ppm: readable(fit.frequency_ppm.abs()).max(half_band(policy)),
+                band,
             }
         }
+    }
+}
+
+/// Read a fitted rate back against the band the policy assumes about this machine.
+///
+/// The reading is reported and never gates: a fit outside the band already stops being claimed, in
+/// `supports_a_rate`, and the magnitude it found is carried into the width instead. Refusing on top
+/// of that was considered on 2026-09-18 and not built, because a fitted rate outside the band is
+/// more often a short baseline than a bad crystal, and an agent that refuses on the first round of
+/// a cold start teaches its operator to widen the band, which removes the only thing the reading is
+/// for. What the reading buys is that the assumption is visible rather than assumed.
+fn read_against_the_band(fit: &Fit, policy: &Policy) -> BandReading {
+    let half = half_band(policy);
+    if !half.is_finite() || !fit.frequency_ppm.is_finite() {
+        return BandReading::Unreadable;
+    }
+    let magnitude_ppm = fit.frequency_ppm.abs();
+    if magnitude_ppm > half {
+        BandReading::Outside {
+            by_ppm: magnitude_ppm - half,
+        }
+    } else {
+        BandReading::Inside { magnitude_ppm }
+    }
+}
+
+/// What the model knows about this machine's counter when it ages a source's interval over it.
+///
+/// A source's answer is an offset at the instant that exchange came home. Using it at any later
+/// instant means carrying it over the local counter, and the counter has a rate of its own, so the
+/// interval both moves and widens on the way. Until 2026-09-18 it only widened, and it widened at
+/// `Policy::frequency_floor_ppm`, fifteen parts per million at the default. That floor bounds how
+/// wrong a *fitted* rate was at the moment it was fitted. It has never bounded a raw counter, and
+/// the band the same policy states for that counter is a hundred, so the largest magnitude a part
+/// may honestly show is fifty. A sample of age `a` on a machine running at `r` is displaced by
+/// `r x a` and was widened by `floor x a`, so it stopped holding the truth once `(r - floor) x a`
+/// passed the source's own stated half width, and where such samples were the majority clique
+/// Marzullo took their intersection and the signed bound missed the truth on a machine drifting
+/// legally inside the band. 412 of 17280 cells of
+/// `crates/clock/tests/a_round_spread_out_in_time.rs` did exactly that.
+///
+/// **This widens and it never corrects, and that is a choice with a reason.** The model does correct
+/// for a rate it will stand behind, once, in `read`, measured from the moment the newest exchange
+/// went out. Correcting here as well would be a second correction from a second reference instant,
+/// the counter value the selection round happened to run at, and the two reference instants come
+/// apart whenever a poller synchronises later than the round it is synchronising over. A widening
+/// applied twice is conservative and the existing comment in `read` says so; a correction applied
+/// twice is a bias, and a bias in the direction the machine is already drifting is the fault this
+/// is fixing rather than a fix for it. So everything the counter's rate might be is paid for here as
+/// width, and the rate itself is claimed in one place only.
+///
+/// The terms, in parts per million, added rather than maximised because they are independent:
+///
+/// 1. How wrong the model's own measurement of the rate is, floored at what the hardware supports.
+/// 2. The magnitude of the rate the model has fitted and is not correcting for over this span,
+///    which is nought before a fit.
+/// 3. The magnitude it is not correcting for because it has no fit it will stand behind, which is
+///    at least half the band and is nought whenever a rate is claimed. Two and three are never both
+///    above nought, and they are separate fields because they are different facts.
+/// 4. How far the rate may have moved over the age, which is `rate_movement_ppm`.
+///
+/// The invariant, and it rests on the same first assumption as `oscillator_holdover`: on a machine
+/// whose true rate magnitude never passes `frequency_span_ppm / 2`, a sample that held the truth
+/// when it was taken still holds it after ageing. A machine outside the band is [`BandReading`], is
+/// stated on the honesty surfaces, and is not something this arithmetic can promise.
+///
+/// A term that cannot be read is infinite and never nought; see `readable`. `ppm_over` carries an
+/// infinite rate as [`WIDEST`] and the ceiling refuses it, which is the same refusal said plainly.
+#[derive(Clone, Copy, Debug)]
+pub struct CounterAgeing {
+    policy: Policy,
+    rate: RateKnowledge,
+}
+
+impl CounterAgeing {
+    /// What the model knows from a rate it has.
+    #[must_use]
+    pub fn new(policy: &Policy, rate: &RateKnowledge) -> Self {
+        Self {
+            policy: *policy,
+            rate: *rate,
+        }
+    }
+
+    /// What it knows before anything has been fitted: nothing measured, and a rate that could be
+    /// anywhere in the band.
+    #[must_use]
+    pub fn before_a_fit(policy: &Policy) -> Self {
+        Self::new(policy, &RateKnowledge::before_a_fit(policy))
+    }
+
+    /// The rate a sample's interval widens at over an age of `age`, in parts per million.
+    #[must_use]
+    pub fn ppm(&self, age: Nanos) -> f64 {
+        let measured = readable(self.rate.frequency_stderr_ppm * self.policy.coverage_factor);
+        let floor = readable(self.policy.frequency_floor_ppm);
+        // A rate the model claims is a rate it is still not correcting for over this span, so its
+        // whole magnitude is carried.
+        //
+        // The `readable` here is the second net and not the first one, and saying which is the
+        // point. A magnitude cannot be negative, so the only input it catches is one that is not a
+        // number, and `ppm_over` refuses that on its own at the end. Reverting it on 2026-09-18
+        // turned no test red, which was watched rather than assumed. It stays because every rate
+        // entering an allowance in this file goes through one door, and a reader checking that they
+        // all do should not find one that does not. The doors that are load-bearing are the `max`
+        // below, where `f64::max` answers with its other operand on a value that is not a number,
+        // and the `readable` on the unclaimed magnitude, which can be negative.
+        let claimed = self
+            .rate
+            .frequency_ppm
+            .map_or(0.0, |ppm| readable(ppm.abs()));
+        let unclaimed = readable(self.rate.unclaimed_frequency_ppm);
+        measured.max(floor) + claimed + unclaimed + rate_movement_ppm(&self.policy, age)
+    }
+
+    /// How much wider a sample's interval is for having aged `age` over the counter.
+    ///
+    /// Nought at an age of nought or less, which is what `ppm_over` says of every allowance: a
+    /// sample stamped after the instant it is being used at ages by nothing here, and what that can
+    /// hide is its own round trip's worth, which the holdover term pays for from the moment the
+    /// exchange went out.
+    #[must_use]
+    pub fn dispersion(&self, age: Nanos) -> Nanos {
+        ppm_over(self.ppm(age), age)
     }
 }
 
