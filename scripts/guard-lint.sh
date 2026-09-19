@@ -88,28 +88,78 @@ lines_with() {
 exits_inside_a_substitution() {
   awk '
     # The name a function definition opens, or the empty string.
+    #
+    # Both spellings, because both are shell. `name() {` is the one this repository uses and
+    # `function name {` is the one it did not, which is how the second went unread until 2026-09-19:
+    # a helper written that way could end the run and nothing here knew it was a function at all.
     function opened(line,   name) {
-      if (!match(line, /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)[[:space:]]*\{/))
-        return ""
-      name = substr(line, RSTART, RLENGTH)
-      sub(/^[[:space:]]*/, "", name)
-      sub(/[[:space:]]*\(\).*$/, "", name)
-      return name
+      if (match(line, /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)[[:space:]]*\{/)) {
+        name = substr(line, RSTART, RLENGTH)
+        sub(/^[[:space:]]*/, "", name)
+        sub(/[[:space:]]*\(\).*$/, "", name)
+        return name
+      }
+      if (match(line, /^[[:space:]]*function[[:space:]]+[A-Za-z_][A-Za-z0-9_]*([[:space:]]*\(\))?[[:space:]]*\{/)) {
+        name = substr(line, RSTART, RLENGTH)
+        sub(/^[[:space:]]*function[[:space:]]+/, "", name)
+        sub(/[[:space:]]*(\(\))?[[:space:]]*\{.*$/, "", name)
+        return name
+      }
+      return ""
+    }
+    # A line with every single-quoted run taken out of it.
+    #
+    # An awk or python program written inside single quotes has its own exit, and that one ends the
+    # program rather than the run. The comment below has claimed that exemption since this rule was
+    # written and nothing was making it: `field()` in key-log.sh, whose awk program ends `; exit 1`,
+    # was reported as a violation, and so was every call site of it. A lint that reports the honest
+    # shape teaches people to ignore it, which costs more than the rule buys.
+    function outside_quotes(line,   out, at, rest) {
+      out = ""
+      rest = line
+      while ((at = index(rest, "'"'"'")) > 0) {
+        out = out substr(rest, 1, at - 1)
+        rest = substr(rest, at + 1)
+        at = index(rest, "'"'"'")
+        if (at == 0) return out
+        rest = substr(rest, at + 1)
+      }
+      return out rest
     }
     # Whether a run of shell ends the run.
     #
-    # It has to be the start of a shell statement and not any appearance of the word, because a
-    # single-quoted awk or python program inside a shell function has its own `exit` and that one
-    # ends the program rather than the run. `field()` in key-log.sh is exactly that, and its call
-    # sites are already right: awk exits 1, the function returns 1, and the caller reads the return
-    # value with `|| refuse`. A lint that reported those would be teaching people to ignore it.
-    function ends_the_run(text) {
-      return text ~ /(^|;|&&|\|\|)[[:space:]]*exit([[:space:]]|;|$)/ ||
-             text ~ /(then|else|do|\{)[[:space:]]+exit([[:space:]]|;|$)/
+    # It has to be the start of a shell statement and not any appearance of the word. The openers
+    # are a statement separator, a keyword that introduces one, an opening brace, and the bracket
+    # that closes a case label: `fatal) exit 2 ;;` is the commonest way a shell helper ends the run
+    # and it was invisible here until 2026-09-19, because the exit follows a bracket rather than a
+    # keyword.
+    function ends_the_run(text,   seen) {
+      seen = outside_quotes(text)
+      return seen ~ /(^|;|&&|\|\||\))[[:space:]]*exit([[:space:]]|;|$)/ ||
+             seen ~ /(then|else|do|\{)[[:space:]]+exit([[:space:]]|;|$)/
+    }
+    # Whether this line opens a heredoc, and the word that closes it.
+    #
+    # A heredoc body is data. `usage()` printing a fragment of shell out of one was read as a
+    # function that ends the run, which made every caller of it a violation. Taking the body out is
+    # the only answer that does not depend on what the text happens to say.
+    function heredoc_word(line,   word) {
+      if (!match(line, /<<-?[[:space:]]*['"'"'"]?[A-Za-z_][A-Za-z0-9_]*['"'"'"]?/)) return ""
+      word = substr(line, RSTART, RLENGTH)
+      sub(/^<<-?[[:space:]]*/, "", word)
+      gsub(/['"'"'"]/, "", word)
+      return word
     }
     { all[NR] = $0 }
     {
       line = $0
+      # Inside a heredoc nothing is shell, including a line that closes a function or opens one.
+      if (waiting != "") {
+        stripped = line
+        sub(/^[[:space:]]*/, "", stripped)
+        if (stripped == waiting) waiting = ""
+        next
+      }
       stripped = line
       sub(/^[[:space:]]*/, "", stripped)
       if (substr(stripped, 1, 1) == "#") next
@@ -122,13 +172,15 @@ exits_inside_a_substitution() {
         if (ends_the_run(rest)) stops[inside] = 1
         # A function written on one line closes on it.
         if (rest ~ /\}[[:space:]]*$/) inside = ""
+        waiting = heredoc_word(line)
         next
       }
       if (inside != "") {
-        if (line ~ /^\}/) { inside = ""; next }
+        if (line ~ /^\}/) { inside = ""; waiting = ""; next }
         body[inside] = body[inside] "\n" line
         if (ends_the_run(line)) stops[inside] = 1
       }
+      waiting = heredoc_word(line)
     }
     END {
       # A function that calls one that ends the run ends the run too. Repeat until nothing new,
@@ -150,7 +202,11 @@ exits_inside_a_substitution() {
         # A definition line is not a call site, even where it mentions the name.
         if (opened(line) != "") continue
         for (f in stops) {
-          if (line ~ ("[$]\\([[:space:]]*" f "([[:space:]]|\\))")) {
+          # Both spellings of a command substitution. Backticks are the older one and they are still
+          # shell, and a call through them was invisible here until 2026-09-19 for no better reason
+          # than that this repository does not write them.
+          if (line ~ ("[$]\\([[:space:]]*" f "([[:space:]]|\\))") ||
+              line ~ ("`[[:space:]]*" f "([[:space:]]|`)")) {
             print n ":" f
             break
           }
@@ -178,7 +234,7 @@ lint_file() {
   found="$(exits_inside_a_substitution "$file")" || return "$UNREADABLE"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    echo "guard lint: $file:${line%%:*} runs ${line#*:}, which can end the run, inside \$( ), where the exit ends the subshell and the caller reads an empty string" >&2
+    echo "guard lint: $file:${line%%:*} runs ${line#*:}, which can end the run, inside a command substitution, where the exit ends the subshell and the caller reads an empty string" >&2
     hits=$((hits + 1))
   done <<<"$found"
   # A file with more hits than the sentinel would be reported as unreadable, which is the one wrong
@@ -207,6 +263,47 @@ count() { local n; n="$(wc -l)"; [ -n "$n" ] || stop "nothing"; printf "%s" "$n"
 if [ "$(count < f)" -ne 0 ]; then fail; fi'
     'reader() { grep -c x "$1" || exit 2; }
 n="$(reader f)"'
+    # The four shapes this rule could not see until 2026-09-19. Each is a helper that ends the run
+    # and a caller that reads it inside a command substitution, which is the same fault in four
+    # spellings the rule had no seed for.
+    'stop() {
+  case "$1" in
+    fatal) exit 2 ;;
+    *) return 1 ;;
+  esac
+}
+count() { local n; n="$(wc -l < "$1")" || stop fatal; printf "%s" "$n"; }
+if [ "$(count f)" -ne 0 ]; then fail; fi'
+    'reader() {
+  case "$1" in
+    "") exit 2 ;;
+  esac
+  grep -c x "$1"
+}
+n="$(reader f)"'
+    'stop() { echo "$1" >&2; exit 2; }
+count() { local n; n="$(wc -l < "$1")" || stop "unreadable"; printf "%s" "$n"; }
+if [ `count f` -ne 0 ]; then fail; fi'
+    'function stop { echo "$1" >&2; exit 2; }
+function count { local n; n="$(wc -l < "$1")" || stop "unreadable"; printf "%s" "$n"; }
+if [ "$(count f)" -ne 0 ]; then fail; fi'
+  )
+  # Whole files that are honest and were refused as violations until 2026-09-19. A heredoc body is
+  # data and a single-quoted awk program has its own exit, and reading either as shell made the
+  # rule report the shape its own comment claimed to exempt.
+  honest_wholes=(
+    'usage() {
+  cat <<"TXT"
+  if [ -z "$x" ]; then exit 1; fi
+TXT
+  printf "usage"
+}
+msg="$(usage)"
+echo "$msg"'
+    'field() {
+  awk -v k="$1" '"'"'BEGIN{FS="="} $1==k {print $2; found=1} END{ if (!found) ; exit 1 }'"'"' "$2"
+}
+v="$(field name f)" || echo "no field"'
   )
   failed=0
   for i in "${!seeds[@]}"; do
@@ -220,6 +317,15 @@ n="$(reader f)"'
     printf '#!/usr/bin/env bash\n%s\n' "${wholes[$i]}" >"$work/whole-$i.sh"
     if lint_file "$work/whole-$i.sh" 2>/dev/null; then
       echo "guard lint: whole seed $i passed, and a helper that exits inside \$( ) is the shape this lint exists to refuse" >&2
+      failed=1
+    fi
+  done
+  for i in "${!honest_wholes[@]}"; do
+    printf '#!/usr/bin/env bash
+%s
+' "${honest_wholes[$i]}" >"$work/honest-whole-$i.sh"
+    if ! lint_file "$work/honest-whole-$i.sh"; then
+      echo "guard lint: honest whole $i was refused, and a heredoc body and a quoted awk program are not shell this rule is about" >&2
       failed=1
     fi
   done

@@ -394,7 +394,21 @@ fn a_flood_of_oversize_datagrams_for_a_minute_does_not_stop_the_server() {
     // A minute rather than the twenty-one seconds the ceiling takes, because the property is that
     // no length of this flood reaches it, and a test that stops at the ceiling is testing the
     // ceiling's arithmetic rather than the loop.
-    let server = Running::start(60);
+    //
+    // **The limit is out of the flood's reach, and until 2026-09-19 it was not.** This ran at the
+    // shipped sixty an address a minute, and on a platform that hands an oversize datagram to the
+    // loop rather than throwing it away, every one of the hundred thousand this flood sends is
+    // counted against `127.0.0.1`. The honest client below binds `127.0.0.1` too, so whether it was
+    // answered came down to where in the window the flood happened to stop. That is a coin toss,
+    // and it lost twice on 2026-09-19, at 08:59:34Z and 10:12:25Z, blocking every merge for the
+    // afternoon on commits neither of which touched this code, both green on a re-run with nothing
+    // changed. What the test has stopped measuring is that a flooding address is rate limited,
+    // which was never this test's subject and which
+    // `a_flood_from_one_address_spends_the_limit_for_every_port_on_it` measures on its own in no
+    // time at all. What it still measures is the only thing it was written for: a minute of
+    // oversize datagrams does not make the receive loop give up, and the server is still answering
+    // afterwards.
+    let server = Running::start(u32::MAX);
     let address = server.address;
 
     let flood = std::thread::spawn(move || {
@@ -441,4 +455,46 @@ fn a_flood_of_oversize_datagrams_for_a_minute_does_not_stop_the_server() {
              thrown away"
         );
     }
+}
+
+/// The rate limit counts an address and not a port, so one flooder spends it for every client on
+/// that address.
+///
+/// This is here rather than beside the limiter because it is what the flood test above was
+/// accidentally asserting against. Everything in that test binds `127.0.0.1`, the flooder and the
+/// honest client alike, and the limiter's key is `SocketAddr::ip`. So on a platform that hands an
+/// oversize datagram to the loop rather than throwing it away, every one of the hundred thousand
+/// the flood sends is counted against `127.0.0.1`, and the honest client that asks afterwards is
+/// refused until the window rolls.
+///
+/// That is the design working. A flood is a flood whichever port it comes from, and a limit keyed
+/// on the port would be no limit at all, because a port is free. What it means for a test is that
+/// an honest answer after a flood from the same address is a question about where in the window the
+/// flood happened to stop, which is the coin toss that failed the required check twice on
+/// 2026-09-19 at 08:59:34Z and 10:12:25Z, on commits neither of which touched this code, both green
+/// on a re-run with nothing changed.
+///
+/// No socket, no thread and no waiting: it is the arithmetic on its own.
+#[test]
+fn a_flood_from_one_address_spends_the_limit_for_every_port_on_it() {
+    let mut limit = RateLimit::new(60, Duration::from_secs(60));
+    let now = Instant::now();
+
+    let flooder: SocketAddr = "127.0.0.1:40000".parse().expect("an address");
+    for _ in 0..1_000 {
+        limit.allows(flooder, now);
+    }
+
+    let honest: SocketAddr = "127.0.0.1:40001".parse().expect("an address");
+    assert!(
+        !limit.allows(honest, now),
+        "a different port on the same address is the same address to a limit keyed on the address"
+    );
+    assert_eq!(limit.addresses(), 1, "both of them are one address");
+
+    // And it is the window that lets the honest client back in, not anything about the client.
+    assert!(
+        limit.allows(honest, now + Duration::from_secs(61)),
+        "once the window rolls the count is cleared and the address may send again"
+    );
 }
