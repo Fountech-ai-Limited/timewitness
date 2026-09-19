@@ -196,7 +196,14 @@ struct Token<'a> {
     hashed_message: &'a [u8],
     hash: HashFunction,
     generated_at: UnixNanos,
-    accuracy: Nanos,
+    /// What the authority states about its own error, where it states anything at all.
+    ///
+    /// `None` is an authority that stated no accuracy, and it is a different fact from a stated
+    /// zero. The field is optional in the specification and an authority leaving it out has said
+    /// nothing about how wrong its own clock could be. Carrying that as zero and printing "0 ns"
+    /// reads as the authority vouching for a perfect time, which is the opposite of what happened;
+    /// a tester read it exactly that way on 2026-09-15 and was right to.
+    accuracy: Option<Nanos>,
     /// How finely the token wrote that time, in nanoseconds.
     ///
     /// A second where the authority wrote whole seconds, a millisecond where it wrote three digits
@@ -263,7 +270,11 @@ impl Inspected<'_> {
     ///
     /// Two widths, added rather than one taken for the other. The accuracy is what the authority
     /// says about its own error, and an authority that states none is refusing to put a number on
-    /// it, which is answered with zero. The resolution is how finely the token wrote the time at
+    /// it, which this arithmetic still answers with zero. That is the tightening direction, and it
+    /// is left open on 2026-09-19 rather than settled here: what width an unstated accuracy should
+    /// carry is a decision about evidence and not about printing, and moving it would change which
+    /// receipts verify. What changed that day is narrower, and it is that nothing shows a reader a
+    /// figure the authority never wrote. The resolution is how finely the token wrote the time at
     /// all: a token written to whole seconds names a second and not an instant, and nothing in it
     /// says whether the authority truncated or rounded, so the moment it names is somewhere inside
     /// that second either way.
@@ -297,7 +308,11 @@ impl Inspected<'_> {
     }
 
     fn stated_width(&self) -> Nanos {
-        self.token.accuracy + self.token.resolution
+        // An unstated accuracy contributes nothing here, which is what it contributed before the
+        // state existed. The arithmetic is deliberately unchanged: moving it would change which
+        // receipts verify, and that belongs to its own row rather than to the change that stopped
+        // the printing. The paragraph on `earliest` says what is open and why.
+        self.token.accuracy.unwrap_or(0) + self.token.resolution
     }
 
     /// Check the token's signature under the certificate the reader pinned for an authority.
@@ -371,13 +386,11 @@ impl Inspected<'_> {
             signer.signature_hash.name()
         ));
 
-        checks.push(format!(
-            "{} states it saw this hash at {} s, to a stated accuracy of {} ns and written to the \
-             nearest {} ns, so the document existed no later than that",
-            authority.name,
+        checks.push(what_the_token_states(
+            &authority.name,
             token.generated_at.as_nanos() / NANOS_PER_SEC,
             token.accuracy,
-            token.resolution
+            token.resolution,
         ));
 
         // The ordering flag, which this product has more reason to read than most. The claim here
@@ -738,6 +751,32 @@ fn read_signer(mut info: Reader<'_>) -> Result<Signer<'_>, EvidenceError> {
     })
 }
 
+/// The line a reader is shown about what the token states of itself.
+///
+/// Two sentences rather than one with a number spliced into it, and its own function because the
+/// one thing it has to get right is the difference between a figure the authority wrote and a
+/// figure nobody wrote. Until 2026-09-19 an unstated accuracy was printed as "0 ns", which reads
+/// as an authority vouching for a perfect time when what it did was decline to say anything.
+fn what_the_token_states(
+    authority: &str,
+    saw_it_at: i128,
+    accuracy: Option<Nanos>,
+    resolution: Nanos,
+) -> String {
+    match accuracy {
+        Some(stated) => format!(
+            "{authority} states it saw this hash at {saw_it_at} s, to a stated accuracy of \
+             {stated} ns and written to the nearest {resolution} ns, so the document existed no \
+             later than that"
+        ),
+        None => format!(
+            "{authority} states it saw this hash at {saw_it_at} s, written to the nearest \
+             {resolution} ns, with its accuracy not stated, so the document existed no later than \
+             that and nothing here puts a number on the authority's own error"
+        ),
+    }
+}
+
 /// Read a token's own information, holding it to the field order the specification fixes.
 ///
 /// The order after the time it was made is accuracy, then the ordering flag, then the nonce, then
@@ -781,7 +820,9 @@ fn read_token(bytes: &[u8]) -> Result<Token<'_>, EvidenceError> {
         let stated = token.expect(der::TAG_SEQUENCE, "the stated accuracy")?;
         read_accuracy(&token, stated.value)?
     } else {
-        0
+        // The field is absent, so the authority said nothing about its own error. That is not the
+        // same statement as an accuracy of zero and it is no longer carried as one.
+        None
     };
     let ordering = if token.peek_tag() == Some(der::TAG_BOOLEAN) {
         let flag = token.expect(der::TAG_BOOLEAN, "the ordering flag")?;
@@ -858,9 +899,11 @@ pub fn orders_by_stated_time(blob: &[u8]) -> Result<bool, EvidenceError> {
 /// The accuracy an authority states, in nanoseconds, taken as the whole of it.
 ///
 /// Three optional fields, seconds, milliseconds and microseconds, and an authority that states none
-/// of them is saying it will not put a number on its own error. That is answered with zero rather
-/// than with a guess, and the caller is told the figure so it can decide what an unstated accuracy
-/// is worth.
+/// of them is saying it will not put a number on its own error. That comes back as `None`, which is
+/// the absence itself rather than a guess at what it is worth, so a caller printing the figure has
+/// something to print other than a zero nobody wrote. An authority that does write a zero into one
+/// of the three fields has stated a figure, and it comes back as `Some(0)`: it is a strange thing
+/// for an authority to say, and it said it.
 ///
 /// Two things here are refusals rather than corrections, and both are because this figure only ever
 /// moves the not-later-than edge inwards.
@@ -872,9 +915,13 @@ pub fn orders_by_stated_time(blob: &[u8]) -> Result<bool, EvidenceError> {
 ///
 /// An accuracy too large for the arithmetic is refused rather than saturated, for the same reason
 /// in reverse: a saturated figure is a number nobody wrote, presented as one the authority signed.
-fn read_accuracy(parent: &Reader<'_>, bytes: &[u8]) -> Result<Nanos, EvidenceError> {
+fn read_accuracy(parent: &Reader<'_>, bytes: &[u8]) -> Result<Option<Nanos>, EvidenceError> {
     let mut reader = parent.inner(bytes);
     let mut total: Nanos = 0;
+    // Whether any of the three fields was there at all. An empty sequence, and a sequence holding
+    // only tags this code does not read, are both an authority stating no accuracy, and they are
+    // answered the same way as the field being absent altogether.
+    let mut stated = false;
     while !reader.is_empty() {
         let element = reader.take()?;
         let scale: Nanos = match element.tag {
@@ -893,8 +940,9 @@ fn read_accuracy(parent: &Reader<'_>, bytes: &[u8]) -> Result<Nanos, EvidenceErr
             .checked_mul(scale)
             .and_then(|scaled| total.checked_add(scaled))
             .ok_or_else(|| malformed("a stated accuracy too large for any arithmetic to hold"))?;
+        stated = true;
     }
-    Ok(total)
+    Ok(stated.then_some(total))
 }
 
 /// A generalized time, in the one form the specification allows for a token, and how finely it was
@@ -1244,11 +1292,17 @@ mod tests {
         token_with(accuracy, &[])
     }
 
-    /// The same token, with whatever the caller wants written after the accuracy.
-    ///
-    /// The specification fixes what may follow and in what order, so this is where a token that
-    /// breaks the order, repeats a field or carries a tag nobody expected gets built.
-    fn token_with(accuracy: &[u8], trailing: &[u8]) -> Vec<u8> {
+    /// The same token with the optional accuracy field left out altogether, which is what an
+    /// authority that will not put a number on its own error actually sends.
+    fn token_with_no_accuracy_field() -> Vec<u8> {
+        let mut info = token_head();
+        info.extend(der::encode(der::TAG_INTEGER, &[0x2a]));
+        info.extend(der::encode(der::TAG_GENERALIZED_TIME, b"20260907174532Z"));
+        der::encode(der::TAG_SEQUENCE, &info)
+    }
+
+    /// Everything a token carries before its serial number, which the two builders share.
+    fn token_head() -> Vec<u8> {
         let algorithm = der::encode(der::TAG_SEQUENCE, &der::encode(der::TAG_OID, OID_SHA256));
         let mut imprint = algorithm;
         imprint.extend(der::encode(der::TAG_OCTET_STRING, &[7u8; 32]));
@@ -1257,6 +1311,15 @@ mod tests {
         // Any policy identifier will do; the reader carries it and does not look at it.
         info.extend(der::encode(der::TAG_OID, OID_SHA256));
         info.extend(der::encode(der::TAG_SEQUENCE, &imprint));
+        info
+    }
+
+    /// The same token, with whatever the caller wants written after the accuracy.
+    ///
+    /// The specification fixes what may follow and in what order, so this is where a token that
+    /// breaks the order, repeats a field or carries a tag nobody expected gets built.
+    fn token_with(accuracy: &[u8], trailing: &[u8]) -> Vec<u8> {
+        let mut info = token_head();
         info.extend(der::encode(der::TAG_INTEGER, &[0x2a]));
         info.extend(der::encode(der::TAG_GENERALIZED_TIME, b"20260907174532Z"));
         info.extend(der::encode(der::TAG_SEQUENCE, accuracy));
@@ -1408,14 +1471,63 @@ mod tests {
         stated.extend(der::encode(der::context_primitive(1), &[100]));
         let bytes = token_stating_accuracy(&stated);
         let token = read_token(&bytes).expect("an honest accuracy");
-        assert_eq!(token.accuracy, NANOS_PER_SEC + 250_000_000 + 100_000);
+        assert_eq!(token.accuracy, Some(NANOS_PER_SEC + 250_000_000 + 100_000));
     }
 
     #[test]
-    fn an_authority_stating_no_accuracy_at_all_is_answered_with_zero() {
+    fn an_authority_stating_no_accuracy_at_all_is_not_answered_with_zero() {
+        // The field is there and says nothing. Until 2026-09-19 this read as an accuracy of zero,
+        // and zero is a figure: a reader was shown "0 ns" where the authority had put no number on
+        // its own error at all. The absence is carried as itself now.
         let bytes = token_stating_accuracy(&[]);
         let token = read_token(&bytes).expect("no accuracy stated");
-        assert_eq!(token.accuracy, 0);
+        assert_eq!(token.accuracy, None);
+    }
+
+    #[test]
+    fn a_token_with_no_accuracy_field_at_all_reads_the_same_way() {
+        // The other spelling of the same statement, and the one a real authority uses: the optional
+        // field is simply not written. Both come back as nothing stated, because both are.
+        let bytes = token_with_no_accuracy_field();
+        let token = read_token(&bytes).expect("no accuracy field");
+        assert_eq!(token.accuracy, None);
+    }
+
+    #[test]
+    fn an_unstated_accuracy_is_printed_as_words_and_never_as_a_figure() {
+        let line = what_the_token_states("DigiCert", 1_788_979_279, None, NANOS_PER_SEC);
+        assert!(
+            line.contains("accuracy not stated"),
+            "the line should say the accuracy was not stated and it says {line:?}"
+        );
+        assert!(
+            !line.contains("accuracy of 0 ns"),
+            "a figure nobody wrote is still in the line: {line:?}"
+        );
+    }
+
+    #[test]
+    fn a_stated_accuracy_is_still_printed_as_the_figure_the_authority_wrote() {
+        let line = what_the_token_states("DigiCert", 1_788_979_279, Some(250_000_000), 1_000_000);
+        assert!(
+            line.contains("to a stated accuracy of 250000000 ns"),
+            "the stated figure should be shown and the line says {line:?}"
+        );
+        assert!(
+            !line.contains("not stated"),
+            "an authority that stated a figure is not shown as silent: {line:?}"
+        );
+    }
+
+    #[test]
+    fn an_authority_writing_a_zero_into_a_field_has_stated_a_figure() {
+        // The one case the two states have to be told apart on. An authority that writes seconds
+        // of zero has said something, strange as it is, and it comes back as the figure it wrote
+        // rather than as silence.
+        let stated = der::encode(der::TAG_INTEGER, &[0]);
+        let bytes = token_stating_accuracy(&stated);
+        let token = read_token(&bytes).expect("a stated zero");
+        assert_eq!(token.accuracy, Some(0));
     }
 
     #[test]
