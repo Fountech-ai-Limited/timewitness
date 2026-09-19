@@ -139,23 +139,29 @@ def what_the_agent_said(binary, workdir, endpoint):
     after = now_ns()
 
     middle, half = (before + after) // 2, (after - before) // 2
+    bracket = {'local_before_ns': before, 'local_after_ns': after}
     if stamped.returncode != 0:
-        return None, middle, half, stamped.stdout + stamped.stderr
+        return None, middle, half, bracket, stamped.stdout + stamped.stderr
 
     read = subprocess.run([binary, 'verify', str(receipt), '--json', '--no-anchors'],
                           capture_output=True, text=True, cwd=workdir)
     if not read.stdout.strip():
-        return None, middle, half, read.stdout + read.stderr
+        return None, middle, half, bracket, read.stdout + read.stderr
 
     claim = json.loads(read.stdout)['claim']
-    return claim, middle, half, ''
+    return claim, middle, half, bracket, ''
 
 
 def one_pair(binary, workdir, endpoint, host, timeout):
     """The agent and NICT, close together, as one row."""
-    claim, local_at_read, pair_half_ns, trouble = what_the_agent_said(binary, workdir, endpoint)
+    claim, local_at_read, pair_half_ns, bracket, trouble = what_the_agent_said(
+        binary, workdir, endpoint)
     row = {'at': time.strftime('%Y-%m-%dT%H:%M:%S'), 'local_at_read_ns': local_at_read,
            'pair_half_ns': pair_half_ns}
+    # Both ends of the bracket, not only its middle. The instant the agent read is somewhere inside
+    # the process's life and the midpoint is a guess at where; a reader given both ends can bound
+    # the error exactly, or pick a different anchor, without re-taking three days of readings.
+    row.update(bracket)
 
     if claim is None:
         row['agent'] = 'refused'
@@ -374,6 +380,16 @@ def summarise(where):
         halves = sorted(row['pair_half_ns'] for row in paired)
         print('Pairing uncertainty, half the bracket the stamp was taken in: median %s, worst %s.'
               % (ms(halves[len(halves) // 2]), ms(halves[-1])))
+        # The pairs where the bracket is small against the bound, which is where the comparison is
+        # about the two clocks rather than about how busy this machine was. A bracket as wide as the
+        # bound cannot answer the question either way, and reporting those beside the rest without
+        # saying so would be reporting the machine's load as disagreement.
+        tight = [row for row in paired if row['pair_half_ns'] * 5 <= row['width_ns']]
+        if tight:
+            print('On the %d pairs whose bracket is under a fifth of the bound: %d inside, %d '
+                  'overlapping.'
+                  % (len(tight), sum(1 for r in tight if r.get('inside')),
+                     sum(1 for r in tight if r.get('overlaps'))))
     for row in missed:
         print('  miss at %s: %s outside, bound %s wide, NICT half width %s, %s'
               % (row['at'], ms(row['miss_ns']), ms(row['width_ns']), ms(row['nict_half_ns']),
