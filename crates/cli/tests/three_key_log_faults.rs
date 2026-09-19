@@ -25,14 +25,62 @@ fn repository() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-fn work(name: &str) -> PathBuf {
+/// A folder of this test's own, named so that no other run can ever name the same one.
+///
+/// **It was keyed on the process id until 2026-09-19, and a process id is reused.** The folder was
+/// not deleted at the end of a run, so a later run of the same test binary that happened to be
+/// given the same process id found the old folder there, deleted it and created it again under the
+/// name. On Windows a directory with any handle still open on it is deleted lazily rather than at
+/// once, and an indexer or a scanner holding one is the ordinary case, so the new folder could go
+/// away underneath the test that had just made it. That is what
+/// `a_kept_copy_holds_the_served_log_to_it_through_the_command_line` did on 2026-09-19 at 17:35:
+/// it read `timewitness-published-key-log-kept-62016\key-log.txt` back as "the system cannot find
+/// the path specified", exit 2 where 1 was expected, with the whole suite green minutes before and
+/// green again on the next run.
+///
+/// So the name carries the clock and a counter as well, no run may name a folder another run could
+/// own, and nothing here deletes a folder it did not make. A name already taken is a fault worth
+/// failing on rather than something to tidy away, because the only way it happens now is that two
+/// runs really have collided and a test that tidies that away is a test that will lie later.
+///
+/// The folder is removed at the end of the test that made it, through [`Work`], so the next run
+/// does not meet it at all.
+fn work(name: &str) -> Work {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let since = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("a clock that is past 1970")
+        .as_nanos();
     let dir = std::env::temp_dir().join(format!(
-        "timewitness-key-log-faults-{name}-{}",
-        std::process::id()
+        "timewitness-key-log-faults-{name}-{}-{since}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("a folder to work in");
-    dir
+    std::fs::create_dir(&dir).expect("a folder of this run's own, under a name nobody else has");
+    Work(dir)
+}
+
+/// A folder a test owns, removed when the test is done with it.
+///
+/// Held as a value rather than cleaned up by hand, because a test that fails part way through
+/// would otherwise leave its folder behind and the next run would meet it. A panicking test drops
+/// this the same as a passing one.
+struct Work(PathBuf);
+
+/// So a test writes `dir.join("key-log.txt")` and `&dir` where it wants a path, and nothing about
+/// the folder having an owner reaches the test itself.
+impl std::ops::Deref for Work {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Work {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 fn key_log(args: &[&str]) -> (bool, String) {
@@ -183,7 +231,7 @@ fn a_key_retired_by_an_appended_entry_refuses_every_later_reading() {
     // And a moment before the retirement, the same log holds.
     let (ok, text) = key_log(&["--log", &log_s]);
     assert!(ok, "{text}");
-    let before = read_and_retire_later(&log_s, &key_s, READING + 1);
+    let (_holds_the_folder, before) = read_and_retire_later(&log_s, &key_s, READING + 1);
     let (code, text) = verify(&before, &["--key-log-signer", &signer]);
     assert_eq!(
         code, 0,
@@ -193,7 +241,11 @@ fn a_key_retired_by_an_appended_entry_refuses_every_later_reading() {
 }
 
 /// A second log for the same key, retired at a later moment, so the reading falls before it.
-fn read_and_retire_later(_log: &str, key: &str, at: i128) -> PathBuf {
+/// The folder comes back with the path, because the folder is removed when it is dropped and a
+/// path handed out of a function whose folder has gone is a path to nothing. That is not
+/// hypothetical: written to return the path alone on 2026-09-19, this deleted its own folder on
+/// the way out and the caller read "the system cannot find the path specified" every run.
+fn read_and_retire_later(_log: &str, key: &str, at: i128) -> (Work, PathBuf) {
     let dir = work("retired-later");
     let log = dir.join("log.txt");
     let log_s = log.to_string_lossy().into_owned();
@@ -207,7 +259,7 @@ fn read_and_retire_later(_log: &str, key: &str, at: i128) -> PathBuf {
     assert!(ok, "{text}");
     let (ok, text) = key_log(&["--log", &log_s, "--sign", key]);
     assert!(ok, "{text}");
-    log
+    (dir, log)
 }
 
 #[test]
