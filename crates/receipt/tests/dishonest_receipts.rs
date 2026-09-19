@@ -872,3 +872,96 @@ fn the_rule_is_every_control_character_and_not_the_newline_alone() {
     fine.claim.sources_kept = 3;
     sign_and_open(&fine).expect("a name outside ASCII is a name");
 }
+
+/// Exactly half of the sources that could disagree is not a majority of them.
+///
+/// The boundary the test draws, rather than a case well inside it. Every other test here sits
+/// comfortably on one side: four kept of four candidates passes, one of three refuses, and both
+/// answer the same whether the comparison is `<=` or `<`. Only a receipt sitting exactly on the
+/// line tells the two apart, and until 2026-09-19 nothing in this repository did: the whole suite
+/// stayed at its own count with that one character changed, and a binary built from it accepted a
+/// receipt the shipped one refuses.
+///
+/// Half is not a majority for the reason the whole test exists. Marzullo's guarantee is that a
+/// majority of the sources agreeing bounds the truth, and four against four is two answers with
+/// nothing to choose between them.
+#[test]
+fn exactly_half_of_the_sources_that_could_disagree_is_not_a_majority() {
+    let half = |kept: u32| {
+        let mut r = receipt();
+        r.claim.sources = (0..8)
+            .map(|n| {
+                record(
+                    &format!("s-{n}"),
+                    &format!("operator-{n}.example"),
+                    (n as u32) < kept,
+                )
+            })
+            .collect();
+        r.claim.sources_offered = 8;
+        r.claim.sources_kept = kept;
+        r
+    };
+
+    // Eight answered, all eight could have disagreed, four agreed.
+    let refusal = sign_and_open(&half(4)).expect_err("four of eight is not a majority of eight");
+    assert!(
+        matches!(refusal, ReceiptError::Inconsistent(_)),
+        "got {refusal}"
+    );
+    assert!(
+        refusal
+            .to_string()
+            .contains("4 of 8 sources that could disagree"),
+        "the refusal should be the source majority and name both numbers, got {refusal}"
+    );
+
+    // And one more agreeing is a majority, so the refusal above is about the arithmetic and not
+    // about something else being wrong with a receipt carrying eight sources.
+    sign_and_open(&half(5)).expect("five of eight is a majority of eight");
+}
+
+/// A source the issuer runs itself is not one of the parties standing behind the bound.
+///
+/// `AgentClaim::operators` counts the parties that are not the issuer, which is what makes the
+/// operator majority a test about somebody else having agreed. A receipt whose sources are all run
+/// by the issuer names no such party, so it is nought of nought and it is refused.
+///
+/// The exclusion had no test that failed when it was taken out. Measured 2026-09-19: with
+/// `.filter(independent)` removed from both counts, the whole suite stayed at its own count and a
+/// binary built from it accepted a receipt on which the only parties that agreed were the issuer.
+/// That is the one claim this product cannot allow a receipt to make, because it is our own word
+/// dressed as several parties'.
+#[test]
+fn a_source_the_issuer_runs_itself_is_not_one_of_the_operators_behind_the_bound() {
+    let issuer_runs_them = |ours: bool| {
+        let mut r = receipt();
+        r.claim.sources = (0..3)
+            .map(|n| SourceRecord {
+                first_party: ours,
+                ..record(&format!("s-{n}"), &format!("operator-{n}.example"), true)
+            })
+            .collect();
+        r.claim.sources_offered = 3;
+        r.claim.sources_kept = 3;
+        r
+    };
+
+    let refusal = sign_and_open(&issuer_runs_them(true))
+        .expect_err("a bound behind which only the issuer stands is not a bound anybody agreed");
+    assert!(
+        matches!(refusal, ReceiptError::Inconsistent(_)),
+        "got {refusal}"
+    );
+    assert!(
+        refusal
+            .to_string()
+            .contains("run by 0 of the 0 operators that answered"),
+        "the refusal should say that nobody outside the issuer answered, got {refusal}"
+    );
+
+    // The same three sources run by anybody else hold up, so the refusal above is the exclusion and
+    // not the shape of the receipt.
+    sign_and_open(&issuer_runs_them(false))
+        .expect("three sources run by three other parties is three operators");
+}
