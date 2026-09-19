@@ -84,6 +84,22 @@ fn digicert() -> Authority {
             0xc9, 0x65, 0x67, 0x55, 0xaf, 0x04, 0x3f, 0x1e, 0xa7, 0x42, 0xcc, 0x0d, 0x21, 0x20,
             0xe1, 0x41, 0xeb, 0xfc,
         ]],
+        // This reader allows nothing for DigiCert's own clock, and that is a statement this
+        // reader is making rather than one the token makes. The captured token states no accuracy,
+        // so without a figure here it supports no edge in UTC at all and every sandwich below
+        // would be refused for that one reason instead of for the rule it was written to test.
+        // Nothing that ships carries an allowance and nought is not a figure anybody should set;
+        // what the change of 2026-09-19 stopped is the code assuming it. The refusal that
+        // follows from the shipped material is its own test, below.
+        accuracy_where_the_token_states_none: Some(0),
+    }
+}
+
+/// The same authority as the material that ships carries it: no allowance at all.
+fn digicert_as_it_ships() -> Authority {
+    Authority {
+        accuracy_where_the_token_states_none: None,
+        ..digicert()
     }
 }
 
@@ -430,7 +446,24 @@ fn the_width_ceiling_is_stated_in_whole_seconds_and_is_an_hour() {
 /// past the interval test rather than a cost.
 #[test]
 fn an_entry_may_not_print_an_interval_wider_than_its_signature_supports() {
-    for (index, name) in [(1usize, "drand"), (2, "rfc3161")] {
+    // The two roles refuse it for different reasons after the change of 2026-09-19, and the
+    // reason is worth keeping apart. A round states an instant, so a radius printed beside it
+    // reaches outside what the signature supports. A token whose authority states no accuracy
+    // supports no interval at all, so there is nothing for a radius to reach outside of and any
+    // radius is refused, which is the tighter of the two. Neither depends on what the reader
+    // holds: both run off the receipt's own bytes before a key is looked at.
+    for (index, name, why) in [
+        (
+            1usize,
+            "drand",
+            "reaches outside the one the signature supports",
+        ),
+        (
+            2,
+            "rfc3161",
+            "the attestation supports no interval at all for a width to sit inside",
+        ),
+    ] {
         let mut evidence = all_three();
         evidence[index].radius = Some(365 * 24 * 3_600 * NANOS_PER_SEC);
         let receipt = resting_on(evidence);
@@ -438,10 +471,7 @@ fn an_entry_may_not_print_an_interval_wider_than_its_signature_supports() {
             "a {name} entry printing a year of radius beside a real signature was accepted"
         ));
         assert!(err.contains(name), "{err}");
-        assert!(
-            err.contains("reaches outside the one the signature supports"),
-            "{err}"
-        );
+        assert!(err.contains(why), "{err}");
     }
 }
 
@@ -564,6 +594,7 @@ fn an_attestation_by_a_party_the_reader_holds_no_key_for_is_not_checked_and_not_
         name: "somebody-else".to_string(),
         url: "http://timestamp.example".to_string(),
         accepted_certificates: vec![[0x11; 32]],
+        accuracy_where_the_token_states_none: None,
     };
 
     let cases: [(usize, &str, TrustAnchors, &str); 3] = [
@@ -1156,5 +1187,84 @@ impl<T> Unwrapped for Result<T, ReceiptError> {
             Ok(_) => panic!("{message}"),
             Err(e) => e.to_string(),
         }
+    }
+}
+
+/// On the material that ships, a sandwich cannot be granted, and the refusal says why.
+///
+/// Changed 2026-09-19. Both authorities that ship state no accuracy in their tokens, so
+/// neither puts a number on how wrong its own clock could be and neither bounds a receipt from
+/// above. Until that day the arithmetic read the absent field as a stated nought, and this exact
+/// receipt was granted a sandwich on a bracket built out of that reading. A bracket is our own
+/// narrowness whenever one of its edges came from an assumption we made, and the whole point of
+/// the basis field is that it says whose the width is.
+///
+/// The refusal has to name the reason rather than report the not-later-than role as unchecked. It
+/// was checked: the signature holds, the hash matches, the nonce agrees. What it does not do is
+/// bound anything in UTC.
+#[test]
+fn a_sandwich_on_the_shipped_authorities_is_refused_because_no_accuracy_is_stated() {
+    let anchors = TrustAnchors::none()
+        .with_roughtime("roughtime.se", ROUGHTIME_SE_KEY)
+        .with_drand(Chain::quicknet())
+        .with_authority(digicert_as_it_ships());
+
+    let claiming = resting_on(all_three());
+    let err = validate_with(&claiming, &anchors)
+        .unwrap_err_or_else_message("a sandwich resting on an assumed-perfect clock was granted");
+    assert!(err.contains("states no accuracy of its own"), "{err}");
+    assert!(
+        err.contains("A sandwich needs two edges and this one has one"),
+        "{err}"
+    );
+    assert!(
+        !err.contains("cannot be checked is not granted"),
+        "the witness was checked, and the refusal says it was not: {err}"
+    );
+
+    // The same receipt resting on its own model is accepted, because nothing in it is false. What
+    // changes is that no edge above it is reported and the reader is told so.
+    let mut own_model = resting_on(all_three());
+    own_model.claim.basis = EpsilonBasis::LocalModelOnly;
+    let verified = validate_with(&own_model, &anchors)
+        .expect("a receipt resting on its own model is not refused by this");
+    assert!(!verified.basis_granted, "{}", verified.basis_reason);
+    assert_eq!(verified.checked(), 3, "all three roles were still checked");
+    let bracket = verified.bracket();
+    assert_eq!(bracket.not_later, None);
+    assert!(bracket.not_later_was_checked_and_bounds_nothing);
+    assert!(
+        bracket.not_earlier.is_some(),
+        "the beacon still bounds it from below"
+    );
+    assert_eq!(bracket.width(), None);
+}
+
+/// A reader's own allowance brings the edge back, and it is the reader's figure that moves it.
+///
+/// The other half of the rule above. Nothing that ships carries an allowance, so nothing here
+/// says an authority's clock is good to any figure. What this holds is the route: a reader who has
+/// read an authority's published practice writes what they allow, the not-later edge appears at
+/// the instant the token states plus exactly that, and a sandwich becomes possible again.
+#[test]
+fn a_readers_own_allowance_restores_the_edge_at_exactly_what_was_allowed() {
+    for allowed in [0, 250 * NANOS_PER_MILLI, NANOS_PER_SEC] {
+        let anchors = TrustAnchors::none()
+            .with_roughtime("roughtime.se", ROUGHTIME_SE_KEY)
+            .with_drand(Chain::quicknet())
+            .with_authority(Authority {
+                accuracy_where_the_token_states_none: Some(allowed),
+                ..digicert_as_it_ships()
+            });
+        let mut own_model = resting_on(all_three());
+        own_model.claim.basis = EpsilonBasis::LocalModelOnly;
+        let verified = validate_with(&own_model, &anchors).expect("the receipt checks out");
+        let bracket = verified.bracket();
+        assert_eq!(
+            bracket.not_later,
+            Some(UnixNanos(WITNESS_AT + allowed)),
+            "an allowance of {allowed} ns put the edge somewhere else"
+        );
+        assert!(!bracket.not_later_was_checked_and_bounds_nothing);
     }
 }

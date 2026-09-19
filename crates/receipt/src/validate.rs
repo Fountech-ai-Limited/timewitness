@@ -636,6 +636,22 @@ fn into_outcome(checked: Checked) -> Outcome {
     }
 }
 
+/// The interval a receipt prints beside an entry, against an attestation that supports none.
+///
+/// Added 2026-09-19. An RFC 3161 token whose authority states no accuracy is
+/// checked, and it still puts no number on how wrong that authority's clock could be, so it
+/// supports no interval in UTC. A receipt may print the instant the token states beside it and may
+/// not print a width round that instant, because there is nothing for a width to be inside.
+fn printed_interval_claims_nothing(entry: &Evidence) -> Result<(), &'static str> {
+    if entry.radius.unwrap_or(0).max(0) != 0 {
+        return Err(
+            "the receipt prints a width beside this entry and the attestation supports no \
+             interval at all for a width to sit inside",
+        );
+    }
+    Ok(())
+}
+
 /// The interval the receipt prints beside an entry, against the one the attestation supports.
 ///
 /// Added 2026-09-08, when the verifier shipped. `examine_corridor` compared the printed instant and
@@ -858,7 +874,15 @@ fn examine_beacon(entry: &Evidence, anchors: &TrustAnchors) -> Result<Outcome, R
     for chain in holders {
         match inspected.under(chain) {
             Ok(checked) => {
-                if checked.earliest() != entry.at {
+                let (Some(earliest), Some(latest)) = (checked.earliest(), checked.latest()) else {
+                    return Err(refused(
+                        "drand",
+                        chain.name,
+                        "the round states no moment at all, and a round falls at one instant on \
+                         the schedule its chain publishes",
+                    ));
+                };
+                if earliest != entry.at {
                     return Err(refused(
                         "drand",
                         chain.name,
@@ -866,7 +890,7 @@ fn examine_beacon(entry: &Evidence, anchors: &TrustAnchors) -> Result<Outcome, R
                          beside it",
                     ));
                 }
-                printed_interval_is_supported(entry, checked.earliest(), checked.latest())
+                printed_interval_is_supported(entry, earliest, latest)
                     .map_err(|why| refused("drand", chain.name, why))?;
                 return Ok(into_outcome(checked));
             }
@@ -896,14 +920,26 @@ fn examine_witness(
 ) -> Result<Outcome, ReceiptError> {
     let inspected = rfc3161::inspect(&entry.blob, &payload.hash)
         .map_err(|e| on_its_own("rfc3161", &e.to_string()))?;
-    if inspected.latest() != entry.at {
+    // Tied to what the token states rather than to what it supports, and the two are different
+    // questions after the change of 2026-09-19. The stated instant is the last moment the time the token
+    // writes can name, it comes off the signed bytes alone, and it is the same whatever trust
+    // material the reader holds. The edge in UTC needs the authority's account of its own clock
+    // error and can be absent altogether, so tying the printed instant to it would make whether a
+    // receipt verifies depend on what each reader happens to hold.
+    if inspected.stated_instant() != entry.at {
         return Err(on_its_own(
             "rfc3161",
             "the token states a different moment from the one the receipt prints beside it",
         ));
     }
-    printed_interval_is_supported(entry, inspected.earliest(), inspected.latest())
-        .map_err(|why| on_its_own("rfc3161", why))?;
+    // What the token supports on its own bytes, with nothing the reader chose in it, so this runs
+    // the same way for everybody. A reader's own allowance widens what the entry is reported to
+    // support and never what the receipt is allowed to have printed.
+    match inspected.supports(None) {
+        Some((earliest, latest)) => printed_interval_is_supported(entry, earliest, latest)
+            .map_err(|why| on_its_own("rfc3161", why))?,
+        None => printed_interval_claims_nothing(entry).map_err(|why| on_its_own("rfc3161", why))?,
+    }
     printed_nonce_is_the_signed_one(entry, inspected.nonce())
         .map_err(|why| on_its_own("rfc3161", &why))?;
 
@@ -1002,6 +1038,19 @@ fn decide_basis(
     // and the figure a reader is shown are one number: the latest checked beacon against the
     // earliest checked witness, rather than whichever of each the receipt happened to list first.
     let bracket = Bracket::of(entries);
+    // The witness was checked and its authority states no accuracy, so it moved no edge. Said on
+    // its own, because the line below would otherwise report the not-later-than role as checked
+    // and refuse the sandwich in the same breath, which is a contradiction for the reader to
+    // resolve. Added 2026-09-19.
+    if bracket.not_later.is_none() && bracket.not_later_was_checked_and_bounds_nothing {
+        return refuse_or_report(
+            "the not-later-than attestation was checked and its authority states no accuracy of \
+             its own, so it puts no number on how wrong that authority's clock could be and \
+             bounds nothing in UTC. A sandwich needs two edges and this one has one, so the bound \
+             rests on the agent's own model"
+                .to_string(),
+        );
+    }
     let (Some(not_earlier), Some(not_later), true) =
         (bracket.not_earlier, bracket.not_later, corridor.is_some())
     else {

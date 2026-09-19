@@ -93,6 +93,13 @@ pub fn anchors() -> TrustAnchors {
                 0xc9, 0x65, 0x67, 0x55, 0xaf, 0x04, 0x3f, 0x1e, 0xa7, 0x42, 0xcc, 0x0d, 0x21, 0x20,
                 0xe1, 0x41, 0xeb, 0xfc,
             ]],
+            // This reader allows nothing for DigiCert's own clock, and that is a statement this
+            // reader is making rather than one the token makes. The captured token states no
+            // accuracy, so with no figure here it supports no edge in UTC at all and every receipt
+            // in these batteries that claims a sandwich would be refused for that one reason
+            // instead of for the thing the battery is about. Nothing that ships carries an
+            // allowance, and what the change of 2026-09-19 stopped is the code assuming one.
+            accuracy_where_the_token_states_none: Some(0),
         })
 }
 

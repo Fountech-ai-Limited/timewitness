@@ -39,7 +39,7 @@ fn the_receipt() -> (Vec<u8>, [u8; 32], UnixNanos) {
     let assessment = verify(
         &signed,
         Subject::Digest(&common::SUBJECT),
-        &anchor_file::published(),
+        &anchors(),
         &Floor::default(),
     );
     let receipt = assessment
@@ -55,8 +55,16 @@ fn the_receipt() -> (Vec<u8>, [u8; 32], UnixNanos) {
 
 /// The shipped third-party anchors, with the head key this reader holds for us in place of the
 /// published one.
+///
+/// The authorities also carry an allowance for their own clocks, as `common::anchors` does and for
+/// the same reason. Both shipped authorities state no accuracy in their tokens, so without a figure
+/// this reader has chosen, the fixture claiming a sandwich is refused before a key log is reached
+/// and every test here fails on something that is not about key logs. Changed 2026-09-19.
 fn anchors() -> TrustAnchors {
     let mut anchors = anchor_file::published();
+    for authority in &mut anchors.timestamp_authorities {
+        authority.accuracy_where_the_token_states_none = Some(0);
+    }
     anchors.key_log_signers.clear();
     let ours = sign_head(&KeyLog::default(), &OUR_SIGNING_KEY, UnixNanos(0)).signed_by;
     anchors.with_key_log_signer("ours, for these tests", ours)

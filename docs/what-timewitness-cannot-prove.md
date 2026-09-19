@@ -336,9 +336,14 @@ of what is being stamped, before the receipt exists, because a receipt cannot co
 covers itself. So the not-later-than edge is about the payload rather than about the receipt as a
 whole.
 
-**A final witness does not prove its own clock either.** It is that authority's word, signed. Neither
-of the two authorities used states any accuracy at all, which is not a claim of perfection: it means
-neither puts a number on its own error.
+**A final witness does not prove its own clock either, and on the two authorities used it bounds
+nothing at all.** It is that authority's word, signed. Neither of the two authorities used states any
+accuracy, which is not a claim of perfection: it means neither puts a number on its own error. So
+neither token bounds the moment in UTC, however good its signature is, and the verifier says so
+rather than computing an edge. Until 2026-09-19 it did compute one, reading the absent field as a
+stated nought, which is the narrowest the token could possibly be read. A reader who has read an
+authority's published practice can say what they allow for that authority's clock, in their own
+anchors, and the figure is then printed as theirs. Nothing that ships carries one.
 
 **A timestamp token is checked against a pinned certificate, not a chain to a root.** What this code
 establishes is that a token was signed by the key in a certificate chosen in advance. It does not

@@ -58,17 +58,22 @@ impl TimestampClient {
         let reply = http::post(&self.authority.url, REQUEST_TYPE, &request, self.timeout)?;
         let blob = rfc3161::pack_blob(&request, &reply);
 
-        let checked = rfc3161::check(&blob, &self.authority, subject_hash)
+        // `check` is `inspect` then `under`, so running the two apart runs exactly what running
+        // them together runs. They are apart here because the instant that goes into the receipt
+        // comes off the token alone and the signature check needs the pin.
+        let inspected = rfc3161::inspect(&blob, subject_hash)
+            .map_err(|e| SourceError::Malformed(e.to_string()))?;
+        inspected
+            .under(&self.authority)
             .map_err(|e| SourceError::Malformed(e.to_string()))?;
 
-        // The instant stored is the latest the authority's own statement allows, because this is
-        // the not-later-than edge and taking the midpoint would move that edge earlier than the
-        // authority actually committed to.
-        Ok(Attestation::at_instant(
-            nonce.to_vec(),
-            blob,
-            checked.latest(),
-        ))
+        // The instant stored is the latest the time the token writes can name, which is what the
+        // token states and is the same for every reader. It is deliberately not the not-later-than
+        // edge in UTC: that edge needs the authority's own account of its clock error, an authority
+        // stating none supports no edge at all, and a reader's own allowance may not reach a value
+        // every other reader has to agree with. Changed 2026-09-19.
+        let at = inspected.stated_instant();
+        Ok(Attestation::at_instant(nonce.to_vec(), blob, at))
     }
 
     /// Whether the authority claims its own tokens are ordered by the times they state.
@@ -185,6 +190,7 @@ mod tests {
             name: "nobody".to_string(),
             url: "http://127.0.0.1:1".to_string(),
             accepted_certificates: vec![[0u8; 32]],
+            accuracy_where_the_token_states_none: None,
         });
         let err = client
             .witness(b"short")
@@ -198,6 +204,7 @@ mod tests {
             name: "nobody".to_string(),
             url: "http://127.0.0.1:1".to_string(),
             accepted_certificates: vec![[0u8; 32]],
+            accuracy_where_the_token_states_none: None,
         });
         let err = client
             .stamp(&[0u8; 32])

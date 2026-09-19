@@ -169,11 +169,14 @@ impl DrandClient {
         let checked =
             drand::check(&blob, &self.chain).map_err(|e| SourceError::Malformed(e.to_string()))?;
 
-        Ok(Attestation::at_instant(
-            Vec::new(),
-            blob,
-            checked.earliest(),
-        ))
+        // A round falls at one instant on the chain's published schedule, so a checked round with
+        // no instant in it is malformed rather than a beacon that declined to say.
+        let at = checked.earliest().ok_or_else(|| {
+            SourceError::Malformed(format!(
+                "{url} answered with a round that falls at no moment"
+            ))
+        })?;
+        Ok(Attestation::at_instant(Vec::new(), blob, at))
     }
 
     /// What was checked, in words, for a caller that wants to report it.

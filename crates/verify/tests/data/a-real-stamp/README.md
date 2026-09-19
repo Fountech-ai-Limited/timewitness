@@ -60,6 +60,16 @@ Printing the start of the second is claiming a tighter edge than the signature s
 overclaim by up to a second, and the verifier now refuses it. Running the old file through
 `timewitness verify` returns REFUSED at "do the receipt's own numbers support each other".
 
+**What this receipt's witness bounds, corrected 2026-09-19.** The token states no
+accuracy, which is a statement DigiCert did not make rather than a statement of nought, so it puts
+no number on how wrong its own clock could be and bounds nothing in UTC. Until that day the
+arithmetic read the absent field as nought and the verifier printed a 2 s bracket round this
+receipt. It now says that a not-later-than signature was checked, that its authority states no
+accuracy of its own, and that nothing outside bounds the moment from above. The receipt's own bytes
+did not move and neither did its width: the instant printed beside the entry is what the token
+states, which is the written second plus the second it is written to, and that was already the
+value this receipt carries.
+
 So the choice was not between an old artefact and a new one. It was between a fixture that verifies
 and one that does not, and a receipt this product's own verifier turns down cannot stand for a
 receipt a stranger accepts.

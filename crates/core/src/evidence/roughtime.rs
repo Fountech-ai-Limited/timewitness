@@ -1267,9 +1267,10 @@ mod tests {
         // narrowest the wire format can state, so two seconds is the narrowest a Roughtime corridor
         // ever is. This assertion is the one that stops anybody claiming our own servers made the
         // bound tighter.
-        assert_eq!(checked.radius(), NANOS_PER_SEC);
+        assert_eq!(checked.radius(), Some(NANOS_PER_SEC));
         assert_eq!(
-            checked.latest().0 - checked.earliest().0,
+            checked.latest().expect("a corridor states an interval").0
+                - checked.earliest().expect("a corridor states an interval").0,
             2 * NANOS_PER_SEC,
             "a Roughtime corridor is two seconds wide at its narrowest, whoever runs the server"
         );

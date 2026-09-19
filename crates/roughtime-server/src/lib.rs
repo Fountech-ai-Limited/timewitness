@@ -843,7 +843,7 @@ mod tests {
             "a server of ours",
         )
         .expect("the response checks against the published long-term key");
-        assert_eq!(checked.radius(), 1_000_000_000);
+        assert_eq!(checked.radius(), Some(1_000_000_000));
     }
 
     #[test]

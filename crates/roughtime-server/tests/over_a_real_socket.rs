@@ -191,7 +191,8 @@ fn a_client_gets_a_response_that_checks_against_the_published_key() {
 
     assert_eq!(checked.nonce.as_deref(), Some(nonce.as_slice()));
     assert_eq!(
-        checked.latest().0 - checked.earliest().0,
+        checked.latest().expect("a corridor states an interval").0
+            - checked.earliest().expect("a corridor states an interval").0,
         2_000_000_000,
         "two seconds is the narrowest a Roughtime corridor ever is"
     );

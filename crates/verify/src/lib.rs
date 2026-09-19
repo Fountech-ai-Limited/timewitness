@@ -300,12 +300,27 @@ impl Assessment {
                     "The checked outside signatures bracket the moment to {}.",
                     span_in_words(span)
                 ),
+                // A witness was checked and put no number on its authority's own clock, which is
+                // a different fact from no witness at all and the reader is told which. Added
+                // 2026-09-19 with the change of 2026-09-19: both authorities that ship state no accuracy, so
+                // this is the ordinary case on a receipt this product writes rather than a corner.
+                (Some(_), None, None) if bracket.not_later_was_checked_and_bounds_nothing => {
+                    "A not-later-than signature was checked and its authority states no accuracy \
+                     of its own, so nothing outside bounds the moment from above."
+                        .to_string()
+                }
                 (Some(_), None, None) => "Only a not-earlier-than signature was checked, so \
                                           nothing outside bounds the moment from above."
                     .to_string(),
                 (None, Some(_), None) => "Only a not-later-than signature was checked, so \
                                           nothing outside bounds the moment from below."
                     .to_string(),
+                (None, None, None) if bracket.not_later_was_checked_and_bounds_nothing => {
+                    "A not-later-than signature was checked and its authority states no accuracy \
+                     of its own, and nothing else that bounds the moment was checked, so nothing \
+                     outside brackets it."
+                        .to_string()
+                }
                 _ => "No outside signature that bounds the moment was checked, so nothing \
                       outside brackets it."
                     .to_string(),

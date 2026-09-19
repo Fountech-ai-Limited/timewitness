@@ -76,6 +76,24 @@ pub struct Authority {
     /// certificate rotates, so a pin goes stale for fetching new tokens; tokens already issued stay
     /// checkable, because the certificate travels inside them.
     pub accepted_certificates: Vec<[u8; 32]>,
+    /// What this reader allows for the authority's own clock, where the token states no accuracy.
+    ///
+    /// Added 2026-09-19. A token that states no accuracy puts no number on how
+    /// wrong the authority's clock could be, so nothing in it supports an edge in UTC. RFC 3161
+    /// section 2.4.2 says where that field is absent "the accuracy may be available through other
+    /// means, e.g., the TSAPolicyId", which is to say from the authority's published practice
+    /// rather than from the token. That is a thing a reader decides in advance about an authority,
+    /// exactly as a pin is, so it sits on the anchor and never in the bytes.
+    ///
+    /// `None` on both authorities that ship, because this product has not read either one's
+    /// practice statement and will not write a figure it cannot source. A reader who has read one
+    /// sets it here, and the verifier prints the number as that reader's rather than as the
+    /// authority's.
+    ///
+    /// It is never applied where the token does state an accuracy. The authority's own statement
+    /// wins, and a reader who thinks a stated accuracy is optimistic is asking a different
+    /// question from the one this answers.
+    pub accuracy_where_the_token_states_none: Option<Nanos>,
 }
 
 /// The eight bytes a stored token starts with.
@@ -266,53 +284,76 @@ impl Inspected<'_> {
         digests_of(&self.reply.certificates)
     }
 
-    /// The earliest instant the token supports.
+    /// The latest instant the time this token writes can name.
     ///
-    /// Two widths, added rather than one taken for the other. The accuracy is what the authority
-    /// says about its own error, and an authority that states none is refusing to put a number on
-    /// it, which this arithmetic still answers with zero. That is the tightening direction, and it
-    /// is left open on 2026-09-19 rather than settled here: what width an unstated accuracy should
-    /// carry is a decision about evidence and not about printing, and moving it would change which
-    /// receipts verify. What changed that day is narrower, and it is that nothing shows a reader a
-    /// figure the authority never wrote. The resolution is how finely the token wrote the time at
-    /// all: a token written to whole seconds names a second and not an instant, and nothing in it
-    /// says whether the authority truncated or rounded, so the moment it names is somewhere inside
-    /// that second either way.
+    /// **This is what the token states, not what it supports about UTC.** The two were one number
+    /// until 2026-09-19 and they answer different questions. A token writes a time to some
+    /// resolution: whole seconds, or three digits of fraction, or nine. Nothing in it says whether
+    /// the authority truncated or rounded, so the moment it names is somewhere inside that
+    /// resolution either way, and the last instant it can name is the written time plus the
+    /// resolution.
     ///
-    /// **This was a live fault rather than a tidying.** Both edges were taken as though the stated
-    /// time were exact. While the agent's own bound was seconds wide that was invisible, because a
-    /// second of truncation sat well inside it. On 2026-09-09 the bound came down to about 240 ms
-    /// on a build runner, and the same free authority, writing whole seconds as it always had,
-    /// produced a token dated 437.345 ms before the earliest time the receipt claimed. The Action
-    /// refused its own receipt on a real repository. Neither the token nor the receipt was wrong;
-    /// the comparison was.
+    /// Every part of that comes off the token's own signed bytes. It is the same for every reader
+    /// whatever trust material they hold, and nothing a receipt writer controls can move it, which
+    /// is why it is the value a receipt prints beside a witness entry and the value the verifier
+    /// ties that entry to before it has looked at a key.
     ///
-    /// Adding the resolution only ever moves the not-later-than edge later, which weakens what the
-    /// token proves. That is the direction the rules on evidence require, because an edge computed
-    /// from a time nobody wrote is the tightening direction.
+    /// What it is not is an instant in UTC. The authority's clock could be wrong by any amount the
+    /// authority has not told us about, and [`Inspected::supports`] is where that is answered.
     #[must_use]
-    pub fn earliest(&self) -> UnixNanos {
-        UnixNanos(self.token.generated_at.as_nanos() - self.stated_width())
+    pub fn stated_instant(&self) -> UnixNanos {
+        UnixNanos(self.token.generated_at.as_nanos() + self.token.resolution)
     }
 
-    /// The latest instant the token supports, which is the not-later-than edge.
+    /// The interval in UTC this token supports, where it supports one at all.
+    ///
+    /// Two widths added rather than one taken for the other. The resolution says how finely the
+    /// time was written, per [`Inspected::stated_instant`]. The accuracy is the authority's own
+    /// account of how wrong its clock could be, and it is the half that turns a reading of that
+    /// authority's clock into a statement about UTC.
+    ///
+    /// **An authority that states no accuracy has put no number on its own error, so there is no
+    /// edge to compute and this answers `None`.** Until 2026-09-19 it answered as though the
+    /// authority had said zero, which is the narrowest reading the token could possibly bear and
+    /// is the tightening direction. Both authorities that ship state no accuracy, read that day
+    /// off the two captured tokens, so this was every not-later-than edge the product produced.
+    /// RFC 3161 section 2.4.2 is explicit about both halves of it: a missing sub-field of a
+    /// present accuracy is taken as zero, and where the field itself is absent "the accuracy may
+    /// be available through other means, e.g., the TSAPolicyId". The same section refuses the
+    /// other shortcut, that the accuracy "is not to be inferred from the syntax", so the
+    /// resolution is not an accuracy either.
+    ///
+    /// `allowance` is what the reader has decided to allow for this authority's clock where the
+    /// token says nothing, per [`Authority::accuracy_where_the_token_states_none`]. It is the
+    /// reader's number and it is used only where the token states none.
+    ///
+    /// **This was a live fault rather than a tidying, and the resolution half of it is why.** Both
+    /// edges were once taken as though the stated time were exact. While the agent's own bound was
+    /// seconds wide that was invisible, because a second of truncation sat well inside it. On
+    /// 2026-09-09 the bound came down to about 240 ms on a build runner, and the same free
+    /// authority, writing whole seconds as it always had, produced a token dated 437.345 ms before
+    /// the earliest time the receipt claimed. The Action refused its own receipt on a real
+    /// repository. Neither the token nor the receipt was wrong; the comparison was.
     #[must_use]
-    pub fn latest(&self) -> UnixNanos {
-        UnixNanos(self.token.generated_at.as_nanos() + self.stated_width())
+    pub fn supports(&self, allowance: Option<Nanos>) -> Option<(UnixNanos, UnixNanos)> {
+        let accuracy = self.token.accuracy.or(allowance)?;
+        let width = accuracy + self.token.resolution;
+        Some((
+            UnixNanos(self.token.generated_at.as_nanos() - width),
+            UnixNanos(self.token.generated_at.as_nanos() + width),
+        ))
+    }
+
+    /// Whether the authority put a number on its own error inside the token.
+    #[must_use]
+    pub const fn states_an_accuracy(&self) -> bool {
+        self.token.accuracy.is_some()
     }
 
     /// The nonce inside the signed token, as a value.
     #[must_use]
     pub fn nonce(&self) -> Option<&[u8]> {
         self.token.nonce.as_deref()
-    }
-
-    fn stated_width(&self) -> Nanos {
-        // An unstated accuracy contributes nothing here, which is what it contributed before the
-        // state existed. The arithmetic is deliberately unchanged: moving it would change which
-        // receipts verify, and that belongs to its own row rather than to the change that stopped
-        // the printing. The paragraph on `earliest` says what is open and why.
-        self.token.accuracy.unwrap_or(0) + self.token.resolution
     }
 
     /// Check the token's signature under the certificate the reader pinned for an authority.
@@ -391,6 +432,7 @@ impl Inspected<'_> {
             token.generated_at.as_nanos() / NANOS_PER_SEC,
             token.accuracy,
             token.resolution,
+            authority.accuracy_where_the_token_states_none,
         ));
 
         // The ordering flag, which this product has more reason to read than most. The claim here
@@ -414,14 +456,26 @@ impl Inspected<'_> {
             ));
         }
 
-        Checked::over(
-            SCHEME,
-            format!("{} serial {}", authority.name, hex(&token.serial)),
-            self.earliest(),
-            self.latest(),
-            token.nonce.clone(),
-            checks,
-        )
+        let signer = format!("{} serial {}", authority.name, hex(&token.serial));
+        match self.supports(authority.accuracy_where_the_token_states_none) {
+            Some((earliest, latest)) => Checked::over(
+                SCHEME,
+                signer,
+                earliest,
+                latest,
+                token.nonce.clone(),
+                checks,
+            ),
+            // The signature holds and the authority has still put no number on its own clock, so
+            // there is no edge in UTC to hand back. Answering with the stated time would say the
+            // authority vouched for a perfect clock, which is the one thing it declined to do.
+            None => Ok(Checked::with_no_interval(
+                SCHEME,
+                signer,
+                token.nonce.clone(),
+                checks,
+            )),
+        }
     }
 }
 
@@ -762,17 +816,25 @@ fn what_the_token_states(
     saw_it_at: i128,
     accuracy: Option<Nanos>,
     resolution: Nanos,
+    allowance: Option<Nanos>,
 ) -> String {
-    match accuracy {
-        Some(stated) => format!(
+    match (accuracy, allowance) {
+        (Some(stated), _) => format!(
             "{authority} states it saw this hash at {saw_it_at} s, to a stated accuracy of \
              {stated} ns and written to the nearest {resolution} ns, so the document existed no \
              later than that"
         ),
-        None => format!(
+        (None, Some(allowed)) => format!(
             "{authority} states it saw this hash at {saw_it_at} s, written to the nearest \
-             {resolution} ns, with its accuracy not stated, so the document existed no later than \
-             that and nothing here puts a number on the authority's own error"
+             {resolution} ns, and states no accuracy of its own, so the {allowed} ns allowed for \
+             its clock here is this reader's figure from the authority's published practice and \
+             is not anything the authority signed"
+        ),
+        (None, None) => format!(
+            "{authority} states it saw this hash at {saw_it_at} s, written to the nearest \
+             {resolution} ns, with its accuracy not stated, so the token puts the document no \
+             later than that on the authority's own clock, and nothing here puts a number on how \
+             wrong that clock could be, so it bounds nothing in UTC"
         ),
     }
 }
@@ -1103,6 +1165,7 @@ pub fn published_authorities() -> Vec<Authority> {
                 0xc9, 0x65, 0x67, 0x55, 0xaf, 0x04, 0x3f, 0x1e, 0xa7, 0x42, 0xcc, 0x0d, 0x21, 0x20,
                 0xe1, 0x41, 0xeb, 0xfc,
             ]],
+            accuracy_where_the_token_states_none: None,
         },
         Authority {
             name: "Sectigo".to_string(),
@@ -1112,6 +1175,7 @@ pub fn published_authorities() -> Vec<Authority> {
                 0x62, 0xcd, 0x22, 0x9a, 0x5f, 0xe9, 0x1e, 0x30, 0x8d, 0x30, 0x19, 0x76, 0xfe, 0xb2,
                 0x3e, 0xa9, 0x01, 0x56,
             ]],
+            accuracy_where_the_token_states_none: None,
         },
     ]
 }
@@ -1495,7 +1559,7 @@ mod tests {
 
     #[test]
     fn an_unstated_accuracy_is_printed_as_words_and_never_as_a_figure() {
-        let line = what_the_token_states("DigiCert", 1_788_979_279, None, NANOS_PER_SEC);
+        let line = what_the_token_states("DigiCert", 1_788_979_279, None, NANOS_PER_SEC, None);
         assert!(
             line.contains("accuracy not stated"),
             "the line should say the accuracy was not stated and it says {line:?}"
@@ -1508,7 +1572,13 @@ mod tests {
 
     #[test]
     fn a_stated_accuracy_is_still_printed_as_the_figure_the_authority_wrote() {
-        let line = what_the_token_states("DigiCert", 1_788_979_279, Some(250_000_000), 1_000_000);
+        let line = what_the_token_states(
+            "DigiCert",
+            1_788_979_279,
+            Some(250_000_000),
+            1_000_000,
+            None,
+        );
         assert!(
             line.contains("to a stated accuracy of 250000000 ns"),
             "the stated figure should be shown and the line says {line:?}"
@@ -1544,6 +1614,7 @@ mod tests {
             name: "nobody".to_string(),
             url: "http://127.0.0.1:1".to_string(),
             accepted_certificates: vec![[0u8; 32]],
+            accuracy_where_the_token_states_none: None,
         };
         let mut seed = 0x2026_0907_u64;
         let mut next = || {

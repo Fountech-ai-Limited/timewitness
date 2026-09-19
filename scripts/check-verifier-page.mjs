@@ -168,7 +168,11 @@ if (!process.argv[2]) {
   agree("the backdated receipt, the verdict", fromPage?.accepted, fromCommandLine?.accepted);
   agree("the backdated receipt, the verdict line", fromPage?.verdict, fromCommandLine?.verdict);
   agree("the backdated receipt, the line under the verdict", fromPage?.bracket, fromCommandLine?.bracket);
-  for (const [what, words] of [["years", "about 2.95 years"], ["no corridor", "It carries no Roughtime corridor."], ["whose the width is", "is the signer's own claim."]]) {
+  // "about 2.95 years" until 2026-09-19. The width was the 2023 beacon against a
+  // 2026 token whose authority states no accuracy, so one of its edges was an assumption of ours
+  // rather than anything a third party signed. The token bounds nothing from above and the page
+  // says so, which is the plainer warning and the true one.
+  for (const [what, words] of [["nothing above it", "nothing outside bounds the moment from above."], ["no corridor", "It carries no Roughtime corridor."], ["whose the width is", "is the signer's own claim."]]) {
     if (!String(fromPage?.bracket).includes(words)) {
       problems.push(`the backdated receipt: the page's line under the verdict does not say ${what}: ${JSON.stringify(fromPage?.bracket)}`);
     }

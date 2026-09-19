@@ -284,8 +284,15 @@ impl RoughtimeClient {
         // to the four-timestamp exchange are the same value. The round trip the model computes from
         // that is the whole wait, which is right: nothing in the protocol separates the server's own
         // processing time out of it, so none of it may be discounted.
-        let stated = checked.midpoint();
-        let radius = checked.radius();
+        // A Roughtime response always states an interval, the midpoint and the radius being the
+        // whole of what it answers, so a response reaching here with neither is malformed rather
+        // than a source that declined to say. It is answered as such instead of being assumed away.
+        let (Some(stated), Some(radius)) = (checked.midpoint(), checked.radius()) else {
+            return Err(SourceError::Malformed(format!(
+                "{} answered with a response that states no interval at all",
+                self.id
+            )));
+        };
 
         Ok(Exchange {
             source: self.id.clone(),

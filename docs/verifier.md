@@ -87,9 +87,22 @@ moment, which is the latest checked not-earlier-than against the earliest checke
 receipt resting on its agent's own model it names the width as the signer's own claim, and it says so
 where the receipt carries no Roughtime corridor or carries one nobody checked.
 
-On the receipt committed at `crates/verify/tests/data/a-real-stamp/` that line is a 2 s bracket round a width of 153.875 ms. On the one at `crates/verify/tests/data/a-backdated-receipt/`, whose
-attestations are all genuine and whose reading was moved back three years, it is about 2.95 years.
-Both pass every check, and until 2026-09-15 both printed the same first line and nothing under it.
+**A checked witness does not always bound the moment, and the line says which.** A timestamp token
+may state the authority's own accuracy and may leave the field out, and leaving it out is a
+statement the authority did not make rather than a statement of nought. A token that states none
+puts no number on how wrong that authority's clock could be, so it bounds nothing in UTC however
+good its signature is, and both authorities that ship are in that state. So there are three
+answers on the not-later-than side and the line tells them apart: no witness was checked, a witness
+was checked and states no accuracy, and a witness was checked and bounds the moment.
+
+On the receipt committed at `crates/verify/tests/data/a-real-stamp/` that line says a not-later-than
+signature was checked, that its authority states no accuracy of its own, and that nothing outside
+bounds the moment from above, round a width of 153.875 ms that is the signer's own claim. The same
+goes for the one at `crates/verify/tests/data/a-backdated-receipt/`, whose attestations are all
+genuine and whose reading was moved back three years. Both pass every check, and until 2026-09-15
+both printed the same first line and nothing under it. Until 2026-09-19 both printed a bracket,
+2 s on the first and about 2.95 years on the second, and both numbers were arithmetic that took an
+unstated accuracy for a stated nought.
 
 The second line goes wherever the verdict goes. The command line prints it under `--quiet` as well,
 `--json` carries it as `bracket`, `--fields` carries the span as `outside_bracket_ns`, the page prints
@@ -177,12 +190,24 @@ A reader who would rather not take the shipped copy supplies their own with `--a
 # One anchor per line. Blank lines and lines from a # are ignored.
 roughtime <name> <32 bytes of hex>
 drand     <name> <chain hash, 32 bytes> <group key, 96 bytes> <period seconds> <genesis second>
-rfc3161   <name> <certificate sha-256> [more certificate digests]
+rfc3161   <name> <certificate sha-256> [more certificate digests] [allow=<ns>]
 keylog    <name> <32 bytes of hex, the key that signs the head of our key log>
 ```
 
 A line nobody can parse refuses the file rather than being skipped, because a skipped line is a key
 the reader meant to trust and would go on believing they had.
+
+`allow=` on a timestamp authority is what this reader allows for that authority's own clock where
+its tokens state no accuracy. RFC 3161 says of the absent field that "the accuracy may be available
+through other means, e.g., the TSAPolicyId", meaning from the authority's published practice rather
+than from the token, so this is a figure the reader takes responsibility for. Write it as whole
+nanoseconds, once per authority, anywhere after the name. With it set, the verifier reports a
+not-later-than edge at the instant the token states plus exactly that, and names the figure as the
+reader's own rather than as anything the authority signed. It is ignored where a token does state
+an accuracy, because the authority's own figure wins.
+
+Nothing that ships carries an allowance. This product has not read either authority's practice
+statement and does not write a figure it cannot source.
 
 `--no-anchors` trusts nothing. That is a legitimate state and not a degraded one: every arithmetic
 claim the receipt makes about itself is still checked, and every attestation is reported as unchecked

@@ -56,6 +56,7 @@ fn captures() -> Vec<Capture> {
                     name,
                     url: String::new(),
                     accepted_certificates: vec![pin],
+                    accuracy_where_the_token_states_none: None,
                 },
                 subject,
                 blob,
@@ -83,7 +84,17 @@ fn every_captured_token_verifies_with_no_network_at_all() {
             checked.checks.len()
         );
         // Both were captured on the day of the run, so the moment each states has to sit in it.
-        let seconds = checked.latest().as_nanos() / NANOS_PER_SEC;
+        // Neither authority states an accuracy, so neither token supports an interval in UTC and
+        // `latest` is absent on both. What each one states is still checkable and is what the day
+        // is read off, through `inspect`, which needs no key.
+        let inspected = rfc3161::inspect(&c.blob, &c.subject).expect("a good token");
+        assert_eq!(
+            checked.latest(),
+            None,
+            "{} states no accuracy and must support no edge in UTC",
+            c.authority.name
+        );
+        let seconds = inspected.stated_instant().as_nanos() / NANOS_PER_SEC;
         assert!(
             (1_788_700_000..1_788_900_000).contains(&seconds),
             "{} states {seconds}, which is not the day it was captured",
@@ -275,5 +286,104 @@ fn changing_the_moment_the_token_states_is_refused() {
             "{} refused an edited moment for the wrong reason: {err}",
             c.authority.name
         );
+    }
+}
+
+/// Neither captured authority states an accuracy, so neither token supports an edge in UTC.
+///
+/// Changed 2026-09-19. `stated_width` was `accuracy.unwrap_or(0) + resolution` until that
+/// day, so an authority that had put no number on its own clock error was read as having put
+/// nought, and both edges came out as narrow as the token could possibly be read. That is the
+/// tightening direction and it was every not-later-than edge this product had produced, because
+/// both authorities that ship are in this state.
+///
+/// RFC 3161 section 2.4.2 is what settles it. A missing sub-field of a present accuracy is taken as
+/// zero; an absent accuracy field is different, and "the accuracy may be available through other
+/// means, e.g., the TSAPolicyId", meaning from the authority's published practice rather than from
+/// the token. The same section refuses the other shortcut: the accuracy "is not to be inferred
+/// from the syntax", so the resolution the time is written to is not an accuracy either.
+#[test]
+fn a_token_stating_no_accuracy_supports_no_interval_in_utc() {
+    for c in captures() {
+        let inspected = rfc3161::inspect(&c.blob, &c.subject).expect("a good token");
+        assert!(
+            !inspected.states_an_accuracy(),
+            "{} states an accuracy, and this test was written against two that do not",
+            c.authority.name
+        );
+        assert_eq!(
+            inspected.supports(None),
+            None,
+            "{} states no accuracy and still supports an interval",
+            c.authority.name
+        );
+        let checked = rfc3161::check(&c.blob, &c.authority, &c.subject).expect("a good token");
+        assert_eq!(checked.earliest(), None, "{}", c.authority.name);
+        assert_eq!(checked.latest(), None, "{}", c.authority.name);
+        assert_eq!(checked.radius(), None, "{}", c.authority.name);
+        assert_eq!(checked.midpoint(), None, "{}", c.authority.name);
+    }
+}
+
+/// What the token states is off its own bytes and does not move with what the reader holds.
+///
+/// The instant a receipt prints beside a witness entry has to be the same for everybody or a
+/// receipt stops being portable, so it is the written time plus the resolution and nothing else.
+/// An allowance moves what the token is reported to support and may never move this.
+#[test]
+fn the_instant_a_token_states_is_the_same_whatever_the_reader_allows() {
+    for c in captures() {
+        let inspected = rfc3161::inspect(&c.blob, &c.subject).expect("a good token");
+        let stated = inspected.stated_instant();
+        for allowance in [
+            None,
+            Some(0),
+            Some(1_000_000_000),
+            Some(86_400 * NANOS_PER_SEC),
+        ] {
+            assert_eq!(
+                inspected.stated_instant(),
+                stated,
+                "{} states a different moment once the reader allows {allowance:?}",
+                c.authority.name
+            );
+            let Some((earliest, latest)) = inspected.supports(allowance) else {
+                assert_eq!(allowance, None, "{}", c.authority.name);
+                continue;
+            };
+            let allowed = allowance.expect("an interval only comes back with an allowance");
+            assert_eq!(
+                latest.as_nanos() - stated.as_nanos(),
+                allowed,
+                "{} widens the not-later edge by something other than what was allowed",
+                c.authority.name
+            );
+            assert!(
+                earliest < stated,
+                "{} puts the not-earlier edge at or after the instant it states",
+                c.authority.name
+            );
+        }
+    }
+}
+
+/// A reader's own allowance widens what the token supports and never narrows it.
+#[test]
+fn a_larger_allowance_never_produces_a_narrower_interval() {
+    for c in captures() {
+        let inspected = rfc3161::inspect(&c.blob, &c.subject).expect("a good token");
+        let mut widest = -1i128;
+        for allowance in [0, 1, 1_000, 1_000_000, NANOS_PER_SEC, 3_600 * NANOS_PER_SEC] {
+            let (earliest, latest) = inspected
+                .supports(Some(allowance))
+                .expect("an allowance produces an interval");
+            let width = latest.as_nanos() - earliest.as_nanos();
+            assert!(
+                width > widest,
+                "{} answered {width} ns at an allowance of {allowance} ns, after {widest} ns",
+                c.authority.name
+            );
+            widest = width;
+        }
     }
 }

@@ -23,10 +23,16 @@ pub enum Outcome {
         signer: String,
         /// What was checked, one line each.
         checks: Vec<String>,
-        /// The earliest instant the signed content supports.
-        earliest: UnixNanos,
-        /// The latest.
-        latest: UnixNanos,
+        /// The earliest instant the signed content supports, where it supports one.
+        ///
+        /// `None` is an attestation that checked out and still put no number on where the moment
+        /// sits: an RFC 3161 token whose authority states no accuracy, with no allowance held for
+        /// that authority, is the case it exists for. It is not an interval of zero width and a
+        /// reader who takes it for one has been handed the tightest possible reading of a token
+        /// that made no such claim.
+        earliest: Option<UnixNanos>,
+        /// The latest, absent under the same rule and absent together with `earliest`.
+        latest: Option<UnixNanos>,
     },
     /// The verifier holds nothing to check this entry against.
     ///
@@ -86,6 +92,14 @@ pub struct Bracket {
     pub not_earlier: Option<UnixNanos>,
     /// The earliest not-later-than edge among the checked entries, where there is one.
     pub not_later: Option<UnixNanos>,
+    /// A not-later-than attestation was checked and put no number on where the moment sits.
+    ///
+    /// Added 2026-09-19. Three states have to be told apart and a reader shown
+    /// two of them will read the wrong one: no witness was checked at all, a witness was checked
+    /// and states no accuracy so it bounds nothing in UTC, and a witness was checked and bounds
+    /// the moment. Both authorities that ship are in the middle state, so it is the ordinary case
+    /// rather than the corner.
+    pub not_later_was_checked_and_bounds_nothing: bool,
 }
 
 impl Bracket {
@@ -104,19 +118,24 @@ impl Bracket {
             else {
                 continue;
             };
-            match entry.role {
-                Role::NotEarlierThan => {
+            match (entry.role, earliest, latest) {
+                (Role::NotEarlierThan, Some(earliest), _) => {
                     bracket.not_earlier = Some(
                         bracket
                             .not_earlier
                             .map_or(*earliest, |at| at.max(*earliest)),
                     );
                 }
-                Role::NotLaterThan => {
+                (Role::NotLaterThan, _, Some(latest)) => {
                     bracket.not_later =
                         Some(bracket.not_later.map_or(*latest, |at| at.min(*latest)));
                 }
-                Role::AuthenticatedUtcCorridor => {}
+                // Checked, and it supports no edge, so it moves neither end and the reader is told
+                // that this is what happened rather than that no witness was checked.
+                (Role::NotLaterThan, _, None) => {
+                    bracket.not_later_was_checked_and_bounds_nothing = true;
+                }
+                (Role::NotEarlierThan, None, _) | (Role::AuthenticatedUtcCorridor, _, _) => {}
             }
         }
         bracket
