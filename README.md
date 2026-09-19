@@ -165,8 +165,9 @@ it come from the simulated harness rather than from a real network. It cannot pr
 oscillator is the one the arithmetic assumes: every allowance for the oscillator rests on the rate
 staying inside the band the policy states, which comes from a consumer crystal's published
 specification and has never been measured by us on real hardware. The agent reads its own fitted
-rate back against that band and widens by what it measured where the two disagree, and before it has
-fitted anything it cannot tell.
+rate back against that band and widens by what it measured where the two disagree and the fit is
+sharp enough to say so; where the fit's error bar is wider than the whole band, which is every fit
+in the first rounds after a start, it has measured nothing and the widening is half the band.
 
 **About the evidence.** An authenticated corridor makes the moment checkable to within seconds and
 does not make the bound tighter, because a Roughtime radius is seconds. A beacon's signature covers a round number and not a

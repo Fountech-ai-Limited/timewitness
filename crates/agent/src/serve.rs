@@ -89,7 +89,15 @@ pub struct Cadence {
     /// thirty-two and 3.2 ms at sixty-four. The cadence and that ageing are one trade: on
     /// 2026-09-18 an ageing term that carried a fresh fit's own error bar, tens of thousands of
     /// parts per million on a sub-second baseline, stopped the agent converging at this cadence at
-    /// all, and the fix was to bound the term by the band rather than to shorten the gap.
+    /// all, and what was changed was the ageing rather than the gap.
+    ///
+    /// **Two things changed that evening and only one of them is why the agent comes back**,
+    /// measured 2026-09-19 over twenty minutes against a control on one desktop. A window picks
+    /// the sample a round is built from by narrowest aged interval, and that is what closes the
+    /// loop; bounding the widening by the band is what keeps it inside the assumption the rest of
+    /// the arithmetic rests on. A binary with the bound removed and nothing else changed is
+    /// indistinguishable from the head over those twenty minutes. This comment credited the cap
+    /// with the recovery until the two were separated.
     ///
     /// Shorter costs somebody else's servers. The sources are three public NTP servers and three
     /// public Roughtime servers, run by other people at their own expense. RFC 5905 sets sixteen

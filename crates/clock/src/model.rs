@@ -1184,15 +1184,42 @@ fn read_against_the_band(fit: &Fit, policy: &Policy) -> BandReading {
 /// wider than the band, which is the fit the settling rounds produce, has measured nothing about
 /// this counter and carries half the band, which is what `before_a_fit` carries.
 ///
-/// The cap went in on the evening of 2026-09-18, and what it stopped is the defect of that
-/// afternoon. From 15:09 the sum was carried whole, so the error bar of a fit on a sub-second
-/// baseline, which is the sources' scatter divided by almost nothing, widened every source
-/// interval on the next round. Wider intervals made a wider intersection, the wider intersection
-/// made a regression point with almost no weight against the settling points, the fit stayed on
-/// the sub-second baseline, and the next round was wider again. On an ordinary desktop against the
+/// **The last two overlap and the third wins, which is a decision rather than the order of two
+/// tests.** A fit can be both outside the band and too blunt to tell one rate in the band from
+/// another, and every agent start produces one: the settling rounds are a quarter of a second
+/// apart, so the fitted rate is the sources' own scatter divided by almost nothing and so is its
+/// error bar. Such a fit has not established that this machine is outside anything. Its magnitude
+/// is not a measurement of the counter, and neither is the reading of the band taken from it, so
+/// nothing it says is carried and the widening is what it was before any fit at all. The test for
+/// it comes first in `ppm` for that reason, and the honesty surfaces say the same thing in the
+/// same words: a fit widens by the magnitude it measured where it is sharp enough to say so, and
+/// by half the band where it is not. Until 2026-09-19 those surfaces promised the magnitude and
+/// said nothing about the condition, which made them false on the day the condition went in.
+///
+/// What this precedence costs is a real machine outside the band whose fit is blunt for some
+/// reason other than a short baseline: it is widened by half the band while its own fit says
+/// more. That case is inside what the page already says, which is that on a machine outside the
+/// band nothing on it is a promise the arithmetic can keep.
+///
+/// The cap went in on the evening of 2026-09-18, beside the change to how a window picks the
+/// sample a round is built from. The defect of that afternoon is what the two of them answer:
+/// from 15:09 the sum was carried whole, so the error bar of a fit on a sub-second baseline,
+/// which is the sources' scatter divided by almost nothing, widened every source interval on the
+/// next round. Wider intervals made a wider intersection, the wider intersection made a
+/// regression point with almost no weight against the settling points, the fit stayed on the
+/// sub-second baseline, and the next round was wider again. On an ordinary desktop against the
 /// nine published servers the agent signed once at 3 s of uptime and then refused every reading,
 /// at sixteen to twenty-two seconds of width. The rig is
 /// `crates/clock/tests/a_fresh_agent_at_the_shipped_cadence.rs`.
+///
+/// **What closes that loop is `SourceWindow::best_within` and not this cap, measured 2026-09-19
+/// and written here because the record said otherwise.** A binary with the cap removed and
+/// nothing else changed was probed for twenty minutes against a control started eight seconds
+/// later, on one desktop against the same nine servers: 79 readings each, 74 signed, 5 refused,
+/// the last refusal at 94 s on both, and nought refused of 67 from three minutes on both. They
+/// are indistinguishable. What this cap does is the other job, which is keeping the widening
+/// inside the band the rest of the arithmetic assumes, and it is not what brings a fresh agent
+/// back.
 ///
 /// The invariant, and it rests on the same first assumption as `oscillator_holdover`: on a machine
 /// whose true rate magnitude never passes `frequency_span_ppm / 2`, a sample that held the truth

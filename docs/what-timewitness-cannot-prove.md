@@ -223,10 +223,16 @@ honestly show is fifty. Both figures are `Policy::frequency_span_ppm` in this tr
 consumer crystal's published specification across its temperature range, they are a choice about
 hardware rather than a measurement, and nothing in this product has measured either on real
 hardware. What the agent does do, from 2026-09-18, is read its own fitted rate back against that
-band every time it fits one, and where the fit puts the machine outside it the model stops claiming
-the rate and widens by the magnitude it measured instead, so the interval holds what was seen rather
-than what was assumed. What it cannot do is see a machine outside the band before it has fitted
-anything at all, which is every reading in the first rounds after a start. On a machine outside the
+band every time it fits one. Where the fit puts the machine outside the band and is sharp enough to
+tell one rate in the band from another, the model stops claiming the rate and widens by the
+magnitude it measured instead, so the interval holds what was seen rather than what was assumed.
+Where the fit is not that sharp, and that means an error bar wider than the whole band, it has
+measured nothing about this counter, so neither the magnitude nor the error bar is carried and the
+widening is half the band, exactly as it is before any fit at all. That is what every start
+produces, because the first rounds are a fraction of a second apart and a rate fitted across a
+fraction of a second is the sources' own scatter divided by almost nothing. So what it cannot do is
+see a machine outside the band until there is a fit sharp enough to say so, and there is none in
+the first rounds after a start. On a machine outside the
 band, nothing on this page is a promise the arithmetic can keep.
 
 ## About the evidence, and this is where most of the surprises are

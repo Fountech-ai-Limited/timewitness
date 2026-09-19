@@ -335,3 +335,64 @@ fn a_machine_outside_the_band_is_still_widened_by_what_was_measured() {
     let ageing = CounterAgeing::new(&d(), &rate);
     assert!(ageing.ppm(NANOS_PER_SEC) >= 120.0);
 }
+
+/// A fit outside the band that cannot tell one rate in the band from another widens by half the
+/// band, and the surfaces say so.
+///
+/// The two branches overlap and nothing asserted which wins until 2026-09-19. The three honesty
+/// surfaces promised the magnitude the fit measured, with no condition on it, while the code
+/// carried half the band wherever the error bar was wider than the whole band. Every agent start is
+/// on the second branch, because the settling rounds sit inside a second and a rate fitted across a
+/// fraction of a second is the sources' scatter divided by almost nothing.
+///
+/// Both halves are here. Sharp and outside carries the magnitude, so the first branch is not
+/// swallowing the second; blunt and outside carries half the band whatever magnitude it found, and
+/// a magnitude a thousand times larger does not move it.
+#[test]
+fn a_fit_outside_the_band_that_cannot_separate_it_widens_by_half_the_band() {
+    let policy = d();
+    let half = policy.frequency_span_ppm / 2.0;
+    let age = 32 * NANOS_PER_SEC;
+
+    // Sharp enough to separate one rate in the band from another: the error bar doubled by the
+    // coverage factor is inside the band. The magnitude is carried and the widening is the sum.
+    let sharp = RateKnowledge {
+        frequency_ppm: None,
+        frequency_stderr_ppm: 1.0,
+        unclaimed_frequency_ppm: 500.0,
+        band: BandReading::Outside { by_ppm: 450.0 },
+    };
+    let widening = CounterAgeing::new(&policy, &sharp).ppm(age);
+    assert!(
+        widening > 500.0,
+        "a fit sharp enough to say the machine is outside the band carries what it measured, and \
+         this widened at {widening} ppm"
+    );
+
+    // Too blunt to separate them, on the same magnitude. Nothing it says is carried.
+    for stderr in [200.0, 400_000.0] {
+        for magnitude in [500.0, 926_573.0] {
+            let blunt = RateKnowledge {
+                frequency_ppm: None,
+                frequency_stderr_ppm: stderr,
+                unclaimed_frequency_ppm: magnitude,
+                band: BandReading::Outside {
+                    by_ppm: magnitude - half,
+                },
+            };
+            let widening = CounterAgeing::new(&policy, &blunt).ppm(age);
+            assert!(
+                (widening - half).abs() < 1e-9,
+                "a fit at {magnitude} ppm with an error bar of {stderr} ppm has measured nothing \
+                 about this counter, so the widening is half the band, and this widened at \
+                 {widening} ppm"
+            );
+        }
+    }
+
+    // And that is the same widening as before any fit at all, which is what the surfaces now say.
+    assert!(
+        (CounterAgeing::before_a_fit(&policy).ppm(age) - half).abs() < 1e-9,
+        "the blunt branch and the no-fit branch are the same allowance, and the page says so"
+    );
+}
