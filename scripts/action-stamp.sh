@@ -53,21 +53,46 @@ if ! "$binary" verify "$output" --subject "$subject" --fields > "$report"; then
     exit 1
 fi
 
-# Every value is a whole number or a single word, so reading them as shell variables is safe. What
-# is not safe is an empty one: `sed` exits 0 when it matches nothing, so a field the verifier has
-# renamed leaves the variable empty, the step goes green, and the workflow gets `earliest-ns=` with
-# nothing after it and a summary reading "UTC was somewhere in an interval **** wide". Every read
-# below is asserted non-empty before anything is published, which is the check that was missing
-# until 2026-09-19.
-earliest=$(sed -n 's/^earliest_ns=//p' "$report")
-latest=$(sed -n 's/^latest_ns=//p' "$report")
-width=$(sed -n 's/^width_ns=//p' "$report")
-width_words=$(sed -n 's/^width_in_words=//p' "$report")
-reading=$(sed -n 's/^reading_ns=//p' "$report")
-digest=$(sed -n 's/^receipt_sha256=//p' "$report")
-subject_digest=$(sed -n 's/^payload_hash=//p' "$report")
-checked=$(sed -n 's/^attestations_checked=//p' "$report")
-carried=$(sed -n 's/^attestations_carried=//p' "$report")
+# Every value is a whole number or a single word, so reading them as shell variables is safe. Two
+# things are not, and both have bitten.
+#
+# An empty one: `sed` exits 0 when it matches nothing, so a field the verifier has renamed leaves
+# the variable empty, the step goes green, and the workflow gets `earliest-ns=` with nothing after
+# it and a summary reading "UTC was somewhere in an interval **** wide". Every read below is
+# asserted non-empty before anything is published, which is the check that was missing until
+# 2026-09-19.
+#
+# And more than one: `sed -n 's/^name=//p'` prints every line that matches, so two lines named
+# `earliest_ns` put two values in one variable and the non-empty assertion passes, because the
+# variable is not empty, it is two values. On 2026-09-19 a receipt whose first source carried a
+# newline in its `kind` put a second `earliest_ns` and a second `width_ns` into that report and so
+# into this file's outputs. The verifier refuses such a receipt now, and this reads one line per
+# field anyway, because this script is the worked example a consumer copies and the report it reads
+# will not always be one this Action produced.
+# It returns rather than ending the run, and every caller ends the run itself. A command
+# substitution is a subshell, so an exit here would end the subshell and hand the caller an empty
+# string, which is the shape the non-empty assertion below was written for in the first place.
+field() {
+    local name="$1" found count
+    found=$(sed -n "s/^$name=//p" "$report")
+    count=$(printf '%s' "$found" | grep -c '' || true)
+    if [ "$count" -gt 1 ]; then
+        echo "timewitness: the verifier's report carries $count lines named $name and a field has one. The report it read is below" >&2
+        cat "$report" >&2
+        return 1
+    fi
+    printf '%s' "$found"
+}
+
+earliest=$(field earliest_ns) || exit 1
+latest=$(field latest_ns) || exit 1
+width=$(field width_ns) || exit 1
+width_words=$(field width_in_words) || exit 1
+reading=$(field reading_ns) || exit 1
+digest=$(field receipt_sha256) || exit 1
+subject_digest=$(field payload_hash) || exit 1
+checked=$(field attestations_checked) || exit 1
+carried=$(field attestations_carried) || exit 1
 
 missing=''
 for pair in "earliest_ns=$earliest" "latest_ns=$latest" "width_ns=$width" \

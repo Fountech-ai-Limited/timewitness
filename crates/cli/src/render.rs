@@ -351,6 +351,39 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
     out
 }
 
+/// One `name=value` line of the fields report, with the value held to one line.
+///
+/// Every value in that report goes through here, and that is the point of it. The report is a
+/// format, one field per line, and `scripts/action-stamp.sh` reads it with `sed` and puts what it
+/// finds into a workflow's outputs. A value carrying a newline is two lines, and the second one was
+/// written by whoever wrote the receipt. On 2026-09-19 a signed receipt whose first source had
+/// `kind` set to a string carrying two newlines put `earliest_ns=1` and a width of its own choosing
+/// into this report, above the report's real ones.
+///
+/// `validate` refuses such a receipt outright now, and that is the fix. This is here as well, and
+/// it is not the same job. The refusal is a rule about what a receipt may carry, held in one place
+/// for every surface. This is the format keeping its own promise: a report written a line at a time
+/// stays a line at a time whatever is handed to it, rather than every value having to remember.
+///
+/// **Measured, so that it is not read as more than it is.** On the tree of 2026-09-19 nothing
+/// reaches here that the refusal has not already stopped. A receipt whose strings carry a control
+/// character is refused in `open_with`, and a refused receipt is not attached to the assessment, so
+/// the only values left are this reader's own words and its own numbers. What this stops is the
+/// next value somebody adds.
+///
+/// A control character is replaced rather than dropped, with U+FFFD, the character whose job is to
+/// say that a character could not be represented. Dropping would quietly turn one value into
+/// another that reads as sound; replacing leaves something on the line that is obviously neither a
+/// number nor a word, and keeps every field on the line it belongs to.
+fn write_field(out: &mut String, name: &str, value: impl core::fmt::Display) {
+    let written = value.to_string();
+    let held: String = written
+        .chars()
+        .map(|c| if c.is_control() { '\u{fffd}' } else { c })
+        .collect();
+    out.push_str(&format!("{name}={held}\n"));
+}
+
 /// The result as `name=value` lines, for a shell.
 ///
 /// A workflow step wants five numbers and a verdict, and reaching them through a JSON tool would put
@@ -360,187 +393,91 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
 #[must_use]
 pub fn fields(a: &Assessment) -> String {
     let mut out = String::new();
-    out.push_str(&format!(
-        "accepted={}
-",
-        a.accepted()
-    ));
+    write_field(&mut out, "accepted", a.accepted());
     if let Some(step) = a.refusal() {
-        out.push_str(&format!(
-            "refused_at={}
-",
-            step.question
-        ));
-        out.push_str(&format!(
-            "refusal={}
-",
-            step.state.detail()
-        ));
+        write_field(&mut out, "refused_at", &step.question);
+        write_field(&mut out, "refusal", step.state.detail());
     }
-    out.push_str(&format!(
-        "receipt_bytes={}
-",
-        a.encoded_bytes
-    ));
-    out.push_str(&format!(
-        "receipt_sha256={}
-",
-        hex(&a.link)
-    ));
-    out.push_str(&format!(
-        "anchors_held={}
-",
-        a.anchors_held
-    ));
+    write_field(&mut out, "receipt_bytes", a.encoded_bytes);
+    write_field(&mut out, "receipt_sha256", hex(&a.link));
+    write_field(&mut out, "anchors_held", a.anchors_held);
     // The key log, where one was supplied, as the two facts a script wants before it reads the
     // words: whether the head was checked under a key this reader holds for us, and by which key.
     // `scripts/key-log.sh` refuses to serve a log on anything less than `checked`.
     if let Some(log) = &a.key_log {
-        out.push_str(&format!(
-            "key_log_entries={}
-",
-            log.entries
-        ));
-        out.push_str(&format!(
-            "key_log_agent_entries={}
-",
-            log.agent_entries
-        ));
-        out.push_str(&format!(
-            "key_log_head={}
-",
-            log.head.word()
-        ));
-        out.push_str(&format!(
-            "key_log_head_signed_by={}
-",
+        write_field(&mut out, "key_log_entries", log.entries);
+        write_field(&mut out, "key_log_agent_entries", log.agent_entries);
+        write_field(&mut out, "key_log_head", log.head.word());
+        write_field(
+            &mut out,
+            "key_log_head_signed_by",
             log.head
                 .signed_by()
-                .map_or_else(|| "none".to_string(), |key| hex(&key))
-        ));
+                .map_or_else(|| "none".to_string(), |key| hex(&key)),
+        );
         for (name, question) in [
             ("key_log_step", KEY_LOG_QUESTION),
             ("kept_log", KEPT_LOG_QUESTION),
         ] {
             if let Some(step) = a.step(question) {
-                out.push_str(&format!(
-                    "{name}={}
-",
+                write_field(
+                    &mut out,
+                    name,
                     match step.state {
                         State::Held(_) => "held",
                         State::Failed(_) => "failed",
                         State::NotChecked(_) => "not-checked",
-                    }
-                ));
+                    },
+                );
             }
         }
     }
     if let Some(receipt) = &a.receipt {
-        out.push_str(&format!(
-            "earliest_ns={}
-",
-            receipt.claim.earliest.as_nanos()
-        ));
-        out.push_str(&format!(
-            "latest_ns={}
-",
-            receipt.claim.latest.as_nanos()
-        ));
-        out.push_str(&format!(
-            "width_ns={}
-",
-            receipt.width()
-        ));
-        out.push_str(&format!(
-            "reading_ns={}
-",
-            receipt.utc_estimate.as_nanos()
-        ));
-        out.push_str(&format!(
-            "width_in_words={}
-",
-            width_in_words(receipt.width())
-        ));
-        out.push_str(&format!(
-            "sequence={}
-",
-            receipt.sequence
-        ));
-        out.push_str(&format!(
-            "payload_algorithm={}
-",
-            receipt.payload.algorithm
-        ));
-        out.push_str(&format!(
-            "payload_hash={}
-",
-            hex(&receipt.payload.hash)
-        ));
-        out.push_str(&format!(
-            "sources_offered={}
-",
-            receipt.claim.sources_offered
-        ));
-        out.push_str(&format!(
-            "sources_kept={}
-",
-            receipt.claim.sources_kept
-        ));
+        write_field(&mut out, "earliest_ns", receipt.claim.earliest.as_nanos());
+        write_field(&mut out, "latest_ns", receipt.claim.latest.as_nanos());
+        write_field(&mut out, "width_ns", receipt.width());
+        write_field(&mut out, "reading_ns", receipt.utc_estimate.as_nanos());
+        write_field(&mut out, "width_in_words", width_in_words(receipt.width()));
+        write_field(&mut out, "sequence", receipt.sequence);
+        write_field(&mut out, "payload_algorithm", &receipt.payload.algorithm);
+        write_field(&mut out, "payload_hash", hex(&receipt.payload.hash));
+        write_field(&mut out, "sources_offered", receipt.claim.sources_offered);
+        write_field(&mut out, "sources_kept", receipt.claim.sources_kept);
         // The two counts a script needs to tell nine names at one company from nine at nine, and
         // the kinds behind them. Without these a caller reading this output has only the flattering
         // number, which is how several addresses at one company pass for several independent
         // parties.
         let operators = receipt.claim.operators();
-        out.push_str(&format!(
-            "operators_offered={}
-",
-            operators.offered
-        ));
-        out.push_str(&format!(
-            "operators_kept={}
-",
-            operators.kept
-        ));
+        write_field(&mut out, "operators_offered", operators.offered);
+        write_field(&mut out, "operators_kept", operators.kept);
         let mut kinds: BTreeMap<&str, usize> = BTreeMap::new();
         for source in &receipt.claim.sources {
             *kinds.entry(source.kind.as_str()).or_default() += 1;
         }
-        out.push_str(&format!(
-            "source_kinds={}
-",
+        write_field(
+            &mut out,
+            "source_kinds",
             kinds
                 .iter()
                 .map(|(kind, count)| format!("{kind}:{count}"))
                 .collect::<Vec<_>>()
-                .join(",")
-        ));
+                .join(","),
+        );
     }
     if let Some(evidence) = &a.evidence {
         // The span the checked outside evidence brackets the moment to, or `none` where nothing
         // checked bounds it on both sides. A whole number or one word, like everything here.
-        out.push_str(&format!(
-            "outside_bracket_ns={}
-",
+        write_field(
+            &mut out,
+            "outside_bracket_ns",
             evidence
                 .bracket()
                 .width()
-                .map_or_else(|| "none".to_string(), |span| span.to_string())
-        ));
-        out.push_str(&format!(
-            "attestations_carried={}
-",
-            evidence.entries.len()
-        ));
-        out.push_str(&format!(
-            "attestations_checked={}
-",
-            evidence.checked()
-        ));
-        out.push_str(&format!(
-            "basis_granted={}
-",
-            evidence.basis_granted
-        ));
+                .map_or_else(|| "none".to_string(), |span| span.to_string()),
+        );
+        write_field(&mut out, "attestations_carried", evidence.entries.len());
+        write_field(&mut out, "attestations_checked", evidence.checked());
+        write_field(&mut out, "basis_granted", evidence.basis_granted);
     }
     out
 }

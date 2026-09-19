@@ -95,6 +95,36 @@ The second line goes wherever the verdict goes. The command line prints it under
 `--json` carries it as `bracket`, `--fields` carries the span as `outside_bracket_ns`, the page prints
 it under its own verdict, and the Action quotes both lines in its job summary.
 
+## The report is a format, and a receipt does not get to write lines in it
+
+`--fields` prints one `name=value` per line, so a script can read it with nothing installed. A
+receipt is a file a stranger hands you, and every string in it was written by whoever signed it, so
+the obvious attack on a line-oriented report is a string carrying a newline: the value becomes two
+lines, and the second of them was written by the receipt.
+
+That is measured rather than hypothetical. On 2026-09-19 a correctly signed receipt whose first
+source had `kind` set to `ntp`, a newline, `earliest_ns=1`, a newline, `width_ns=1` verified clean,
+and its own `--fields` report carried `earliest_ns=1` and a width of the receipt's own choosing
+above the report's real ones.
+
+Two things answer it and they answer different halves.
+
+A receipt whose strings carry a control character is refused, and the refusal names the field and
+prints what was in it escaped. That is a rule about what a receipt may be, so it holds on every
+surface at once rather than on whichever report remembered to escape. It covers every string the
+receipt carries and not the one field this was found in: the payload's algorithm, the fusion rule,
+each source's name, operator, kind, timescale, smear and leap, and each evidence entry's scheme and
+detail.
+
+And every value `--fields` prints is held to one line whatever it is, with a control character
+replaced by U+FFFD, so the format keeps its own promise rather than each value having to remember.
+
+**If you read this report from a script, read one line per field.** `sed -n 's/^name=//p'` prints
+every line that matches, so a report that does carry two lines of a name puts two values in one
+variable, and a check that the variable is not empty passes, because it is not empty, it is two
+values. `scripts/action-stamp.sh` is the worked example and it refuses a name it finds more than
+once.
+
 ## The reader's own floor
 
 Every plausibility test has two possible sources for its threshold. One is the receipt, which states

@@ -58,6 +58,7 @@ pub fn validate(receipt: &Receipt) -> Result<(), ReceiptError> {
 /// The report it returns says which entries were checked and how. That is not decoration: a
 /// verifier that answers with a single word has hidden the only thing a careful reader wants.
 pub fn validate_with(receipt: &Receipt, anchors: &TrustAnchors) -> Result<Verified, ReceiptError> {
+    check_strings(receipt)?;
     check_version(receipt)?;
     check_payload(receipt)?;
     check_chain(receipt)?;
@@ -79,6 +80,46 @@ pub fn validate_with(receipt: &Receipt, anchors: &TrustAnchors) -> Result<Verifi
         basis_reason: reason,
         anchors_held: anchors.count(),
     })
+}
+
+/// Refuse a receipt whose strings carry a character a line of a report cannot.
+///
+/// This runs before every other check because it is about what the other checks are allowed to put
+/// in front of a reader. A receipt is a file a stranger hands us, and every string in it was
+/// written by whoever signed it. Those strings reach people through reports, and a report is a
+/// format: `timewitness verify --fields` is one `name=value` per line, and `scripts/action-stamp.sh`
+/// reads it with `sed` and puts the answers into a workflow's outputs.
+///
+/// Measured 2026-09-19: a correctly signed receipt whose first source had `kind` set to `ntp`, a
+/// newline, `earliest_ns=1`, a newline, `width_ns=1` verified clean, saying the receipt held up, and
+/// its own `--fields` report carried `earliest_ns=1` and `width_ns=1:1,nts:3,roughtime:3` above the
+/// report's real ones. Two intended lines became four in `$GITHUB_OUTPUT` with attacker-chosen
+/// content on two of them.
+///
+/// **Refused here rather than escaped at the report, and the reason is that there is more than one
+/// report.** An escape belongs to whichever format does the escaping, so it has to be got right in
+/// the fields report, in the human one, in anything written later, and in whatever a consumer
+/// builds on top. A control character in a source's name or a hash algorithm is not a thing an
+/// honest agent writes, in any of them. So the answer is that such a receipt is not well formed,
+/// which is one rule in one place, and the reader is told which field and what was in it.
+///
+/// The value is printed with `{:?}`, which escapes what it is refusing, or the refusal would plant
+/// the lines the refusal is about.
+///
+/// This does not stand alone and it was never meant to. `render::fields` holds every value it
+/// prints to one line as well, because a receipt refused here still reaches that report through the
+/// refusal path.
+fn check_strings(receipt: &Receipt) -> Result<(), ReceiptError> {
+    for (at, value) in receipt.strings() {
+        if let Some(bad) = value.chars().find(|c| c.is_control()) {
+            return Err(ReceiptError::Field(format!(
+                "{at} is {value:?}, which carries the control character {bad:?}. Nothing an agent \
+                 names carries one, and a report is written a line at a time, so a receipt that \
+                 could write its own lines into one is refused rather than read"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Check the shape of a receipt as a raw value tree, before it has been read into fields.

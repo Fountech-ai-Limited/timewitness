@@ -688,6 +688,50 @@ impl Receipt {
         self.claim.latest - self.claim.earliest
     }
 
+    /// Every string this receipt carries, each beside where it sits.
+    ///
+    /// A receipt is a file a stranger hands us, so every string in it was written by whoever signed
+    /// it. They reach a reader through a report, and a report is a format: `timewitness verify
+    /// --fields` is one `name=value` per line, and a string carrying a newline is two lines, the
+    /// second of them written by the receipt. On 2026-09-19 a signed receipt whose first source had
+    /// `kind` set to `ntp`, a newline, `earliest_ns=1`, a newline, `width_ns=1` verified clean and
+    /// put both of those into that report above the report's own.
+    ///
+    /// This is the list `validate` holds to what a string may contain, and it is written here so
+    /// there is one list rather than one per surface. Fixing the field that was found would have
+    /// left every other string in the receipt reaching a line of its own somewhere.
+    #[must_use]
+    pub fn strings(&self) -> Vec<(String, &str)> {
+        let mut found: Vec<(String, &str)> = vec![
+            (
+                "payload.algorithm".to_string(),
+                self.payload.algorithm.as_str(),
+            ),
+            ("claim.fusion".to_string(), self.claim.fusion.as_str()),
+        ];
+        for (at, source) in self.claim.sources.iter().enumerate() {
+            for (name, value) in [
+                ("id", source.id.as_str()),
+                ("kind", source.kind.as_str()),
+                ("timescale", source.timescale.as_str()),
+                ("smear", source.smear.as_str()),
+                ("leap", source.leap.as_str()),
+            ] {
+                found.push((format!("claim.sources[{at}].{name}"), value));
+            }
+            if let Some(operator) = &source.operator {
+                found.push((format!("claim.sources[{at}].operator"), operator.as_str()));
+            }
+        }
+        for (at, entry) in self.evidence.iter().enumerate() {
+            found.push((format!("evidence[{at}].scheme"), entry.scheme.as_str()));
+            if let Some(detail) = &entry.detail {
+                found.push((format!("evidence[{at}].detail"), detail.as_str()));
+            }
+        }
+        found
+    }
+
     /// The receipt as a value tree, ready to be encoded or rendered.
     #[must_use]
     pub fn to_value(&self) -> Value {

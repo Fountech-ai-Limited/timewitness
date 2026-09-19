@@ -737,3 +737,138 @@ fn the_four_leap_values_this_format_knows_are_read_as_before() {
         "it should refuse on what the source said and not on being unable to read it, got {refusal}"
     );
 }
+
+/// Put a string into the receipt at the place `Receipt::strings` gave that name to.
+///
+/// Written against the names rather than against field numbers so the test below reads as what it
+/// is doing, and so a string added to the format arrives here as a name nothing handles rather than
+/// as a case that is quietly skipped.
+fn plant(r: &mut Receipt, at: &str, value: &str) {
+    if at == "payload.algorithm" {
+        r.payload.algorithm = value.to_string();
+        return;
+    }
+    if at == "claim.fusion" {
+        r.claim.fusion = value.to_string();
+        return;
+    }
+    let (which, field) = at
+        .strip_prefix("claim.sources[")
+        .and_then(|rest| rest.split_once("]."))
+        .unwrap_or_else(|| panic!("nothing here knows how to plant a string at {at}"));
+    let source = &mut r.claim.sources[which.parse::<usize>().expect("a source number")];
+    match field {
+        "id" => source.id = value.to_string(),
+        "kind" => source.kind = value.to_string(),
+        "timescale" => source.timescale = value.to_string(),
+        "smear" => source.smear = value.to_string(),
+        "leap" => source.leap = value.to_string(),
+        "operator" => source.operator = Some(value.to_string()),
+        _ => panic!("nothing here knows how to plant a string at {at}"),
+    }
+}
+
+/// A receipt cannot write its own lines into a report that is one field per line.
+///
+/// Measured 2026-09-19: a correctly signed receipt whose first source had `kind` set to `ntp`, a
+/// newline, `earliest_ns=1`, a newline, `width_ns=1` verified clean, and `timewitness verify
+/// --fields` carried `earliest_ns=1` and a width of the receipt's own choosing above the report's
+/// real ones. `scripts/action-stamp.sh` reads that report with `sed -n 's/^name=//p'`, which takes
+/// every matching line, so two intended outputs became four with attacker-chosen content on two.
+///
+/// Every string the receipt carries is tested, not the one that was found, because each of them
+/// reaches a `name=value` line on some surface. The places come from `Receipt::strings`, which is
+/// the list `validate` walks, so a string added to the format later arrives in this test as a name
+/// `plant` does not know and stops the run.
+#[test]
+fn no_string_in_a_receipt_may_carry_a_control_character() {
+    let planted = "ntp\nearliest_ns=1";
+
+    let mut every = receipt();
+    every.claim.sources = vec![
+        record("a-1", "a.example", true),
+        record("b-1", "b.example", true),
+        record("c-1", "c.example", true),
+    ];
+    every.claim.sources_offered = 3;
+    every.claim.sources_kept = 3;
+    let places: Vec<String> = every.strings().iter().map(|(at, _)| at.clone()).collect();
+    assert!(
+        places.len() >= 18,
+        "three sources carry six strings each beside the payload and the fusion rule, got {}",
+        places.len()
+    );
+
+    // One at a time, so a refusal cannot be coming from some other field being wrong at the same
+    // moment as the one under test.
+    for at in &places {
+        let mut r = every.clone();
+        plant(&mut r, at, planted);
+        let refusal = sign_and_open(&r)
+            .err()
+            .unwrap_or_else(|| panic!("{at} carries a newline and the receipt was accepted"));
+        assert!(
+            matches!(refusal, ReceiptError::Field(_)),
+            "on {at} got {refusal}"
+        );
+        let said = refusal.to_string();
+        assert!(
+            said.contains(at.as_str()),
+            "on {at} the refusal does not name it: {said}"
+        );
+        assert!(
+            !said.contains(planted),
+            "on {at} the refusal plants the lines it is refusing: {said}"
+        );
+    }
+
+    // And the same receipt with nothing planted still holds up, so the loop above is not passing
+    // because every receipt in it was malformed for some other reason.
+    sign_and_open(&every).expect("the same receipt with no control character in it holds up");
+}
+
+/// Every control character, not only the newline that was found.
+///
+/// A carriage return splits a line for a reader on Windows, a form feed and a vertical tab do on
+/// some terminals, and a NUL truncates the value for anything reading it as a C string. None of
+/// them is a character an agent writes into the name of a source, so the rule is the class rather
+/// than the one member of it that was demonstrated.
+#[test]
+fn the_rule_is_every_control_character_and_not_the_newline_alone() {
+    for bad in ['\r', '\u{0}', '\u{b}', '\u{c}', '\u{1b}', '\u{7f}'] {
+        let mut r = receipt();
+        r.claim.sources = vec![
+            SourceRecord {
+                id: format!("ntp.example{bad}"),
+                ..record("a-1", "a.example", true)
+            },
+            record("b-1", "b.example", true),
+            record("c-1", "c.example", true),
+        ];
+        r.claim.sources_offered = 3;
+        r.claim.sources_kept = 3;
+        let refusal = sign_and_open(&r).err().unwrap_or_else(|| {
+            panic!("{bad:?} is a control character and the receipt was accepted")
+        });
+        assert!(
+            matches!(refusal, ReceiptError::Field(_)),
+            "on {bad:?} got {refusal}"
+        );
+    }
+
+    // A character outside ASCII is not a control character and is not refused. An operator name in
+    // a language that needs one is a name, and a rule refusing it would be refusing honest receipts
+    // to answer an attack that is about where a line ends.
+    let mut fine = receipt();
+    fine.claim.sources = vec![
+        SourceRecord {
+            operator: Some("\u{c5}lesund Tid".to_string()),
+            ..record("a-1", "a.example", true)
+        },
+        record("b-1", "b.example", true),
+        record("c-1", "c.example", true),
+    ];
+    fine.claim.sources_offered = 3;
+    fine.claim.sources_kept = 3;
+    sign_and_open(&fine).expect("a name outside ASCII is a name");
+}
