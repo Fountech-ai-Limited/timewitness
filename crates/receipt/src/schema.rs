@@ -267,6 +267,19 @@ pub struct AgentClaim {
     pub policy: PolicyRecord,
 }
 
+/// Every leap value this format knows how to read.
+///
+/// A receipt carrying anything else is refused by `validate`, because `leap` is a field a reader's
+/// decision turns on and a value nothing here can read is not a value a decision may be taken from.
+pub const LEAP_VALUES: [&str; 4] = ["none", "add-second", "delete-second", "unsynchronised"];
+
+/// The leap values that describe a source whose own clock it believed was right.
+///
+/// A source announcing a second being added or removed still believes its clock, so it could have
+/// disagreed with the others and it is a candidate for the intersection. Only `unsynchronised` says
+/// otherwise.
+const SOUND_LEAP: [&str; 3] = ["none", "add-second", "delete-second"];
+
 impl AgentClaim {
     /// Whether one listed source was a candidate for the intersection.
     ///
@@ -279,9 +292,28 @@ impl AgentClaim {
     /// which sources could have disagreed with anybody, and a rule written three times is a rule
     /// that drifts. That has happened once already, when one of them counted every source that
     /// answered.
+    ///
+    /// **It named the one value that refuses until 2026-09-19, and so answered every other string
+    /// as a sound source.** It was `source.leap != "unsynchronised"`, an exact match on fourteen
+    /// characters written by whoever signed the receipt, so `Unsynchronised` with a capital letter
+    /// counted nine sources that had all declared their own clocks wrong as nine sound ones, and
+    /// the receipt held up on the CLI and on the served page alike. Corrected 2026-09-19. It now
+    /// names the values that permit, so a string this format has never seen is not a candidate,
+    /// which is the direction that refuses. `validate` refuses such a receipt outright and says so
+    /// in its own words, because the honest answer about an unreadable value is that nothing here
+    /// can tell what the source said, and that is not the same as the source saying its clock was
+    /// wrong.
     #[must_use]
     pub fn was_a_candidate(source: &SourceRecord) -> bool {
-        source.leap != "unsynchronised"
+        SOUND_LEAP.contains(&source.leap.as_str())
+    }
+
+    /// The first listed source whose leap value this format does not know, where there is one.
+    #[must_use]
+    pub fn unreadable_leap(&self) -> Option<&SourceRecord> {
+        self.sources
+            .iter()
+            .find(|s| !LEAP_VALUES.contains(&s.leap.as_str()))
     }
 
     /// How many of the sources that answered were candidates for the intersection.

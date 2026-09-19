@@ -652,3 +652,88 @@ fn a_receipt_that_states_no_holdover_ceiling_is_read_as_stating_none() {
         "an absent ceiling reads back absent and never as nought"
     );
 }
+
+/// A leap value this format does not know is refused, and every spelling of it.
+///
+/// `was_a_candidate` was an exact string match against the one value that refuses, so anything
+/// else answered as a source whose own clock it believed was right. The receipt below is the one
+/// that was built by hand and accepted: nine sources that had all declared their clocks
+/// unsynchronised, spelled with a capital letter, counted as nine sound ones on the CLI and on the
+/// served page alike.
+#[test]
+fn a_leap_value_this_format_does_not_know_is_refused() {
+    for spelling in [
+        "Unsynchronised",
+        "UNSYNCHRONISED",
+        "unsynchronized",
+        "unsynchronised ",
+        "",
+        "sound",
+    ] {
+        let mut r = receipt();
+        r.claim.sources = vec![
+            SourceRecord {
+                leap: spelling.to_string(),
+                ..record("a-1", "a.example", true)
+            },
+            record("b-1", "b.example", true),
+            record("c-1", "c.example", true),
+        ];
+        r.claim.sources_offered = 3;
+        r.claim.sources_kept = 3;
+
+        let refusal = sign_and_open(&r)
+            .expect_err("a leap value nothing here can read is not a value to decide from");
+        assert!(
+            matches!(refusal, ReceiptError::Field(_)),
+            "on {spelling:?} got {refusal}"
+        );
+        assert!(
+            refusal.to_string().contains("leap indicator"),
+            "on {spelling:?} got {refusal}"
+        );
+    }
+}
+
+/// The four values it does know still read as they always did.
+///
+/// The three that describe a clock the source believed was right are candidates, and
+/// `unsynchronised` is not. This is the other half of the allow-list: a rule that refuses
+/// everything is as wrong as one that permits everything, and only running both says which this is.
+#[test]
+fn the_four_leap_values_this_format_knows_are_read_as_before() {
+    for sound in ["none", "add-second", "delete-second"] {
+        let mut r = receipt();
+        r.claim.sources = vec![
+            SourceRecord {
+                leap: sound.to_string(),
+                ..record("a-1", "a.example", true)
+            },
+            record("b-1", "b.example", true),
+            record("c-1", "c.example", true),
+        ];
+        r.claim.sources_offered = 3;
+        r.claim.sources_kept = 3;
+        sign_and_open(&r).unwrap_or_else(|e| panic!("{sound} is a sound source and got {e}"));
+    }
+
+    // And the one that refuses still refuses, on the same shape, so the test above is not passing
+    // because every receipt in it was malformed for some other reason.
+    let mut r = receipt();
+    r.claim.sources = vec![
+        unsynchronised("a-1", "a.example"),
+        record("b-1", "b.example", true),
+        record("c-1", "c.example", true),
+    ];
+    r.claim.sources_offered = 3;
+    r.claim.sources_kept = 2;
+    let refusal = sign_and_open(&r).expect_err("unsynchronised still refuses this receipt");
+    assert!(
+        matches!(refusal, ReceiptError::Inconsistent(_)),
+        "got {refusal}"
+    );
+    assert!(
+        !refusal.to_string().contains("leap indicator"),
+        "it should refuse on what the source said and not on being unable to read it, got {refusal}"
+    );
+}

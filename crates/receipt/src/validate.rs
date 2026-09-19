@@ -24,7 +24,7 @@
 use crate::anchors::{RoughtimeServerKey, TrustAnchors};
 use crate::error::ReceiptError;
 use crate::report::{Bracket, EntryReport, Outcome, Verified};
-use crate::schema::{AgentClaim, Evidence, Payload, Receipt, Role, FORMAT_VERSION};
+use crate::schema::{AgentClaim, Evidence, Payload, Receipt, Role, FORMAT_VERSION, LEAP_VALUES};
 use crate::value::Value;
 use timewitness_core::evidence::{drand, rfc3161, roughtime, Checked};
 use timewitness_core::time::{Nanos, UnixNanos, NANOS_PER_SEC};
@@ -244,6 +244,23 @@ fn check_sources(receipt: &Receipt) -> Result<(), ReceiptError> {
         return Err(ReceiptError::Inconsistent(format!(
             "the receipt says {} sources were kept and marks {listed_kept}",
             c.sources_kept
+        )));
+    }
+    // A leap value this format cannot read is refused here, before anything reads it. `leap` is the
+    // field the majority test below turns on, and the honest answer about a string nothing here
+    // knows is that the verifier cannot tell what the source said. Answering that as though the
+    // source had said its clock was fine is the fault corrected here on 2026-09-19: one capital
+    // letter and nine
+    // sources that had all declared their own clocks wrong read as nine sound ones. Refusing here
+    // means a reader is told which source and which value rather than being told the receipt
+    // contradicts itself, which would be a different and untrue thing to say about it.
+    if let Some(s) = c.unreadable_leap() {
+        return Err(ReceiptError::Field(format!(
+            "source {} says its leap indicator is {:?} and this format knows {}, so nothing here \
+             can tell whether it could have disagreed with anybody",
+            s.id,
+            s.leap,
+            LEAP_VALUES.join(", ")
         )));
     }
     // A source cannot be kept and also have told the agent its own clock was wrong. The agent drops

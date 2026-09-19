@@ -252,6 +252,11 @@ impl ClockModel {
     }
 
     /// What every source is doing, whether it survived the last selection or not.
+    ///
+    /// After a selection these are the states that selection built, off the samples it used. Before
+    /// there has been one there is no chosen sample, so each source is described by the last thing
+    /// it said. Both halves read a sample somebody chose; neither picks one of its own, which is
+    /// the fault corrected on 2026-09-19.
     #[must_use]
     pub fn source_states(&self) -> Vec<SourceState> {
         match &self.sync {
@@ -259,7 +264,7 @@ impl ClockModel {
             None => self
                 .windows
                 .values()
-                .filter_map(|w| w.state(false))
+                .filter_map(|w| w.newest().map(|sample| w.state_of(sample, false)))
                 .collect(),
         }
     }

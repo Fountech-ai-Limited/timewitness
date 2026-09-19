@@ -67,28 +67,41 @@ impl SourceWindow {
         self.samples.push_back(sample);
     }
 
-    /// The held sample with the shortest round trip, which is what a source's reported state is
-    /// read off. A selection round uses `best_within` instead, because there the age matters.
+    /// The newest sample held.
     ///
-    /// Ties go to the more recent one, because between two samples with equally short round trips
-    /// the newer one needs less ageing.
-    ///
-    /// A source that sends one crafted reply among eight has that reply chosen every round for as
-    /// long as the window holds it, and this preference is what lets it. Filtering it out here
-    /// would buy nothing, because a source controls every one of its own replies and can craft all
-    /// eight as easily as one, so the answer to a lying source has to sit where the sources are
-    /// compared against each other rather than where one source is compared against itself. It
-    /// does: `Sample::from_exchange` refuses a reply whose timestamps cannot both be true, so
-    /// nothing impossible reaches this window, `Sample::interval_at` floors what any single source
-    /// may claim to know, and `marzullo::intersect` gives the region to the majority rather than
-    /// to whoever agrees with everybody.
+    /// It describes a source where no selection has run, and nothing else reads it. A model with no
+    /// synchronisation has chosen no sample, so the honest thing to describe a source by is the last
+    /// thing it said; the sample a selection would have chosen is `best_within` and there has not
+    /// been one.
     #[must_use]
-    pub fn best(&self) -> Option<&Sample> {
-        self.samples.iter().rev().min_by_key(|s| s.round_trip)
+    pub fn newest(&self) -> Option<&Sample> {
+        self.samples.back()
     }
 
     /// The held sample whose interval is narrowest once aged to `now`, over the samples no older
-    /// than `max_age`. This is the sample a selection round uses.
+    /// than `max_age`. This is the sample a selection round uses, and it is the only rule for
+    /// picking a sample out of a window.
+    ///
+    /// **There were two rules between 2026-09-18 and 2026-09-19, and they could name different
+    /// samples of the same source.** This one, and `best`, the shortest round trip, which is what
+    /// `state` read. Before the two were separated both were the shortest round trip and they
+    /// agreed on every window, so the split arrived silent. It has a direction: this rule prefers a
+    /// sample with a longer round trip only where that sample is younger, so the bound rested on the
+    /// fresher sample while the receipt described the source by the older, quicker one. `leap`,
+    /// `smear` and `timescale` are per packet, and `leap` is the field a verifier acts on, so a
+    /// source that had declared its own clock unsynchronised could be described as sound. That is
+    /// the fault corrected on 2026-09-19. `best` is gone and `state_of` takes the sample the
+    /// caller used.
+    ///
+    /// A source that sends one crafted reply among eight has that reply chosen every round for as
+    /// long as the window holds it, and a preference for the narrowest is what lets it. Filtering it
+    /// out here would buy nothing, because a source controls every one of its own replies and can
+    /// craft all eight as easily as one, so the answer to a lying source has to sit where the
+    /// sources are compared against each other rather than where one source is compared against
+    /// itself. It does: `Sample::from_exchange` refuses a reply whose timestamps cannot both be
+    /// true, so nothing impossible reaches this window, `Sample::interval_at` floors what any single
+    /// source may claim to know, and `marzullo::intersect` gives the region to the majority rather
+    /// than to whoever agrees with everybody.
     ///
     /// Ties go to the more recent one. Narrowest after ageing rather than shortest round trip from
     /// 2026-09-18, for the reason at the head of this file: the round trip is what the sample knew
@@ -129,19 +142,24 @@ impl SourceWindow {
             .map(|s| s.interval_at(now, ageing, source_floor))
     }
 
-    /// The state of this source, for the receipt to carry.
+    /// The state of this source, read off the sample the caller used.
+    ///
+    /// The sample is passed in rather than chosen here, and that is the whole point of the
+    /// signature. A window that chose its own sample for the receipt while the selection chose a
+    /// different one for the bound is the fault corrected on 2026-09-19, and the only way two rules
+    /// cannot come apart is for there to be one. Whoever describes a round holds the sample it was built from, so it is
+    /// theirs to pass.
     #[must_use]
-    pub fn state(&self, kept: bool) -> Option<SourceState> {
-        let s = self.best()?;
-        Some(SourceState {
+    pub fn state_of(&self, sample: &Sample, kept: bool) -> SourceState {
+        SourceState {
             id: self.id.clone(),
-            operator: s.operator.clone(),
-            kind: s.kind,
-            timescale: s.timescale,
-            smear: s.smear,
-            leap: s.leap,
+            operator: sample.operator.clone(),
+            kind: sample.kind,
+            timescale: sample.timescale,
+            smear: sample.smear,
+            leap: sample.leap,
             kept,
-        })
+        }
     }
 
     /// Drop every sample. Used when a resume makes the whole history meaningless.
@@ -191,13 +209,18 @@ mod tests {
         }
     }
 
+    /// At an age that costs nothing the narrowest interval is the shortest round trip, which is
+    /// what this asked of `best` until 2026-09-19. It asks it of the one rule there is now.
     #[test]
-    fn the_quickest_sample_is_the_one_used() {
+    fn the_quickest_sample_is_the_one_used_where_age_costs_nothing() {
         let mut w = SourceWindow::new(SourceId::new("s"), 8);
         w.push(sample(1, 40 * NANOS_PER_MILLI, 0));
         w.push(sample(2, 6 * NANOS_PER_MILLI, 1_000));
         w.push(sample(3, 90 * NANOS_PER_MILLI, 2_000));
-        assert_eq!(w.best().unwrap().offset, 2);
+        let chosen = w
+            .best_within(MonotonicNanos(2_000), Nanos::MAX, &ageing_at(0.0), 0)
+            .unwrap();
+        assert_eq!(chosen.offset, 2);
     }
 
     #[test]
@@ -205,7 +228,10 @@ mod tests {
         let mut w = SourceWindow::new(SourceId::new("s"), 8);
         w.push(sample(1, 5 * NANOS_PER_MILLI, 0));
         w.push(sample(2, 5 * NANOS_PER_MILLI, 1_000));
-        assert_eq!(w.best().unwrap().offset, 2);
+        let chosen = w
+            .best_within(MonotonicNanos(1_000), Nanos::MAX, &ageing_at(0.0), 0)
+            .unwrap();
+        assert_eq!(chosen.offset, 2);
     }
 
     #[test]
@@ -215,7 +241,47 @@ mod tests {
             w.push(sample(i as Nanos, 5 * NANOS_PER_MILLI, i as u64));
         }
         assert_eq!(w.len(), 3);
-        assert_eq!(w.best().unwrap().offset, 9);
+        assert_eq!(w.newest().unwrap().offset, 9);
+    }
+
+    /// The sample a source is described by is the sample the selection used, on a
+    /// window where the two samples disagree about everything a receipt carries per packet.
+    ///
+    /// The window is the one the fault was found on: an old quick sample taken while the source
+    /// was sound,
+    /// and a fresh slower one taken after it had declared its own clock unsynchronised. Ageing
+    /// makes the fresh one the one the bound rests on. Until 2026-09-19 `state` read the old one
+    /// and the receipt said the source was sound.
+    #[test]
+    fn a_source_is_described_by_the_sample_the_selection_used() {
+        let mut w = SourceWindow::new(SourceId::new("s"), 8);
+        let mut old = sample(1, 6 * NANOS_PER_MILLI, 0);
+        old.leap = LeapIndicator::None;
+        old.smear = SmearPolicy::None;
+        old.timescale = Timescale::Utc;
+        let mut fresh = sample(2, 10 * NANOS_PER_MILLI, 300 * NANOS_PER_SEC as u64);
+        fresh.leap = LeapIndicator::Unsynchronised;
+        fresh.smear = SmearPolicy::Linear {
+            window_seconds: 86_400,
+        };
+        fresh.timescale = Timescale::Tai { offset_seconds: 37 };
+        w.push(old);
+        w.push(fresh);
+
+        let now = MonotonicNanos(300 * NANOS_PER_SEC as u64);
+        let ageing = ageing_at(50.0);
+        let used = w.best_within(now, Nanos::MAX, &ageing, 0).unwrap();
+        assert_eq!(used.leap, LeapIndicator::Unsynchronised);
+
+        let state = w.state_of(used, true);
+        assert_eq!(state.leap, LeapIndicator::Unsynchronised);
+        assert_eq!(
+            state.smear,
+            SmearPolicy::Linear {
+                window_seconds: 86_400
+            }
+        );
+        assert_eq!(state.timescale, Timescale::Tai { offset_seconds: 37 });
     }
 
     #[test]
@@ -273,6 +339,6 @@ mod tests {
         assert!(w
             .interval_at(MonotonicNanos(0), &ageing_at(15.0), 0)
             .is_none());
-        assert!(w.state(true).is_none());
+        assert!(w.newest().is_none());
     }
 }

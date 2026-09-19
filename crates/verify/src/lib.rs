@@ -980,7 +980,9 @@ fn question_for(e: &ReceiptError) -> String {
             "was this signed by the key it names, over exactly these bytes"
         }
         ReceiptError::UnknownVersion(_) => "is this a version this verifier reads",
-        ReceiptError::Field(_) => "does the receipt carry everything the format requires",
+        ReceiptError::Field(_) => {
+            "does the receipt carry every field the format needs, in a shape it can read"
+        }
         ReceiptError::MislabelledEvidence { .. } | ReceiptError::OurClaimAsEvidence(_) => {
             "is every claim in the right place"
         }
