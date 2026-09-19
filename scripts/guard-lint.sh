@@ -143,6 +143,12 @@ exits_inside_a_substitution() {
     # A heredoc body is data. `usage()` printing a fragment of shell out of one was read as a
     # function that ends the run, which made every caller of it a violation. Taking the body out is
     # the only answer that does not depend on what the text happens to say.
+    #
+    # A herestring, `<<<`, is not a heredoc and does not match: the character after `<<` has to be a
+    # dash, a space, a quote or a letter, and it is `<`. An arithmetic shift written `1 << WIDTH`
+    # would match and would skip lines until a line reading WIDTH, which is a hole rather than a
+    # false report. Neither repository has one, checked 2026-09-19, and `--self-test` would not see
+    # it either, so it is written here where somebody adding one would be reading.
     function heredoc_word(line,   word) {
       if (!match(line, /<<-?[[:space:]]*['"'"'"]?[A-Za-z_][A-Za-z0-9_]*['"'"'"]?/)) return ""
       word = substr(line, RSTART, RLENGTH)
