@@ -53,7 +53,12 @@ if ! "$binary" verify "$output" --subject "$subject" --fields > "$report"; then
     exit 1
 fi
 
-# Every value is a whole number or a single word, so reading them as shell variables is safe.
+# Every value is a whole number or a single word, so reading them as shell variables is safe. What
+# is not safe is an empty one: `sed` exits 0 when it matches nothing, so a field the verifier has
+# renamed leaves the variable empty, the step goes green, and the workflow gets `earliest-ns=` with
+# nothing after it and a summary reading "UTC was somewhere in an interval **** wide". Every read
+# below is asserted non-empty before anything is published, which is the check that was missing
+# until 2026-09-19.
 earliest=$(sed -n 's/^earliest_ns=//p' "$report")
 latest=$(sed -n 's/^latest_ns=//p' "$report")
 width=$(sed -n 's/^width_ns=//p' "$report")
@@ -64,11 +69,29 @@ subject_digest=$(sed -n 's/^payload_hash=//p' "$report")
 checked=$(sed -n 's/^attestations_checked=//p' "$report")
 carried=$(sed -n 's/^attestations_carried=//p' "$report")
 
+missing=''
+for pair in "earliest_ns=$earliest" "latest_ns=$latest" "width_ns=$width" \
+            "width_in_words=$width_words" "reading_ns=$reading" "receipt_sha256=$digest" \
+            "payload_hash=$subject_digest" "attestations_checked=$checked" \
+            "attestations_carried=$carried"; do
+    [ -n "${pair#*=}" ] || missing="$missing ${pair%%=*}"
+done
+if [ -n "$missing" ]; then
+    echo "timewitness: the verifier's report carries nothing for$missing, so this step will not publish an output a workflow gates on with nothing in it" >&2
+    echo "timewitness: the report it read is below" >&2
+    cat "$report" >&2
+    exit 1
+fi
+
 # The verifier's own first two lines, quoted rather than composed here: the verdict, and under it how
 # wide the checked outside evidence brackets the moment and whose the width is. A summary writing its
 # own version of either is how it would come to say something the verifier does not.
 said="$("$binary" verify "$output" --subject "$subject" --quiet)"
 said="$(printf '%s\n' "$said" | sed -n '1,2p')"
+if [ -z "$said" ]; then
+    echo "timewitness: the verifier printed nothing, so the summary would quote it saying nothing." >&2
+    exit 1
+fi
 
 receipt_base64=$(base64 -w 0 < "$output" 2>/dev/null || base64 < "$output" | tr -d '\n')
 
@@ -87,7 +110,15 @@ receipt_base64=$(base64 -w 0 < "$output" 2>/dev/null || base64 < "$output" | tr 
 # artefact type beside it. The ecosystem has a place built for metadata about how something was
 # produced, and the whole point of this Action is to make the timestamp in that place checkable, not
 # to add a competing format nobody consumes.
-if [ -n "$provenance" ] && [ -f "$provenance" ]; then
+# A provenance file that was named and is not there is a workflow asking for something this step
+# then did not do. It skipped the whole write with no note and exited 0 until 2026-09-19: the
+# success path printed a line and the failure path printed nothing at all, so the only way to tell
+# them apart was to know which line to look for.
+if [ -n "$provenance" ]; then
+    if [ ! -f "$provenance" ]; then
+        echo "timewitness: provenance was named as $provenance and there is no file there, so the receipt was not written into anything" >&2
+        exit 1
+    fi
     TW_P="$provenance" TW_R="$receipt_base64" TW_E="$event" \
     TW_EARLIEST="$earliest" TW_LATEST="$latest" TW_WIDTH="$width" TW_READING="$reading" \
     python3 "$action_path/scripts/action-provenance.py"

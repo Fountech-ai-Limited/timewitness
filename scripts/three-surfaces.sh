@@ -530,13 +530,27 @@ for candidate in target/release/timewitness target/release/timewitness.exe \
   if [ -x "$candidate" ]; then built="$candidate"; break; fi
 done
 
+# Whether anything was asked about the receipt at all, which is not the same as what it answered.
+verify_asked=1
 if [ -n "$built" ]; then
   verify_output="$("$built" verify "$receipt" 2>&1 || true)"
 elif command -v cargo >/dev/null 2>&1; then
   verify_output="$(cargo run -q -p timewitness-cli -- verify "$receipt" 2>&1 || true)"
 else
+  verify_asked=0
   verify_output=''
   echo "three surfaces: no timewitness binary and no cargo, so the committed receipt was not read. That is a failure and not a skip: every width on every surface here is attributed to those bytes" >&2
+  fail=1
+fi
+
+# A verifier that ran and said nothing has not agreed with anything. Both the check below and its
+# own "that is a failure and not a skip" compensator test `[ -n "$verify_output" ]`, so until
+# 2026-09-19 an empty capture made the pair of them vanish and the run still printed that it had
+# held three surfaces to each other and to the committed receipt. `|| true` above is what lets the
+# capture come back empty, and it stays: what the verifier prints about a receipt it refuses is the
+# thing this check reads.
+if [ "$verify_asked" -eq 1 ] && [ -z "$verify_output" ]; then
+  echo "three surfaces: the verifier was run over $receipt and printed nothing, so no width on any surface was checked against the receipt it names. That is a failure and not a skip" >&2
   fail=1
 fi
 

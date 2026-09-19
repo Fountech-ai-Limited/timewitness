@@ -72,9 +72,21 @@ step() {
   shift
   ran=$((ran + 1))
   printf '%s ... ' "$name"
-  local out
+  local out notes status
   if out="$("$@" 2>&1)"; then
     printf 'ok\n'
+    # A step that passed and said it could not answer part of its question has not answered it, and
+    # this function threw that away with the rest of a successful step's output until 2026-09-19.
+    # The advisory step is the one that does it: outside CI a database it could not fetch is a note
+    # at exit 0, and nobody saw the note.
+    notes="$(printf '%s\n' "$out" | grep -E 'could not answer')"
+    status=$?
+    if [ "$status" -gt 1 ]; then
+      printf 'before-push: grep could not read what %s printed (exit %s), so a note it made may have been lost\n' "$name" "$status" >&2
+      failed+=("$name")
+    elif [ "$status" -eq 0 ]; then
+      printf '%s\n' "$notes" >&2
+    fi
   else
     printf 'FAILED\n'
     printf '%s\n' "$out" >&2

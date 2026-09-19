@@ -160,7 +160,9 @@ else
   fi
 fi
 
+# Each note says "could not answer" in those words, because that is what `before-push.sh` looks for
+# when it decides whether a step that passed still has something a reader has to see.
 for note in "${notes[@]:-}"; do
-  [ -n "$note" ] && echo "  --  $note"
+  [ -n "$note" ] && echo "advisories: could not answer: $note"
 done
 exit 0

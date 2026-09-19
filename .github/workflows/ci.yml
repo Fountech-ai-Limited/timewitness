@@ -154,9 +154,12 @@ jobs:
         run: bash scripts/repo-hygiene.sh --self-test
 
       - name: The guards are written to the contract
-        # Every script under scripts/ is read for the two shapes of shell that read a check that
-        # could not run as a check that passed, and the lint is first watched refusing one seed per
-        # shape. The site repository's build reads its own scripts with this same file.
+        # Every shell script under scripts/ is read for the three shapes of shell that read a
+        # check that could not run as a check that passed, and the lint is first watched refusing a
+        # seed per shape. A file is shell by its extension or by its first line, and the run prints
+        # how many it read and how many it skipped; it read *.sh alone until 2026-09-19, which was
+        # 9 of 24 files here and 3 of 26 in the site repository, while this comment said every one.
+        # The site repository's build reads its own scripts with this same file.
         run: |
           bash scripts/guard-lint.sh --self-test
           bash scripts/guard-lint.sh scripts

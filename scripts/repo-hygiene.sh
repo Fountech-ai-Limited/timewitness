@@ -65,14 +65,23 @@ stop() {
   exit 2
 }
 
-# How many lines of `$2` match the pattern `$1`, with grep's three answers read by name. 0 and 1 are
-# a count; anything else is a grep that could not run.
+# How many lines of `$2` match the pattern `$1`, left in MATCH_COUNT, with grep's three answers read
+# by name. 0 and 1 are a count; anything else is a grep that could not run.
+#
+# **The count comes back in a variable, because `stop` inside `$( )` stops nothing.** This read
+# `printf '%s' "$n"` and both callers were `[ "$(count_matching ...)" -ne 0 ]`. A command
+# substitution is a subshell, so `stop`'s exit ended the subshell, the caller compared an empty
+# string against a number, `test` errored, the `if` body was skipped and the run carried on to print
+# that the repository was clean. The pattern is `grep -P`, so any grep with no PCRE compiled into it
+# does that: busybox, Alpine, and the BSD grep on macOS. On the `--message` path, which is the
+# `commit-msg` hook, a real message carrying a byte outside ASCII went from refused to accepted.
+# Corrected 2026-09-19.
+MATCH_COUNT=0
 count_matching() {
-  local pattern="$1" text="$2" n status
-  n="$(printf '%s\n' "$text" | grep -cP -- "$pattern")"
+  local pattern="$1" text="$2" status
+  MATCH_COUNT="$(printf '%s\n' "$text" | grep -cP -- "$pattern")"
   status=$?
   [ "$status" -le 1 ] || stop "grep could not run over the text it was given (exit $status)"
-  printf '%s' "$n"
 }
 
 # The lines of `$2` matching `$1`, for printing beside a report.
@@ -95,7 +104,8 @@ check_message() {
   if [ -n "$(printf '%s\n' "$message" | git interpret-trailers --parse)" ]; then
     report "this message carries a footer, and messages here are prose"
   fi
-  if [ "$(count_matching '[^\x09\x0a\x20-\x7E]' "$message")" -ne 0 ]; then
+  count_matching '[^\x09\x0a\x20-\x7E]' "$message"
+  if [ "$MATCH_COUNT" -ne 0 ]; then
     report "this message carries a byte that is not tab, newline or printable ASCII"
     lines_matching '[^\x09\x0a\x20-\x7E]' "$message" >&2
   fi
@@ -277,7 +287,8 @@ if [ "$status" -eq 0 ]; then
 fi
 
 messages="$(git log --all --format='%an%ae%s%b')" || stop "git log could not read the messages"
-if [ "$(count_matching '[^\x09\x0a\x20-\x7E]' "$messages")" -ne 0 ]; then
+count_matching '[^\x09\x0a\x20-\x7E]' "$messages"
+if [ "$MATCH_COUNT" -ne 0 ]; then
   report "a commit message carries a byte that is not tab, newline or printable ASCII"
 fi
 

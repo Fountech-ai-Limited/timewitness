@@ -21,9 +21,16 @@
 #    `grep -c` into a variable and read the status by name, so a grep that could not run stops the
 #    check with exit 2 rather than passing it.
 #
+# 3. A helper that ends the run with `exit`, called inside `$( )`. A command substitution is a
+#    subshell, so the exit ends the subshell and nothing else: the caller reads an empty string,
+#    counts nought and carries on, and the run prints that it checked something it never read. This
+#    rule went in on 2026-09-19 after the shape was found at eleven sites across both repositories,
+#    the first of them in this file. It needs the whole file rather than one line, so it is read
+#    separately from the two above.
+#
 # A tool check, `command -v x >/dev/null 2>&1`, is the two-valued kind and is not caught. Nor is a
-# comment. The rule is read per line, so a shape split across lines is not caught either; a script
-# that hides one that way has read this file and disagreed with it.
+# comment. Rules 1 and 2 are read per line, so a shape split across lines is not caught either; a
+# script that hides one that way has read this file and disagreed with it.
 
 set -uo pipefail
 
@@ -31,41 +38,152 @@ set -uo pipefail
 PIPE_INTO_GREP_Q='\|[[:space:]]*(command[[:space:]]+)?grep[[:space:]]+(-[A-Za-z]*q|-[A-Za-z]+[[:space:]]+-[A-Za-z]*q)'
 GREP_EXIT_AS_ANSWER='(^|[[:space:]!(])(git[[:space:]]+)?grep[[:space:]][^|;&]*(>[[:space:]]*/dev/null[[:space:]]+2>&1|2>[[:space:]]*/dev/null)'
 
-# The lines of a file that carry a shape, numbered, with comment lines left out. A comment says what
-# a script must not do and is allowed to spell it. grep's three answers are read by name: a grep
-# that could not run stops this lint with exit 2, which is the rule this lint holds others to.
+# The status `lint_file` returns for a file it could not read, which a caller must not add to a
+# count of hits. It is above any hit count a file can produce and the cap below keeps it that way.
+UNREADABLE=254
+
+# The lines of a file that carry a shape, numbered, with comment lines left out, left in
+# LINES_FOUND. A comment says what a script must not do and is allowed to spell it. grep's three
+# answers are read by name: a grep that could not run returns 2.
+#
+# **The answer comes back in a variable and the verdict in the return value, and that is the whole
+# point of the shape.** This helper ended `exit 2` and both its callers invoked it as
+# `<<<"$(lines_with ...)"`. A command substitution is a subshell, so the exit ended the subshell and
+# nothing else: the caller read an empty string, counted nought hits and returned success. This
+# file, whose job is to refuse guards that answer clean where they could not read, carried that
+# shape until 2026-09-19 and printed "9 scripts read, none pipes into grep -q" over a tree with a
+# planted violation in it. Nothing inside `$( )` may decide this run.
+LINES_FOUND=''
 lines_with() {
-  local pattern="$1" file="$2" found status
+  local pattern="$1" file="$2" found status line body
+  LINES_FOUND=''
   found="$(grep -nE -- "$pattern" "$file")"
   status=$?
   if [ "$status" -gt 1 ]; then
     echo "guard lint: grep could not read $file (exit $status), so nothing was checked" >&2
-    exit 2
+    return 2
   fi
   [ "$status" -eq 0 ] || return 0
-  local line body
   while IFS= read -r line; do
     body="${line#*:}"
     body="${body#"${body%%[![:space:]]*}"}"
     case "$body" in
       '#'*) ;;
-      *) printf '%s\n' "$line" ;;
+      *) LINES_FOUND="${LINES_FOUND}${line}
+" ;;
     esac
   done <<<"$found"
+  return 0
+}
+
+# The call sites in a file where a function that can `exit` is run inside `$( )`, numbered.
+#
+# Which functions those are is worked out from the file rather than listed here: a function whose
+# body calls `exit`, or calls a function already known to, is one. The fixpoint is two lines of awk
+# and it matters, because the shape in this repository was always one function calling another, a
+# helper calling `stop` rather than exiting itself.
+#
+# What it cannot see: a helper in another file, and a function called through a variable. Both are
+# outside what reading one file can answer, and saying so is better than implying otherwise.
+exits_inside_a_substitution() {
+  awk '
+    # The name a function definition opens, or the empty string.
+    function opened(line,   name) {
+      if (!match(line, /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)[[:space:]]*\{/))
+        return ""
+      name = substr(line, RSTART, RLENGTH)
+      sub(/^[[:space:]]*/, "", name)
+      sub(/[[:space:]]*\(\).*$/, "", name)
+      return name
+    }
+    # Whether a run of shell ends the run.
+    #
+    # It has to be the start of a shell statement and not any appearance of the word, because a
+    # single-quoted awk or python program inside a shell function has its own `exit` and that one
+    # ends the program rather than the run. `field()` in key-log.sh is exactly that, and its call
+    # sites are already right: awk exits 1, the function returns 1, and the caller reads the return
+    # value with `|| refuse`. A lint that reported those would be teaching people to ignore it.
+    function ends_the_run(text) {
+      return text ~ /(^|;|&&|\|\|)[[:space:]]*exit([[:space:]]|;|$)/ ||
+             text ~ /(then|else|do|\{)[[:space:]]+exit([[:space:]]|;|$)/
+    }
+    { all[NR] = $0 }
+    {
+      line = $0
+      stripped = line
+      sub(/^[[:space:]]*/, "", stripped)
+      if (substr(stripped, 1, 1) == "#") next
+
+      name = opened(line)
+      if (name != "") {
+        inside = name
+        rest = substr(line, RSTART + RLENGTH)
+        body[inside] = body[inside] "\n" rest
+        if (ends_the_run(rest)) stops[inside] = 1
+        # A function written on one line closes on it.
+        if (rest ~ /\}[[:space:]]*$/) inside = ""
+        next
+      }
+      if (inside != "") {
+        if (line ~ /^\}/) { inside = ""; next }
+        body[inside] = body[inside] "\n" line
+        if (ends_the_run(line)) stops[inside] = 1
+      }
+    }
+    END {
+      # A function that calls one that ends the run ends the run too. Repeat until nothing new,
+      # because the shape here was always one helper calling another rather than one exiting.
+      do {
+        again = 0
+        for (f in body) {
+          if (f in stops) continue
+          for (g in stops) {
+            if (body[f] ~ ("(^|[^A-Za-z0-9_])" g "([^A-Za-z0-9_]|$)")) { stops[f] = 1; again = 1 }
+          }
+        }
+      } while (again)
+      for (n = 1; n <= NR; n++) {
+        line = all[n]
+        stripped = line
+        sub(/^[[:space:]]*/, "", stripped)
+        if (substr(stripped, 1, 1) == "#") continue
+        # A definition line is not a call site, even where it mentions the name.
+        if (opened(line) != "") continue
+        for (f in stops) {
+          if (line ~ ("[$]\\([[:space:]]*" f "([[:space:]]|\\))")) {
+            print n ":" f
+            break
+          }
+        }
+      }
+    }
+  ' "$1"
 }
 
 lint_file() {
   local file="$1" hits=0 line
+  lines_with "$PIPE_INTO_GREP_Q" "$file" || return "$UNREADABLE"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     echo "guard lint: $file:${line%%:*} pipes into grep -q, which under pipefail reads a match as no match when the producer dies of SIGPIPE" >&2
     hits=$((hits + 1))
-  done <<<"$(lines_with "$PIPE_INTO_GREP_Q" "$file")"
+  done <<<"$LINES_FOUND"
+  lines_with "$GREP_EXIT_AS_ANSWER" "$file" || return "$UNREADABLE"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     echo "guard lint: $file:${line%%:*} reads grep's exit as the answer with its output thrown away, so a grep that could not run reads as no match" >&2
     hits=$((hits + 1))
-  done <<<"$(lines_with "$GREP_EXIT_AS_ANSWER" "$file")"
+  done <<<"$LINES_FOUND"
+  local found
+  found="$(exits_inside_a_substitution "$file")" || return "$UNREADABLE"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    echo "guard lint: $file:${line%%:*} runs ${line#*:}, which can end the run, inside \$( ), where the exit ends the subshell and the caller reads an empty string" >&2
+    hits=$((hits + 1))
+  done <<<"$found"
+  # A file with more hits than the sentinel would be reported as unreadable, which is the one wrong
+  # answer this whole file is about. The lines are already printed; only the count is capped.
+  [ "$hits" -lt "$UNREADABLE" ] || hits=$((UNREADABLE - 1))
   return "$hits"
 }
 
@@ -82,6 +200,14 @@ if [ "${1:-}" = "--self-test" ]; then
     'if git grep --cached -l -P "x" -- . >/dev/null 2>&1; then fail; fi'
     'if grep -rn -F "$shape" crates/ 2>/dev/null; then fail; fi'
   )
+  # The third rule needs a whole file rather than one line, so its seeds are files.
+  wholes=(
+    'stop() { echo "$1" >&2; exit 2; }
+count() { local n; n="$(wc -l)"; [ -n "$n" ] || stop "nothing"; printf "%s" "$n"; }
+if [ "$(count < f)" -ne 0 ]; then fail; fi'
+    'reader() { grep -c x "$1" || exit 2; }
+n="$(reader f)"'
+  )
   failed=0
   for i in "${!seeds[@]}"; do
     printf '#!/usr/bin/env bash\n%s\n' "${seeds[$i]}" >"$work/seed-$i.sh"
@@ -90,11 +216,22 @@ if [ "${1:-}" = "--self-test" ]; then
       failed=1
     fi
   done
+  for i in "${!wholes[@]}"; do
+    printf '#!/usr/bin/env bash\n%s\n' "${wholes[$i]}" >"$work/whole-$i.sh"
+    if lint_file "$work/whole-$i.sh" 2>/dev/null; then
+      echo "guard lint: whole seed $i passed, and a helper that exits inside \$( ) is the shape this lint exists to refuse" >&2
+      failed=1
+    fi
+  done
   honest=(
     'matches="$(printf "%s\n" "$messages" | grep -cP "[^\x20-\x7E]")"'
     'if ! command -v gh >/dev/null 2>&1; then exit 2; fi'
     '# a comment may say: never pipe into grep -q'
     'count="$(git ls-files | grep -c .)"'
+    'COUNT=0'
+    'counter() { COUNT="$(git ls-files | grep -c .)"; }'
+    'counter'
+    'if [ "$COUNT" -ne 0 ]; then true; fi'
   )
   printf '#!/usr/bin/env bash\n' >"$work/honest.sh"
   printf '%s\n' "${honest[@]}" >>"$work/honest.sh"
@@ -108,15 +245,45 @@ fi
 
 [ $# -ge 1 ] || { echo "guard lint: name at least one folder of scripts to read" >&2; exit 2; }
 
+# Whether a file is a shell script, by its name or by its first line.
+#
+# The walk below read `$folder/*.sh` until 2026-09-19, which is 9 of 17 files in this repository's
+# scripts folder and 3 of 21 in the site's, while two workflows said in terms that every script
+# under `scripts/` is read. A shell script with no extension was never opened, and the shapes these
+# patterns describe are shell shapes, so a file that is not shell is skipped by name rather than
+# read and reported on.
+is_shell() {
+  local file="$1" first
+  case "$file" in
+    *.sh|*.bash) return 0 ;;
+  esac
+  first="$(head -n 1 -- "$file" 2>/dev/null)" || return 1
+  case "$first" in
+    '#!'*sh|'#!'*sh\ *) return 0 ;;
+  esac
+  return 1
+}
+
 read_count=0
+skipped=0
 hits=0
 for folder in "$@"; do
   [ -d "$folder" ] || { echo "guard lint: $folder is not a folder" >&2; exit 2; }
-  for file in "$folder"/*.sh; do
+  for file in "$folder"/*; do
     [ -f "$file" ] || continue
     [ "$(cd "$(dirname "$file")" && pwd)/$(basename "$file")" = "$self" ] && continue
+    if ! is_shell "$file"; then
+      skipped=$((skipped + 1))
+      continue
+    fi
     read_count=$((read_count + 1))
-    lint_file "$file" || hits=$((hits + $?))
+    lint_file "$file"
+    status=$?
+    if [ "$status" -eq "$UNREADABLE" ]; then
+      echo "guard lint: $file could not be read, so this run checked nothing and is not a pass" >&2
+      exit 2
+    fi
+    hits=$((hits + status))
   done
 done
 
@@ -126,7 +293,7 @@ if [ "$read_count" -eq 0 ]; then
   exit 2
 fi
 if [ "$hits" -ne 0 ]; then
-  echo "guard lint: $hits lines over $read_count scripts" >&2
+  echo "guard lint: $hits lines over $read_count shell scripts, with $skipped other files skipped" >&2
   exit 1
 fi
-echo "guard lint: $read_count scripts read, none pipes into grep -q or reads grep's exit as the answer"
+echo "guard lint: $read_count shell scripts read and $skipped other files skipped, and none pipes into grep -q, reads grep's exit as the answer, or ends the run from inside \$( )"
