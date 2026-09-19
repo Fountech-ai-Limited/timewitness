@@ -261,6 +261,11 @@ There is no configuration file and no secret to set. The receipt lands beside th
 the SLSA provenance and container image labels where those are named, and the workflow summary carries
 what the receipt does and does not establish. `action.yml` has every input.
 
+On a host behind a firewall, `docs/destinations-and-ports.md` is every host, protocol and port the
+agent and `stamp` reach, what each one is for, and what a blocked one costs. Two of them are plain
+HTTP on port 80 rather than HTTPS on 443, which is the one people get wrong. Checking a receipt
+reaches nothing on that list.
+
 ## Layout
 
 Every module and what it may import from is in `docs/repo-layout.md`, and

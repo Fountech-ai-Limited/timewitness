@@ -56,6 +56,15 @@ impl DrandClient {
         }
     }
 
+    /// The relays this client will ask, in the order it asks them.
+    ///
+    /// Readable so the document listing what a host has to reach is held to the list the client
+    /// actually carries.
+    #[must_use]
+    pub fn relays(&self) -> &[String] {
+        &self.relays
+    }
+
     /// The same client with a different set of relays.
     #[must_use]
     pub fn from_relays(mut self, relays: Vec<String>) -> Self {
