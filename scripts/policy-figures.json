@@ -1,558 +1,548 @@
 {
-  "what": "Figures on a shipped or served surface that no rule reads and that do not carry their conditions in their own sentence, and why each one is allowed to stand. Read by scripts/policy-sentences.py.",
-  "how": "The walk is deny by default. Every quantity on every surface has to be read by a rule, refused for being said of every stamp, carrying its conditions in its own sentence, or named here. An entry covers the figures it lists, on the surfaces it lists, in the sentence it quotes, and nothing else on any of the three: reword the sentence and the excuse stops covering it, which is the point of quoting it in full. An entry with no reason is refused outright, and so is one naming a reason this file does not write out. An entry that matched nothing on a run that read every surface it names is refused too, so the list cannot quietly fill up with excuses for sentences that have gone.",
-  "state": "Forty entries on 2026-09-16, the day the walk went in, over 1620 sentences and 476 figures, of which 51 are read by a rule and 347 carry their conditions in their own sentence. Forty is the size of what was never being read rather than a queue of work: the rules and the copy already answer seven figures in eight, and the entries below are the classes neither reaches. A new figure on a surface is rare, so this list is expected to stay about this length. The twenty-one entries reading \"the conditions are in the table line this figure sits in\" or \"a field of the committed receipt\" are the ones to look at first when the content reader learns to hand a table line over in one piece.",
-  "reasons": {
-    "a worked example of the algorithm": "The numbers are a hypothetical, invented to show what Marzullo's algorithm does with a server that agrees with everything. No machine was measured and nothing here is offered as a reading, so there are no conditions to state and there is no artefact to hold it to. The arithmetic is checkable from the sentence itself, which is what a worked example is for.",
-    "arithmetic on two readings stated above it": "The figure is the difference between, or the range across, readings whose date, machine, cadence and round count are given in the sentences above it in the same paragraph. The conditions are on the page and they are one sentence up. Quoting them again inside this sentence would make the comparison unreadable, which is the thing the paragraph exists to do.",
-    "a target rather than a reading": "The figure is where the product is being built towards and not what anything reached. It has no conditions because nothing was measured, and rule 9 of what this product may say allows prose to be forward-looking. It is said in words that make it a target and never as a width anybody can reproduce.",
-    "a setting read off the shipped policy": "The figure is a constant this code ships, stated in prose beside the behaviour it causes. It is not a measurement, so it has no conditions; what holds it honest is the code, and the sentences around it name the constant.",
-    "a threshold of the method rather than a measurement": "The figure is the point below which the method cannot see anything, which follows from what is being compared rather than from any reading. Nothing was measured to arrive at it and there is nothing for a reader to reproduce.",
-    "the span the readings covered": "The figure names how long the readings ran for or which day they were taken on, inside a sentence whose subject is the share of readings refused. It is the scope of a measurement rather than a measurement, and the readings themselves are stated with their conditions in the sentences above.",
-    "a bound of the verifier, held to its own table": "The figure is one of the sanity bounds the free verifier applies, given in the table in docs/verifier.md with the reason for each beside it. It is a limit this code chose rather than anything measured, and the table is the record of the choice.",
-    "a field of the committed receipt, rendered as it stands": "The figure is one number out of the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor, printed on the page as the receipt states it, with no sentence around it to carry conditions. Its conditions are the receipt itself and the paragraphs beside it on the page. tests/check-messaging-figures.py at the product root holds this figure to that file and scripts/three-surfaces.sh holds the page to the tree, so changing the number breaks both of those as well as this entry, which quotes it in full.",
-    "the wording of a message the product shows": "The figure is inside a line the running product prints to whoever is using it, quoted on the page as an example of what they will see. It states what the product does next rather than anything measured about a clock, so there are no conditions to give.",
-    "a fact about the page rather than about time": "The figure describes the page a reader is looking at, how long an animation runs or how often it repeats, and says nothing about a clock, a bound or a receipt. There is no measurement behind it and nothing for a reader to reproduce beyond watching the page.",
-    "the conditions are in the table line this figure sits in": "The page puts the figure in a value field and the conditions in the note beside it, which is one line of a table a reader sees whole and this check reads as two strings. The content reader yields each string on its own, so the conditions are on the page and one field away rather than absent. That is a shortcoming of the reader rather than of the copy, and these entries go the moment the reader hands a table line over in one piece.",
-    "a share of a drawing rather than a duration": "The figure is a proportion of the picture it sits in, how much of a bar or a bracket one part fills, and it is there so the drawing adds up. It measures the drawing and never a clock, so there are no conditions it could carry."
+ "what": "Figures on a shipped or served surface that no rule reads and that do not carry their conditions in their own sentence, and why each one is allowed to stand. Read by scripts/policy-sentences.py.",
+ "how": "The walk is deny by default. Every quantity on every surface has to be read by a rule, refused for being said of every stamp, carrying its conditions in its own sentence, or named here. An entry covers the figures it lists, on the surfaces it lists, in the sentence it quotes, and nothing else on any of the three: reword the sentence and the excuse stops covering it, which is the point of quoting it in full. An entry with no reason is refused outright, and so is one naming a reason this file does not write out. An entry that matched nothing on a run that read every surface it names is refused too, so the list cannot quietly fill up with excuses for sentences that have gone.",
+ "state": "Forty entries on 2026-09-16, the day the walk went in, over 1620 sentences and 476 figures, of which 51 are read by a rule and 347 carry their conditions in their own sentence. Forty is the size of what was never being read rather than a queue of work: the rules and the copy already answer seven figures in eight, and the entries below are the classes neither reaches. A new figure on a surface is rare, so this list is expected to stay about this length. The twenty-one entries reading \"the conditions are in the table line this figure sits in\" or \"a field of the committed receipt\" are the ones to look at first when the content reader learns to hand a table line over in one piece.",
+ "reasons": {
+  "a worked example of the algorithm": "The numbers are a hypothetical, invented to show what Marzullo's algorithm does with a server that agrees with everything. No machine was measured and nothing here is offered as a reading, so there are no conditions to state and there is no artefact to hold it to. The arithmetic is checkable from the sentence itself, which is what a worked example is for.",
+  "arithmetic on two readings stated above it": "The figure is the difference between, or the range across, readings whose date, machine, cadence and round count are given in the sentences above it in the same paragraph. The conditions are on the page and they are one sentence up. Quoting them again inside this sentence would make the comparison unreadable, which is the thing the paragraph exists to do.",
+  "a target rather than a reading": "The figure is where the product is being built towards and not what anything reached. It has no conditions because nothing was measured, and rule 9 of what this product may say allows prose to be forward-looking. It is said in words that make it a target and never as a width anybody can reproduce.",
+  "a setting read off the shipped policy": "The figure is a constant this code ships, stated in prose beside the behaviour it causes. It is not a measurement, so it has no conditions; what holds it honest is the code, and the sentences around it name the constant.",
+  "a threshold of the method rather than a measurement": "The figure is the point below which the method cannot see anything, which follows from what is being compared rather than from any reading. Nothing was measured to arrive at it and there is nothing for a reader to reproduce.",
+  "the span the readings covered": "The figure names how long the readings ran for or which day they were taken on, inside a sentence whose subject is the share of readings refused. It is the scope of a measurement rather than a measurement, and the readings themselves are stated with their conditions in the sentences above.",
+  "a bound of the verifier, held to its own table": "The figure is one of the sanity bounds the free verifier applies, given in the table in docs/verifier.md with the reason for each beside it. It is a limit this code chose rather than anything measured, and the table is the record of the choice.",
+  "a field of the committed receipt, rendered as it stands": "The figure is one number out of the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor, printed on the page as the receipt states it, with no sentence around it to carry conditions. Its conditions are the receipt itself and the paragraphs beside it on the page. tests/check-messaging-figures.py at the product root holds this figure to that file and scripts/three-surfaces.sh holds the page to the tree, so changing the number breaks both of those as well as this entry, which quotes it in full.",
+  "the wording of a message the product shows": "The figure is inside a line the running product prints to whoever is using it, quoted on the page as an example of what they will see. It states what the product does next rather than anything measured about a clock, so there are no conditions to give.",
+  "a fact about the page rather than about time": "The figure describes the page a reader is looking at, how long an animation runs or how often it repeats, and says nothing about a clock, a bound or a receipt. There is no measurement behind it and nothing for a reader to reproduce beyond watching the page.",
+  "the conditions are in the table line this figure sits in": "The page puts the figure in a value field and the conditions in the note beside it, which is one line of a table a reader sees whole and this check reads as two strings. The content reader yields each string on its own, so the conditions are on the page and one field away rather than absent. That is a shortcoming of the reader rather than of the copy, and these entries go the moment the reader hands a table line over in one piece.",
+  "a share of a drawing rather than a duration": "The figure is a proportion of the picture it sits in, how much of a bar or a bracket one part fills, and it is there so the drawing adds up. It measures the drawing and never a clock, so there are no conditions it could carry.",
+  "a figure the product has stopped printing, said as history": "The figure was read off the committed receipt until 2026-09-19, when an authority's unstated accuracy stopped being read as a nought and the verifier stopped printing a span at all. So no artefact carries it any more and no register entry can be held to one: the entry that quoted it was removed the same day, which is what took the claim off the README and off five served surfaces. The sentence it appears in is the record of that change, in the past tense and dated, on the page that documents the verifier. It is excused here rather than registered because a register entry is a figure somebody may still quote, and this is a figure nobody may."
+ },
+ "excused": [
+  {
+   "figures": [
+    "ten seconds",
+    "three seconds",
+    "sixteen seconds"
+   ],
+   "surfaces": [
+    "README.md"
+   ],
+   "sentence": "Textbook Marzullo signs it: two servers ten seconds apart, each stating three seconds, agree nowhere, and a third source stating an hour makes two out of three and produces a bound sixteen seconds wide that neither honest server supports.",
+   "reason": "a worked example of the algorithm"
   },
-  "excused": [
-    {
-      "figures": [
-        "ten seconds",
-        "three seconds",
-        "sixteen seconds"
-      ],
-      "surfaces": [
-        "README.md"
-      ],
-      "sentence": "Textbook Marzullo signs it: two servers ten seconds apart, each stating three seconds, agree nowhere, and a third source stating an hour makes two out of three and produces a bound sixteen seconds wide that neither honest server supports.",
-      "reason": "a worked example of the algorithm"
-    },
-    {
-      "figures": [
-        "ten seconds",
-        "three seconds"
-      ],
-      "surfaces": [
-        "docs/what-timewitness-cannot-prove.md",
-        "content/cannot-prove.json",
-        "/cannot-prove"
-      ],
-      "sentence": "Two servers ten seconds apart at a radius of three seconds agree nowhere, and the agent refuses.",
-      "reason": "a worked example of the algorithm"
-    },
-    {
-      "figures": [
-        "sixteen seconds"
-      ],
-      "surfaces": [
-        "docs/what-timewitness-cannot-prove.md",
-        "content/cannot-prove.json",
-        "/cannot-prove"
-      ],
-      "sentence": "Add the hour-wide server and Marzullo's algorithm finds a majority, because two of the three now allow every point between one server's floor and the other's ceiling, and it signs an interval sixteen seconds wide where neither honest server supports more than six.",
-      "reason": "a worked example of the algorithm"
-    },
-    {
-      "figures": [
-        "38.4 ms",
-        "37.6 ms",
-        "six milliseconds"
-      ],
-      "surfaces": [
-        "README.md",
-        "docs/what-timewitness-cannot-prove.md",
-        "content/cannot-prove.json",
-        "/cannot-prove"
-      ],
-      "sentence": "The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did.",
-      "reason": "arithmetic on two readings stated above it"
-    },
-    {
-      "figures": [
-        "37.6 ms",
-        "38.3 ms",
-        "ten milliseconds"
-      ],
-      "surfaces": [
-        "README.md",
-        "docs/what-timewitness-cannot-prove.md",
-        "content/cannot-prove.json",
-        "/cannot-prove"
-      ],
-      "sentence": "The sources overlapping did not move there either, 37.6 ms of half width against 37.1 to 38.3 ms, so the ten milliseconds between the two sets is the fit and the oscillator rather than the sources.",
-      "reason": "arithmetic on two readings stated above it"
-    },
-    {
-      "figures": [
-        "45.6 ms",
-        "25.0 ms"
-      ],
-      "surfaces": [
-        "README.md",
-        "docs/what-timewitness-cannot-prove.md",
-        "content/cannot-prove.json",
-        "/cannot-prove"
-      ],
-      "sentence": "What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit.",
-      "reason": "arithmetic on two readings stated above it"
-    },
-    {
-      "figures": [
-        "one second"
-      ],
-      "surfaces": [
-        "README.md",
-        "docs/what-timewitness-cannot-prove.md",
-        "content/cannot-prove.json",
-        "/cannot-prove"
-      ],
-      "sentence": "About one second is still the target and it is a target for something else: a bound resting on third-party evidence rather than on the agent's own model, which nothing outside the tests constructs, and which a timestamp authority writing whole seconds puts a floor under.",
-      "reason": "a target rather than a reading"
-    },
-    {
-      "figures": [
-        "thirty minutes"
-      ],
-      "surfaces": [
-        "README.md",
-        "docs/what-timewitness-cannot-prove.md",
-        "content/cannot-prove.json",
-        "/cannot-prove"
-      ],
-      "sentence": "Leaving the agent running longer stops narrowing the bound after about thirty minutes.",
-      "reason": "a setting read off the shipped policy"
-    },
-    {
-      "figures": [
-        "thirty minutes"
-      ],
-      "surfaces": [
-        "docs/what-timewitness-cannot-prove.md",
-        "content/cannot-prove.json",
-        "/cannot-prove"
-      ],
-      "sentence": "Whether thirty minutes is the right window is an open question about the regression rather than a setting anybody can change from outside.",
-      "reason": "a setting read off the shipped policy"
-    },
-    {
-      "figures": [
-        "sixteen minutes"
-      ],
-      "surfaces": [
-        "docs/what-timewitness-cannot-prove.md",
-        "content/cannot-prove.json",
-        "/cannot-prove"
-      ],
-      "sentence": "On the shipped settings that point is about sixteen minutes after the last time the sources answered.",
-      "reason": "a setting read off the shipped policy"
-    },
-    {
-      "figures": [
-        "three minutes"
-      ],
-      "surfaces": [
-        "README.md",
-        "docs/what-timewitness-cannot-prove.md",
-        "content/cannot-prove.json",
-        "/cannot-prove"
-      ],
-      "sentence": "A fresh agent refuses to answer at all for its first two to three minutes.",
-      "reason": "arithmetic on two readings stated above it"
-    },
-    {
-      "figures": [
-        "one day"
-      ],
-      "surfaces": [
-        "README.md",
-        "docs/what-timewitness-cannot-prove.md",
-        "content/cannot-prove.json",
-        "/cannot-prove"
-      ],
-      "sentence": "So the share on one machine on one day is somewhere between nought and one in forty, and a deployment should expect a refusal now and then rather than never.",
-      "reason": "the span the readings covered"
-    },
-    {
-      "figures": [
-        "a quarter of a second"
-      ],
-      "surfaces": [
-        "README.md"
-      ],
-      "sentence": "A sleep is detected and has never been watched happening: the agent reads the two counters an operating system keeps, one that stops while the machine sleeps and one that does not, and refuses until it has synchronised again, but nothing has put a real machine to sleep to watch it, and a sleep shorter than a quarter of a second is not seen at all.",
-      "reason": "a threshold of the method rather than a measurement"
-    },
-    {
-      "figures": [
-        "a quarter of a second"
-      ],
-      "surfaces": [
-        "docs/what-timewitness-cannot-prove.md",
-        "content/cannot-prove.json",
-        "/cannot-prove"
-      ],
-      "sentence": "A sleep shorter than a quarter of a second is below the resolution of the counters being compared and is not seen at all.",
-      "reason": "a threshold of the method rather than a measurement"
-    },
-    {
-      "figures": [
-        "one second"
-      ],
-      "surfaces": [
-        "docs/what-timewitness-cannot-prove.md",
-        "content/cannot-prove.json",
-        "/cannot-prove"
-      ],
-      "sentence": "It can still refuse where the sources disagree about smearing by an amount that could be one second spread out, and where every source in the pool smears the same way there is nothing to disagree about: the bound then holds those sources and those sources are deliberately not on UTC for that day.",
-      "reason": "a threshold of the method rather than a measurement"
-    },
-    {
-      "figures": [
-        "200 us",
-        "1 hour"
-      ],
-      "surfaces": [
-        "docs/verifier.md"
-      ],
-      "sentence": "Deliberately not set at the 200 us today's agent policy cannot beat, because a future agent on better hardware honestly will, and refusing those would look identical to catching a lie. | | widest interval | 1 hour | Past an hour an interval says nothing a calendar would not. | | fewest sources answering | 3 | With three, a majority beats one bad clock.",
-      "reason": "a bound of the verifier, held to its own table"
-    },
-    {
-      "figures": [
-        "six seconds",
-        "a quarter of a second"
-      ],
-      "surfaces": [
-        "action.yml"
-      ],
-      "sentence": "Sixteen is the default because it takes about six seconds and each further second after it buys less than a quarter of a second of width. required: false default: \"16\" max-width: description: >- The widest interval this agent will sign for, in nanoseconds.",
-      "reason": "arithmetic on two readings stated above it"
-    },
-    {
-      "figures": [
-        "1788979278918450302 ns"
-      ],
-      "surfaces": [
-        "content/how-a-receipt-works.json",
-        "/how-a-receipt-works"
-      ],
-      "sentence": "1788979278918450302 ns since the Unix epoch",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "1788979278845210129 ns",
-        "1788979278999084899 ns"
-      ],
-      "surfaces": [
-        "content/how-a-receipt-works.json",
-        "/how-a-receipt-works"
-      ],
-      "sentence": "From 1788979278845210129 ns to 1788979278999084899 ns.",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "153.875 ms"
-      ],
-      "surfaces": [
-        "content/how-a-receipt-works.json",
-        "content/product-fixtures.json",
-        "/how-a-receipt-works",
-        "/screen"
-      ],
-      "sentence": "153.875 ms wide",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "35.081 ms"
-      ],
-      "surfaces": [
-        "content/how-a-receipt-works.json",
-        "content/product-fixtures.json",
-        "/how-a-receipt-works",
-        "/screen"
-      ],
-      "sentence": "35.081 ms",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "38.011 ms"
-      ],
-      "surfaces": [
-        "content/how-a-receipt-works.json",
-        "/how-a-receipt-works"
-      ],
-      "sentence": "38.011 ms",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "3.586 ms"
-      ],
-      "surfaces": [
-        "content/how-a-receipt-works.json",
-        "/how-a-receipt-works"
-      ],
-      "sentence": "3.586 ms",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "250.000 us"
-      ],
-      "surfaces": [
-        "content/how-a-receipt-works.json",
-        "/how-a-receipt-works"
-      ],
-      "sentence": "250.000 us",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "10.000 us"
-      ],
-      "surfaces": [
-        "content/how-a-receipt-works.json",
-        "/how-a-receipt-works"
-      ],
-      "sentence": "10.000 us",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "2 s"
-      ],
-      "surfaces": [
-        "content/how-a-receipt-works.json",
-        "/how-a-receipt-works"
-      ],
-      "sentence": "On this receipt the two outside signatures enclose 2 s, so the moment is pinned from outside even though the width is not.",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "2 s"
-      ],
-      "surfaces": [
-        "content/product-fixtures.json",
-        "/screen"
-      ],
-      "sentence": "2 s",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "211.3 ms"
-      ],
-      "surfaces": [
-        "content/for-maintainers.json",
-        "/for-maintainers"
-      ],
-      "sentence": "211.3 ms",
-      "reason": "the conditions are in the table line this figure sits in"
-    },
-    {
-      "figures": [
-        "16.219 s"
-      ],
-      "surfaces": [
-        "content/for-maintainers.json",
-        "/for-maintainers"
-      ],
-      "sentence": "16.219 s",
-      "reason": "the conditions are in the table line this figure sits in"
-    },
-    {
-      "figures": [
-        "153.875 ms"
-      ],
-      "surfaces": [
-        "content/for-maintainers.json",
-        "/for-maintainers"
-      ],
-      "sentence": "153.875 ms",
-      "reason": "the conditions are in the table line this figure sits in"
-    },
-    {
-      "figures": [
-        "six seconds",
-        "a quarter of a second"
-      ],
-      "surfaces": [
-        "content/for-maintainers.json",
-        "/for-maintainers"
-      ],
-      "sentence": "Sixteen takes about six seconds and each further second buys less than a quarter of a second of width.",
-      "reason": "arithmetic on two readings stated above it"
-    },
-    {
-      "figures": [
-        "one second"
-      ],
-      "surfaces": [
-        "content/for-maintainers.json",
-        "/for-maintainers"
-      ],
-      "sentence": "A bound resting on third-party signatures rather than on our own model is what this is being built towards, and about one second is where that starts.",
-      "reason": "a target rather than a reading"
-    },
-    {
-      "figures": [
-        "30 seconds"
-      ],
-      "surfaces": [
-        "content/product-fixtures.json",
-        "/screen"
-      ],
-      "sentence": "Retrying in 30 seconds.",
-      "reason": "the wording of a message the product shows"
-    },
-    {
-      "figures": [
-        "153.875 ms"
-      ],
-      "surfaces": [
-        "/",
-        "/screen"
-      ],
-      "sentence": "UTC was somewhere in an interval 153.875 ms wide.",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "eight second"
-      ],
-      "surfaces": [
-        "/"
-      ],
-      "sentence": "An eight-second loop.",
-      "reason": "a fact about the page rather than about time"
-    },
-    {
-      "figures": [
-        "35.081 ms"
-      ],
-      "surfaces": [
-        "/how-a-receipt-works"
-      ],
-      "sentence": "35.081 ms the sources overlapping, halved",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "38.011 ms"
-      ],
-      "surfaces": [
-        "/how-a-receipt-works"
-      ],
-      "sentence": "38.011 ms the model's own residual",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "3.586 ms"
-      ],
-      "surfaces": [
-        "/how-a-receipt-works"
-      ],
-      "sentence": "3.586 ms the oscillator since the last sync",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "250.000 us"
-      ],
-      "surfaces": [
-        "/how-a-receipt-works"
-      ],
-      "sentence": "250.000 us a fixed safety margin",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "10.000 us"
-      ],
-      "surfaces": [
-        "/how-a-receipt-works"
-      ],
-      "sentence": "10.000 us the local read",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "153.875 ms"
-      ],
-      "surfaces": [
-        "picture-strings.txt"
-      ],
-      "sentence": "153.875 ms wide",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "2 s"
-      ],
-      "surfaces": [
-        "picture-strings.txt"
-      ],
-      "sentence": "2 s",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "35.081 ms"
-      ],
-      "surfaces": [
-        "picture-strings.txt"
-      ],
-      "sentence": "35.081 ms",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "50 %"
-      ],
-      "surfaces": [
-        "picture-strings.txt"
-      ],
-      "sentence": "50%",
-      "reason": "a share of a drawing rather than a duration"
-    },
-    {
-      "figures": [
-        "153.875 ms",
-        "35.081 ms"
-      ],
-      "surfaces": [
-        "picture-strings.txt"
-      ],
-      "sentence": "A bracket spans our bound, 153.875 ms wide, which is our own claim: the sources overlap on 35.081 ms of its half width and the rest is our model.",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    },
-    {
-      "figures": [
-        "eight second"
-      ],
-      "surfaces": [
-        "picture-strings.txt"
-      ],
-      "sentence": "An eight-second loop.",
-      "reason": "a fact about the page rather than about time"
-    },
-    {
-      "figures": [
-        "35.081 ms"
-      ],
-      "surfaces": [
-        "picture-strings.txt"
-      ],
-      "sentence": "The sources overlap on 35.081 ms of its half width; the rest is our model.",
-      "reason": "a field of the committed receipt, rendered as it stands"
-    }
-  ]
+  {
+   "figures": [
+    "ten seconds",
+    "three seconds"
+   ],
+   "surfaces": [
+    "docs/what-timewitness-cannot-prove.md",
+    "content/cannot-prove.json",
+    "/cannot-prove"
+   ],
+   "sentence": "Two servers ten seconds apart at a radius of three seconds agree nowhere, and the agent refuses.",
+   "reason": "a worked example of the algorithm"
+  },
+  {
+   "figures": [
+    "sixteen seconds"
+   ],
+   "surfaces": [
+    "docs/what-timewitness-cannot-prove.md",
+    "content/cannot-prove.json",
+    "/cannot-prove"
+   ],
+   "sentence": "Add the hour-wide server and Marzullo's algorithm finds a majority, because two of the three now allow every point between one server's floor and the other's ceiling, and it signs an interval sixteen seconds wide where neither honest server supports more than six.",
+   "reason": "a worked example of the algorithm"
+  },
+  {
+   "figures": [
+    "38.4 ms",
+    "37.6 ms",
+    "six milliseconds"
+   ],
+   "surfaces": [
+    "README.md",
+    "docs/what-timewitness-cannot-prove.md",
+    "content/cannot-prove.json",
+    "/cannot-prove"
+   ],
+   "sentence": "The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did.",
+   "reason": "arithmetic on two readings stated above it"
+  },
+  {
+   "figures": [
+    "37.6 ms",
+    "38.3 ms",
+    "ten milliseconds"
+   ],
+   "surfaces": [
+    "README.md",
+    "docs/what-timewitness-cannot-prove.md",
+    "content/cannot-prove.json",
+    "/cannot-prove"
+   ],
+   "sentence": "The sources overlapping did not move there either, 37.6 ms of half width against 37.1 to 38.3 ms, so the ten milliseconds between the two sets is the fit and the oscillator rather than the sources.",
+   "reason": "arithmetic on two readings stated above it"
+  },
+  {
+   "figures": [
+    "45.6 ms",
+    "25.0 ms"
+   ],
+   "surfaces": [
+    "README.md",
+    "docs/what-timewitness-cannot-prove.md",
+    "content/cannot-prove.json",
+    "/cannot-prove"
+   ],
+   "sentence": "What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit.",
+   "reason": "arithmetic on two readings stated above it"
+  },
+  {
+   "figures": [
+    "one second"
+   ],
+   "surfaces": [
+    "README.md",
+    "docs/what-timewitness-cannot-prove.md",
+    "content/cannot-prove.json",
+    "/cannot-prove"
+   ],
+   "sentence": "About one second is still the target and it is a target for something else: a bound resting on third-party evidence rather than on the agent's own model, which nothing outside the tests constructs, and which a timestamp authority writing whole seconds puts a floor under.",
+   "reason": "a target rather than a reading"
+  },
+  {
+   "figures": [
+    "thirty minutes"
+   ],
+   "surfaces": [
+    "README.md",
+    "docs/what-timewitness-cannot-prove.md",
+    "content/cannot-prove.json",
+    "/cannot-prove"
+   ],
+   "sentence": "Leaving the agent running longer stops narrowing the bound after about thirty minutes.",
+   "reason": "a setting read off the shipped policy"
+  },
+  {
+   "figures": [
+    "thirty minutes"
+   ],
+   "surfaces": [
+    "docs/what-timewitness-cannot-prove.md",
+    "content/cannot-prove.json",
+    "/cannot-prove"
+   ],
+   "sentence": "Whether thirty minutes is the right window is an open question about the regression rather than a setting anybody can change from outside.",
+   "reason": "a setting read off the shipped policy"
+  },
+  {
+   "figures": [
+    "sixteen minutes"
+   ],
+   "surfaces": [
+    "docs/what-timewitness-cannot-prove.md",
+    "content/cannot-prove.json",
+    "/cannot-prove"
+   ],
+   "sentence": "On the shipped settings that point is about sixteen minutes after the last time the sources answered.",
+   "reason": "a setting read off the shipped policy"
+  },
+  {
+   "figures": [
+    "three minutes"
+   ],
+   "surfaces": [
+    "README.md",
+    "docs/what-timewitness-cannot-prove.md",
+    "content/cannot-prove.json",
+    "/cannot-prove"
+   ],
+   "sentence": "A fresh agent refuses to answer at all for its first two to three minutes.",
+   "reason": "arithmetic on two readings stated above it"
+  },
+  {
+   "figures": [
+    "one day"
+   ],
+   "surfaces": [
+    "README.md",
+    "docs/what-timewitness-cannot-prove.md",
+    "content/cannot-prove.json",
+    "/cannot-prove"
+   ],
+   "sentence": "So the share on one machine on one day is somewhere between nought and one in forty, and a deployment should expect a refusal now and then rather than never.",
+   "reason": "the span the readings covered"
+  },
+  {
+   "figures": [
+    "a quarter of a second"
+   ],
+   "surfaces": [
+    "README.md"
+   ],
+   "sentence": "A sleep is detected and has never been watched happening: the agent reads the two counters an operating system keeps, one that stops while the machine sleeps and one that does not, and refuses until it has synchronised again, but nothing has put a real machine to sleep to watch it, and a sleep shorter than a quarter of a second is not seen at all.",
+   "reason": "a threshold of the method rather than a measurement"
+  },
+  {
+   "figures": [
+    "a quarter of a second"
+   ],
+   "surfaces": [
+    "docs/what-timewitness-cannot-prove.md",
+    "content/cannot-prove.json",
+    "/cannot-prove"
+   ],
+   "sentence": "A sleep shorter than a quarter of a second is below the resolution of the counters being compared and is not seen at all.",
+   "reason": "a threshold of the method rather than a measurement"
+  },
+  {
+   "figures": [
+    "one second"
+   ],
+   "surfaces": [
+    "docs/what-timewitness-cannot-prove.md",
+    "content/cannot-prove.json",
+    "/cannot-prove"
+   ],
+   "sentence": "It can still refuse where the sources disagree about smearing by an amount that could be one second spread out, and where every source in the pool smears the same way there is nothing to disagree about: the bound then holds those sources and those sources are deliberately not on UTC for that day.",
+   "reason": "a threshold of the method rather than a measurement"
+  },
+  {
+   "figures": [
+    "200 us",
+    "1 hour"
+   ],
+   "surfaces": [
+    "docs/verifier.md"
+   ],
+   "sentence": "Deliberately not set at the 200 us today's agent policy cannot beat, because a future agent on better hardware honestly will, and refusing those would look identical to catching a lie. | | widest interval | 1 hour | Past an hour an interval says nothing a calendar would not. | | fewest sources answering | 3 | With three, a majority beats one bad clock.",
+   "reason": "a bound of the verifier, held to its own table"
+  },
+  {
+   "figures": [
+    "six seconds",
+    "a quarter of a second"
+   ],
+   "surfaces": [
+    "action.yml"
+   ],
+   "sentence": "Sixteen is the default because it takes about six seconds and each further second after it buys less than a quarter of a second of width. required: false default: \"16\" max-width: description: >- The widest interval this agent will sign for, in nanoseconds.",
+   "reason": "arithmetic on two readings stated above it"
+  },
+  {
+   "figures": [
+    "1788979278918450302 ns"
+   ],
+   "surfaces": [
+    "content/how-a-receipt-works.json",
+    "/how-a-receipt-works"
+   ],
+   "sentence": "1788979278918450302 ns since the Unix epoch",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "1788979278845210129 ns",
+    "1788979278999084899 ns"
+   ],
+   "surfaces": [
+    "content/how-a-receipt-works.json",
+    "/how-a-receipt-works"
+   ],
+   "sentence": "From 1788979278845210129 ns to 1788979278999084899 ns.",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "153.875 ms"
+   ],
+   "surfaces": [
+    "content/how-a-receipt-works.json",
+    "content/product-fixtures.json",
+    "/how-a-receipt-works",
+    "/screen"
+   ],
+   "sentence": "153.875 ms wide",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "35.081 ms"
+   ],
+   "surfaces": [
+    "content/how-a-receipt-works.json",
+    "content/product-fixtures.json",
+    "/how-a-receipt-works",
+    "/screen"
+   ],
+   "sentence": "35.081 ms",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "38.011 ms"
+   ],
+   "surfaces": [
+    "content/how-a-receipt-works.json",
+    "/how-a-receipt-works"
+   ],
+   "sentence": "38.011 ms",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "3.586 ms"
+   ],
+   "surfaces": [
+    "content/how-a-receipt-works.json",
+    "/how-a-receipt-works"
+   ],
+   "sentence": "3.586 ms",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "250.000 us"
+   ],
+   "surfaces": [
+    "content/how-a-receipt-works.json",
+    "/how-a-receipt-works"
+   ],
+   "sentence": "250.000 us",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "10.000 us"
+   ],
+   "surfaces": [
+    "content/how-a-receipt-works.json",
+    "/how-a-receipt-works"
+   ],
+   "sentence": "10.000 us",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "2 s"
+   ],
+   "surfaces": [
+    "content/product-fixtures.json",
+    "/screen"
+   ],
+   "sentence": "2 s",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "211.3 ms"
+   ],
+   "surfaces": [
+    "content/for-maintainers.json",
+    "/for-maintainers"
+   ],
+   "sentence": "211.3 ms",
+   "reason": "the conditions are in the table line this figure sits in"
+  },
+  {
+   "figures": [
+    "16.219 s"
+   ],
+   "surfaces": [
+    "content/for-maintainers.json",
+    "/for-maintainers"
+   ],
+   "sentence": "16.219 s",
+   "reason": "the conditions are in the table line this figure sits in"
+  },
+  {
+   "figures": [
+    "153.875 ms"
+   ],
+   "surfaces": [
+    "content/for-maintainers.json",
+    "/for-maintainers"
+   ],
+   "sentence": "153.875 ms",
+   "reason": "the conditions are in the table line this figure sits in"
+  },
+  {
+   "figures": [
+    "six seconds",
+    "a quarter of a second"
+   ],
+   "surfaces": [
+    "content/for-maintainers.json",
+    "/for-maintainers"
+   ],
+   "sentence": "Sixteen takes about six seconds and each further second buys less than a quarter of a second of width.",
+   "reason": "arithmetic on two readings stated above it"
+  },
+  {
+   "figures": [
+    "one second"
+   ],
+   "surfaces": [
+    "content/for-maintainers.json",
+    "/for-maintainers"
+   ],
+   "sentence": "A bound resting on third-party signatures rather than on our own model is what this is being built towards, and about one second is where that starts.",
+   "reason": "a target rather than a reading"
+  },
+  {
+   "figures": [
+    "30 seconds"
+   ],
+   "surfaces": [
+    "content/product-fixtures.json",
+    "/screen"
+   ],
+   "sentence": "Retrying in 30 seconds.",
+   "reason": "the wording of a message the product shows"
+  },
+  {
+   "figures": [
+    "153.875 ms"
+   ],
+   "surfaces": [
+    "/",
+    "/screen"
+   ],
+   "sentence": "UTC was somewhere in an interval 153.875 ms wide.",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "eight second"
+   ],
+   "surfaces": [
+    "/"
+   ],
+   "sentence": "An eight-second loop.",
+   "reason": "a fact about the page rather than about time"
+  },
+  {
+   "figures": [
+    "35.081 ms"
+   ],
+   "surfaces": [
+    "/how-a-receipt-works"
+   ],
+   "sentence": "35.081 ms the sources overlapping, halved",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "38.011 ms"
+   ],
+   "surfaces": [
+    "/how-a-receipt-works"
+   ],
+   "sentence": "38.011 ms the model's own residual",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "3.586 ms"
+   ],
+   "surfaces": [
+    "/how-a-receipt-works"
+   ],
+   "sentence": "3.586 ms the oscillator since the last sync",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "250.000 us"
+   ],
+   "surfaces": [
+    "/how-a-receipt-works"
+   ],
+   "sentence": "250.000 us a fixed safety margin",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "10.000 us"
+   ],
+   "surfaces": [
+    "/how-a-receipt-works"
+   ],
+   "sentence": "10.000 us the local read",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "153.875 ms"
+   ],
+   "surfaces": [
+    "picture-strings.txt"
+   ],
+   "sentence": "153.875 ms wide",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "35.081 ms"
+   ],
+   "surfaces": [
+    "picture-strings.txt"
+   ],
+   "sentence": "35.081 ms",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "50 %"
+   ],
+   "surfaces": [
+    "picture-strings.txt"
+   ],
+   "sentence": "50%",
+   "reason": "a share of a drawing rather than a duration"
+  },
+  {
+   "figures": [
+    "153.875 ms",
+    "35.081 ms"
+   ],
+   "surfaces": [
+    "picture-strings.txt"
+   ],
+   "sentence": "A bracket spans our bound, 153.875 ms wide, which is our own claim: the sources overlap on 35.081 ms of its half width and the rest is our model.",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "eight second"
+   ],
+   "surfaces": [
+    "picture-strings.txt"
+   ],
+   "sentence": "An eight-second loop.",
+   "reason": "a fact about the page rather than about time"
+  },
+  {
+   "figures": [
+    "35.081 ms"
+   ],
+   "surfaces": [
+    "picture-strings.txt"
+   ],
+   "sentence": "The sources overlap on 35.081 ms of its half width; the rest is our model.",
+   "reason": "a field of the committed receipt, rendered as it stands"
+  },
+  {
+   "figures": [
+    "2 s"
+   ],
+   "surfaces": [
+    "docs/verifier.md"
+   ],
+   "sentence": "Until 2026-09-19 both printed a bracket, 2 s on the first and about 2.95 years on the second, and both numbers were arithmetic that took an unstated accuracy for a stated nought.",
+   "reason": "a figure the product has stopped printing, said as history"
+  }
+ ]
 }

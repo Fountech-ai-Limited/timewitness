@@ -1,5 +1,15 @@
 # What TimeWitness cannot prove
 
+Version 20, 2026-09-19. Supersedes version 19 of 2026-09-15, which it keeps whole and corrects in two
+places, both of them the same fault. The claim at the head of the list said the outside evidence pins
+the moment to a few seconds, and the note on version 18 said it again. An authority that states no
+accuracy of its own has not stated a nought, so its token bounds nothing in UTC, and both authorities
+that ship are in that state: the receipt committed in this repository is left with the beacon's edge
+from below and nothing from above. The shipped verifier has said so since 2026-09-19 and these two
+sentences had not caught up. The list still runs to 59 items. Six edits between version 19 and this
+one carried no version note of their own, so this note covers what it names and the repository's
+history covers the rest.
+
 Version 19, 2026-09-15. Supersedes version 18 of the same day, which it keeps whole, corrects in six
 places and adds two items to. The Roughtime-only path was called seconds wide in four places and the
 shipped product refuses it: three operators is under the floor of four, and nothing that ships lowers
@@ -14,8 +24,8 @@ floor counts are strings the signer wrote. The list runs to 59 items rather than
 Version 18, 2026-09-15. Supersedes version 17 of 2026-09-11, which it keeps whole and corrects in two
 places. The claim at the head of the list said the outside evidence in a receipt supports the
 interval. It does not: every receipt says its bound rests on the agent's own model, and the outside
-signatures pin the moment to a few seconds, against a width of our own of about a sixth of a second.
-The claim now says which is which. The item on the corridor said it makes the bound checkable and
+signatures say when the reading was taken rather than how wide the interval is. The claim now says
+which is which. The item on the corridor said it makes the bound checkable and
 that no ordinary time source runs here; it makes the moment checkable, and plain NTP and NTS run in
 every stamp. The list still runs to 57 items.
 
@@ -180,9 +190,12 @@ of what is built today. The last group is marked, because those move.
 
 TimeWitness says: at this local counter reading, UTC was somewhere in this interval, and here is
 signed evidence from three parties who have never heard of us about when that reading was taken.
-The interval is our own claim and the outside evidence does not vouch for it. That evidence pins the
-moment to a few seconds, and a bound resting on it is what we are building towards. Bounded time and
-unbroken order. Not accurate time.
+The interval is our own claim and the outside evidence does not vouch for it. That evidence is
+checked, and on the receipt committed in this repository it holds the moment from below and not from
+above: the beacon says the reading was not earlier than its round, and the timestamp authority states
+no accuracy of its own, so nothing here puts a number on how wrong that authority's clock could be. A
+bound resting on that evidence is what we are building towards. Bounded time and unbroken order. Not
+accurate time.
 
 ## About time itself
 

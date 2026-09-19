@@ -168,6 +168,10 @@ SITE_FILES = ['landing.json', 'cannot-prove.json', 'how-a-receipt-works.json', '
               'product-fixtures.json']
 SITE_PAGES = ['/', '/cannot-prove', '/how-a-receipt-works', '/for-maintainers', '/screen']
 
+# The receipt every surface points a reader at. What its outside signatures do is a fact the
+# sentences are held to, read off the verifier rather than worked out here.
+COMMITTED_RECEIPT = 'crates/verify/tests/data/a-real-stamp/receipt.cbor'
+
 # The fewest sentences a surface can yield and count as read. The smallest surface, the Action's
 # job summary, yields nineteen; an emptied file yields none.
 SENTENCE_FLOOR = 5
@@ -314,6 +318,32 @@ def the_policy():
     kind_names = {p.stem.upper() if len(p.stem) <= 3 else p.stem.title()
                   for p in sources.rglob('*.rs') if 'impl TimeSource for' in p.read_text(encoding='utf-8')}
 
+    # What the outside signatures of the receipt committed in this tree actually leave between them,
+    # asked of the verifier a stranger runs. This is the one fact here that is not read out of the
+    # source, and it is here because the surfaces make a claim about this receipt by name.
+    #
+    # It is also the fact that went stale in silence on 2026-09-19 and took six public surfaces with
+    # it. The fix of that day stopped an authority's unstated accuracy being read as a nought, which is the
+    # whole of the bracket on both authorities that ship, so the verifier stopped printing a span and
+    # started saying that nothing outside bounds the moment from above. The README, the limitation
+    # list and five served surfaces went on saying the signatures pin the moment to a few seconds,
+    # and neither this file nor the site's figure check could see it: one recomputed the bracket
+    # itself and the other only asked whether a number had its conditions beside it. Neither could
+    # see a claim whose number had become none, because both of them read numbers.
+    #
+    # So the claim is held to the verdict rather than to a figure. While this answers none, a
+    # sentence saying the outside signatures bracket, enclose or pin the moment is refused wherever
+    # it is written, with or without a span beside it, and so is one giving a shipped authority the
+    # not-later-than proof. The day an authority states an accuracy, or a reader's allowance ships
+    # with one, this answers a number and the same sentences are allowed again.
+    committed = ROOT / COMMITTED_RECEIPT
+    if not committed.is_file():
+        raise Unreadable(f'{COMMITTED_RECEIPT} is not there, so what its outside signatures bracket cannot be read')
+    authorities = block(read('crates/core/src/evidence/rfc3161.rs'), 'pub fn published_authorities()')
+    shipped_authorities = re.findall(r'name:\s*"([^"]+)"\.to_string\(\)', authorities)
+    if not shipped_authorities:
+        raise Unreadable('published_authorities() names no timestamp authority this reads')
+
     return {
         'floor': int(floor.group(1)),
         'agent_ns': int(agent.group(1)) * per[agent.group(2)],
@@ -327,6 +357,8 @@ def the_policy():
         'floor_lowerable': floor_lowerable,
         'refusal_receipt': refusal_receipt,
         'roughtime_standing': 'an ' + standing.group(1),
+        'outside_bracket_ns': bracket_of(committed),
+        'shipped_authorities': shipped_authorities,
     }
 
 
@@ -674,6 +706,37 @@ VOUCHING = [re.compile(p, re.I) for p in (
     # is the target the surfaces name and is not this.
     r'\b(?:receipts?|the (?:bound|width|interval|second number)|its (?:bound|width)|every receipt|each receipt)\b[^.;]{0,30}?'
     r'\b(rests?) on (?:the |its |their )?(?:third.party|outside|independent|external|signed|signers\'?)\b',
+)]
+# Outside signatures said to put a bracket round the moment, in the wordings the surfaces use for it:
+# pinning it, bracketing it, enclosing it, or a bracket given as a span. Each has one group, the word
+# the claim turns on, and the clause round that word is read for a denial, so "they bracket nothing"
+# and "does not pin the moment" are the honest sentences and are not this.
+#
+# There is deliberately no subject in the first two. "They pin the moment the stamp was taken to a
+# few seconds" carries its subject in the sentence before it, and a check that reads one sentence at
+# a time would have let that one through on every surface it sits on. A bracketing verb with the
+# moment as its object is the claim whoever is said to be doing it.
+# The moment, in the words the surfaces use for it. "They pin when it was taken to 2 s" said the
+# whole claim without the noun, and the first draft of the rule below read straight past it.
+MOMENT = (r'(?:the moment|when it was taken|when that reading was taken|'
+          r'when the (?:reading|stamp|receipt|event) was taken)')
+BRACKETING = [re.compile(p, re.I) for p in (
+    r'\b(pins?|pinning|pinned|brackets?|bracketing|bracketed|encloses?|enclosing|enclosed|straddles?|straddling|'
+    r'sandwiches|sandwiched)\b[^.;]{0,40}?\b' + MOMENT + r'\b',
+    r'\b' + MOMENT + r'\b[^.;]{0,40}?\b(?:is|are|was|were|gets?|stays?|sits?) (?:\w+ ){0,2}?(pinned|bracketed|enclosed|'
+    r'fixed from outside|held from outside)\b',
+    r'\bsignatures?\b[^.;,]{0,40}?\b(enclose|encloses|enclosed|bracket|brackets|bracketed|pin|pins|pinned)\b',
+    r'\b(?:to|in|inside|within|of) an? [^.;]{0,24}?\b(bracket)\b',
+)]
+# A named timestamp authority given the not-later-than proof. The role itself is defined on these
+# surfaces and has to stay sayable, so this is scoped to an authority that ships: "An independent
+# final witness proves not-later-than" is the design and is not held to anything, and "DigiCert
+# signed for the payload hash, so the document existed no later than the moment its token states"
+# is a claim about a token this product fetches and is.
+NOT_LATER_PROVED = [re.compile(p, re.I) for p in (
+    r'\b(proves?|proving|proved|establishes?|shows?|demonstrates?|gives? us|puts? a) [^.;]{0,20}?not.later.than\b',
+    r'\b(?:existed|was made|was taken|was written|was created|happened|is) ((?:no|not) later than)\b',
+    r'\b(bounds?|bounding|bounded|caps?|closes?|fixes?) (?:the |this |that )?moment from above\b',
 )]
 # The product's own phrase for a third party, which carries a "never" that negates nothing.
 NEVER_HEARD = re.compile(r'\bwho (?:have|has) never heard of (?:us|this product)\b', re.I)
@@ -1135,6 +1198,27 @@ def judge(sentence, policy, landing=None, read=None):
                 faults.append('says outside evidence supports the width, and every receipt this code issues '
                               'rests on its own model')
                 break
+    if policy['outside_bracket_ns'] is None:
+        for rule in BRACKETING:
+            m = rule.search(sentence)
+            if m and not denied(sentence, m, 1):
+                faults.append('says the outside signatures put a bracket round the moment, and on the receipt '
+                              'committed in this repository they put none: the verifier answers '
+                              'outside_bracket_ns=none, because the not-later-than witness was checked and its '
+                              'authority states no accuracy of its own, so nothing outside bounds the moment from '
+                              'above (rule 2 of what this product may say)')
+                break
+        named = [a for a in policy['shipped_authorities'] if re.search(r'\b' + re.escape(a) + r'\b', sentence, re.I)]
+        if named:
+            for rule in NOT_LATER_PROVED:
+                m = rule.search(sentence)
+                if m and not denied(sentence, m, 1):
+                    faults.append(f'has {named[0]} proving not-later-than, and its token bounds nothing in UTC: the '
+                                  f'authority states no accuracy, so nothing here puts a number on how wrong its clock '
+                                  f'could be. A reader who has read the authority\'s published practice can allow for '
+                                  f'it in their own anchors and the figure is then printed as theirs; nothing that '
+                                  f'ships carries one (rule 2 of what this product may say)')
+                    break
     m = RECEIPT_SIGNED_BY.search(sentence)
     if m and not denied(sentence, m, 1):
         faults.append('says a receipt is signed by an outside party, and a receipt is signed by the agent\'s own key: the '
@@ -1617,7 +1701,12 @@ def cbor(data):
 def receipt_fields(path):
     """The nanosecond fields of a receipt on disk, by the names the register's subjects use. A receipt
     stored as hex, which is how this repository keeps every receipt but the first so git can grep them,
-    is decoded first."""
+    is decoded first.
+
+    Every field but one is written in the receipt and is read straight out of it. The bracket is not:
+    it is what the outside signatures leave between them, which is a judgement about what each
+    attestation supports, and the verifier is the thing that makes it. So it comes off the verifier,
+    through `bracket_of` below, and is never worked out again here."""
     raw = path.read_bytes()
     if path.suffix == '.hex':
         raw = bytes.fromhex(raw.decode('ascii').strip())
@@ -1630,11 +1719,10 @@ def receipt_fields(path):
         raise ValueError('no claim in it')
     breakdown = claim.get('breakdown') or {}
     width = claim['latest_ns'] - claim['earliest_ns']
-    ats = [e.get('at_ns') for e in payload.get('evidence') or [] if isinstance(e, dict) and isinstance(e.get('at_ns'), int)]
     fields = {
         'width': width,
         'half': width // 2,
-        'bracket': (max(ats) - min(ats)) if len(ats) >= 2 else None,
+        'bracket': bracket_of(path),
     }
     for key, value_ns in breakdown.items():
         if isinstance(value_ns, int) and not isinstance(value_ns, bool):
@@ -1737,7 +1825,7 @@ def evidence_carries(entry, named):
                 continue
             value_ns = fields.get(field)
             if value_ns is None:
-                reasons.append(f'{rel} has no {field}')
+                reasons.append(no_such_field(rel, field))
                 continue
             missing = [f for f in figures if not any(within_the_last_place(part, unit, value_ns) for part in f.split(' to '))]
             if not missing:
@@ -1902,6 +1990,80 @@ def verifier_binary():
     return [os.environ.get('CARGO', 'cargo'), 'run', '-q', '-p', 'timewitness-cli', '--bin', 'timewitness', '--']
 
 
+def verifier_fields(full):
+    """Every `name=value` line `timewitness verify --fields` prints for a receipt on disk, by name.
+
+    This exists because a second copy of the product's arithmetic in this file is a second thing to
+    get wrong, and on 2026-09-19 it was wrong. The register holds the figure "2 s" to the bracket of
+    the receipt committed in this tree, and this file worked that bracket out itself, as the gap
+    between the first and last attestation instant. The fix of that morning had already stopped the verifier
+    reading an unstated accuracy as a nought, so the shipped binary answered `none` for that receipt
+    and this file went on answering 2 s and calling the entry carried. The register stayed green over
+    a figure the product refuses to print, and the README and five served surfaces went on quoting
+    it. Anything the verifier decides is asked of the verifier from here on."""
+    key = 'fields ' + str(full)
+    if key in _VERIFIED:
+        return _VERIFIED[key]
+    import subprocess
+    import tempfile
+    raw = full.read_bytes()
+    if full.suffix == '.hex':
+        raw = bytes.fromhex(raw.decode('ascii').strip())
+    with tempfile.NamedTemporaryFile(prefix='tw-fields-', suffix='.cbor', delete=False) as tmp:
+        tmp.write(raw)
+        path = tmp.name
+    try:
+        run = subprocess.run(verifier_binary() + ['verify', path, '--fields'], cwd=ROOT, capture_output=True,
+                             text=True, encoding='utf-8', errors='replace', timeout=600)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise Unreadable(f'timewitness verify --fields could not be run: {e}') from e
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    # A refused receipt prints its fields on the error stream rather than the output one, so both are
+    # read. What a refusal does not print is a bracket, because a refusal's second line is the step
+    # that refused it, and that absence is read as no bracket below rather than as a check that
+    # could not run.
+    out = {}
+    for stream in ((run.stdout or ''), (run.stderr or '')):
+        for line in stream.splitlines():
+            name, sep, value = line.partition('=')
+            if sep and re.fullmatch(r'[a-z0-9_]+', name.strip()):
+                out.setdefault(name.strip(), value.strip())
+    if not out:
+        raise Unreadable(f'timewitness verify --fields printed no fields for {full.name}, exit {run.returncode}')
+    _VERIFIED[key] = out
+    return out
+
+
+def no_such_field(rel, field):
+    """Why a receipt answers nothing at the field a register entry is held to. The bracket gets its
+    own sentence because none is a verdict there and not a gap: the figure has not gone missing, the
+    product has stopped making the claim it was a figure for, and an entry still quoting it is a
+    number on a public surface that nothing stands behind."""
+    if field == 'bracket':
+        return (f'{rel} has no bracket: the verifier answers outside_bracket_ns=none for it, so nothing outside '
+                f'bounds the moment from above and there is no gap for a figure to be. An entry quoting one has '
+                f'outlived the arithmetic that produced it, and so has every sentence that quotes the entry')
+    return f'{rel} has no {field}'
+
+
+def bracket_of(full):
+    """What the checked outside signatures of a receipt leave between them, in nanoseconds, or None
+    where they leave nothing. `none` is an answer and not a missing reading: it is what the verifier
+    prints when a not-later-than witness was checked and its authority stated no accuracy, so the
+    receipt has one edge and no bracket."""
+    fields = verifier_fields(full)
+    span = fields.get('outside_bracket_ns')
+    if span is None:
+        if fields.get('accepted') == 'false':
+            return None
+        raise Unreadable(f'timewitness verify --fields prints no outside_bracket_ns for {full.name}')
+    return None if span == 'none' else int(span)
+
+
 def verify_receipt(full):
     """Run timewitness verify on a committed receipt: (passed, the steps it failed, its output)."""
     key = str(full)
@@ -2019,7 +2181,7 @@ def evidence_resolves(entry, kind, artefact, named, owners, measured, place, our
             return 'not carried', f'{rel} is a receipt and the subject "{entry["of"]}" names no field of one'
         value_ns = fields.get(field)
         if value_ns is None:
-            return 'not carried', f'{rel} has no {field}'
+            return 'not carried', no_such_field(rel, field)
         for part in figures:
             try:
                 wanted = quantity(part, unit)[1]
@@ -2838,6 +3000,20 @@ SEEDS = [
     ('a denial of something else', 'Our agent\'s own bound is the third-party evidence in every receipt and no hardware is required.'),
     ('a denial of something else', 'Never mind the weather, our agent\'s own bound is the third-party evidence in every receipt.'),
     ('a denial of something else', 'It averages the readings but not the outliers.'),
+    # The three that follow were in the honest list until 2026-09-19 and were true when they were
+    # written. The fix of that day stopped an authority's unstated accuracy being read as a nought,
+    # both authorities that ship state none, and the verifier stopped printing a bracket at all. A
+    # seed is the right place for a sentence that has changed sides: it is refused now, and the day
+    # an authority states an accuracy the fact flips and this file says so rather than staying quiet.
+    ('outside signatures bracket the moment', 'The outside signatures pin the moment to a few seconds and do not vouch for the bound.'),
+    ('outside signatures bracket the moment', 'They pin when it was taken to 2 s and do not vouch for the width.'),
+    ('outside signatures bracket the moment', 'The width is our own claim and the outside signatures bracket the moment rather than the width.'),
+    ('outside signatures bracket the moment', 'On this receipt the two outside signatures enclose 2 s, so the moment is pinned from outside even though the width is not.'),
+    ('outside signatures bracket the moment', 'They pin the moment the stamp was taken to a few seconds.'),
+    ('outside signatures bracket the moment', 'The three signatures it carries hold the moment inside a two second bracket.'),
+    ('a shipped authority proves not-later-than', 'DigiCert signed for the payload hash, so the document existed no later than the moment its token states.'),
+    ('a shipped authority proves not-later-than', 'The Sectigo token proves not-later-than for everything this agent stamps.'),
+    ('outside signatures bracket the moment', 'The outside signatures it carries are checked and pin the moment to a few seconds, and nothing issues a receipt whose width rests on them.'),
 ]
 
 # The sentences that replaced them and the sentences the surfaces carry that sit nearest a rule,
@@ -2856,11 +3032,16 @@ HONEST = [
     'Nine public servers disciplined the clock, three of each of the three kinds this product speaks.',
     'SourceKind has four variants, so six kinds cannot exist and a claim of four to six kinds could never be met.',
     'The fourth source kind, local hardware, has no client and needs a receiver this product cannot assume anybody has.',
-    'The outside signatures pin the moment to a few seconds and do not vouch for the bound.',
-    'They pin when it was taken to 2 s and do not vouch for the width.',
     'About one second is still the target and it is a target for something else: a bound resting on third-party evidence rather than on the agent\'s own model, which nothing outside the tests constructs.',
     'The format can express a bound resting on outside signatures and nothing issues a receipt that does.',
-    'The outside signatures it carries are checked and pin the moment to a few seconds, and nothing issues a receipt whose width rests on them.',
+    'The outside signatures say when the reading was taken and do not vouch for the bound.',
+    'A not-later-than signature was checked and its authority states no accuracy of its own, so nothing outside bounds the moment from above.',
+    'On the receipt committed in this repository the outside evidence leaves one edge and not two.',
+    'An independent final witness proves not-later-than: an RFC 3161 timestamp authority, a transparency log, or an anchor into a public chain.',
+    'DigiCert signs for the payload hash before the receipt exists, so a stranger can check that a token over that hash was made.',
+    "A reader who has read an authority's published practice can say what they allow for that authority's clock, in their own anchors, and the figure is then printed as theirs.",
+    'A beacon pins the receipt, not the thing being stamped.',
+    'The outside signatures it carries are checked, and on both timestamp authorities that ship the token states no accuracy of its own, so it bounds nothing in UTC and the receipt is left with one edge rather than two.',
     'The width beside those signatures is the signer\'s own claim, and the verifier says so under its verdict.',
     'No option on the command line and no input to the Action lowers the floor.',
     'It is min_operators in Policy::default, in crates/clock/src/policy.rs, so lowering it means building from a changed source.',
@@ -2899,7 +3080,6 @@ HONEST = [
     'The receipt format refuses an NTS response in an evidence role outright.',
     'Three time source clients exist in this repository, Roughtime, plain NTP and NTS, and only Roughtime signs anything a stranger can check.',
     'The interval is our own claim and the outside evidence does not vouch for it.',
-    'The width is our own claim and the outside signatures bracket the moment rather than the width.',
     'Our own bound is labelled inside the receipt as our claim, never as third-party evidence.',
     'Most stratum-1 servers in the world are disciplined by GPS, and one spoofed constellation moves every operator that trusts it.',
     'A Roughtime corridor, where one is carried and checked, is signed by a key the reader holds, and every other operator name is the signer\'s word.',
@@ -2922,7 +3102,6 @@ HONEST = [
     'That figure and the widths behind it, 26.6 ms at the moment of synchronising and 234.6 ms at fifteen minutes, come from the simulated harness at crates/clock/tests/common/mod.rs, whose whole purpose is that the true offset is a number the test wrote down; they are the arithmetic of the model rather than a reading from a real network.',
     'A public freshness beacon proves not-earlier-than, because the beacon value could not have been known before its round was published.',
     'An independent final witness proves not-later-than: an RFC 3161 timestamp authority, a transparency log, or an anchor into a public chain.',
-    'DigiCert signed for the payload hash, so the document existed no later than the moment its token states.',
     'It cannot prove elapsed time from a verifiable delay function, which proves sequential work.',
     'A delay function shows that sequential work was done, and it says nothing about how many seconds passed.',
     'Roughtime is an Internet-Draft and not an RFC: the IETF datatracker showed revision 19 in the RFC Editor Queue on 17 September 2026.',

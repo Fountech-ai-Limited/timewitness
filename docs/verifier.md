@@ -82,8 +82,9 @@ which entries were checked, against whose key, and what each check established, 
 ## The first two lines
 
 The verdict comes first. It says whether anything refused the receipt and how many of its
-attestations were checked. The line under it says how wide the checked outside evidence brackets the
-moment, which is the latest checked not-earlier-than against the earliest checked not-later-than. On a
+attestations were checked. The line under it says what the checked outside evidence does to the
+moment: how wide it holds it, where the latest checked not-earlier-than and the earliest checked
+not-later-than leave a gap, and that nothing outside holds it from above where they leave none. On a
 receipt resting on its agent's own model it names the width as the signer's own claim, and it says so
 where the receipt carries no Roughtime corridor or carries one nobody checked.
 

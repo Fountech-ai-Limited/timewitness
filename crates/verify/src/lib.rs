@@ -241,11 +241,17 @@ impl Assessment {
     ///
     /// Added 2026-09-15. The verdict line counts the attestations that were checked, and a reader
     /// who stops there takes the width beside it for something the attestations vouched for. They
-    /// vouch for less. On the receipt committed in this repository they bracket the moment to 2 s
-    /// round a width of 153.875 ms, and a receipt backdated three years on genuine evidence passed
-    /// every check with the same first line and a bracket of 2.95 years that nothing printed. So the
+    /// vouch for less. A receipt backdated three years on genuine evidence passed every check with
+    /// the same first line, and nothing printed what its signatures left round the moment. So the
     /// bracket goes directly under the verdict on every route that prints one, and on a receipt
     /// resting on its own model the width is named as the signer's claim in the same breath.
+    ///
+    /// On the receipt committed in this repository the line says that a not-later-than signature was
+    /// checked, that its authority states no accuracy of its own, and that nothing outside bounds the
+    /// moment from above. Until 2026-09-19 it printed a span there, because the absent accuracy was
+    /// read as a stated nought; the numbers that produced and the day they stopped are in
+    /// `docs/verifier.md`, and are not repeated here, because a figure written into a doc comment is
+    /// a figure nothing checks.
     ///
     /// None where the receipt was refused, because a refusal's second line is the step that
     /// refused it.

@@ -8,8 +8,11 @@ again. TimeWitness never asks for the time at stamp time. An agent disciplines t
 continuously against four to six independent sources and keeps a running measure of how wrong that
 clock could be. Through the agent a stamp is then a local read with no network in it, and it says
 three things: the reading, a bound on the error, which is our own claim, and third-party signed
-evidence of when it was taken. That evidence pins the moment to a few seconds and does not vouch for
-the bound. A bound resting on it is what this is being built towards.
+evidence of when it was taken. That evidence is checked and it does not vouch for the bound. On the
+receipt committed here it holds the moment from below and not from above: the beacon says the reading
+was not earlier than its round, and the timestamp authority states no accuracy of its own, so nothing
+here puts a number on how wrong that authority's clock could be. A bound resting on that evidence is
+what this is being built towards.
 
 The claim is bounded time and unbroken order. It is not accurate time.
 
@@ -31,7 +34,7 @@ This repository is early and it says so rather than describing a finished produc
 | Final witness client, not-later-than | built for RFC 3161, proved against two free authorities. No OpenTimestamps anchor |
 | Public verifier | built, as a command line tool and as one HTML page that runs from a local disk with no network. `docs/verifier.md` |
 | GitHub Action | built. One line in a workflow, and the receipt goes into the SLSA provenance and the container image labels that already ship |
-| A bound resting on outside evidence | not built. Every receipt says its bound rests on the agent's own model. The outside signatures it carries are checked and pin the moment to a few seconds, and nothing issues a receipt whose width rests on them. The format can say so and the verifier refuses the claim unless all three roles check out |
+| A bound resting on outside evidence | not built. Every receipt says its bound rests on the agent's own model. The outside signatures it carries are checked, and on both timestamp authorities that ship the token states no accuracy of its own, so it bounds nothing in UTC and the receipt is left with one edge rather than two. Nothing issues a receipt whose width rests on outside signatures. The format can say so, the verifier refuses the claim unless all three roles check out, and a reader who has read an authority's published practice can allow for that authority's clock in their own anchors, which gives the edge back as the reader's own figure and never as the authority's |
 | Order within a chain | not built. A receipt carries a sequence number and a link to the one before it, both signed, and nothing here compares two receipts |
 | A public log of agent keys | not built. A receipt proves whoever signed it held that key and nothing about who that was. A log of our two Roughtime server keys is served at `timewitness.dev/key-log.txt` and names no agent key, and the `v0` release cannot read it |
 

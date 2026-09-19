@@ -620,28 +620,6 @@
    "of": "the whole interval"
   },
   {
-   "figure": "2",
-   "unit": "s",
-   "precision": "1 s",
-   "whose": "ours",
-   "conditions": "the gap the two outside signatures enclose on the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor: a drand round saying not earlier and an RFC 3161 token saying not later. It pins the moment from outside and it is not the width of the bound",
-   "evidence": {
-    "kind": "receipt",
-    "artefact": "crates/verify/tests/data/a-real-stamp/receipt.cbor",
-    "note": "the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor, printed by timewitness verify"
-   },
-   "servedOnSite": true,
-   "of": "the outside signatures gap",
-   "owner": {
-    "machine": "an ordinary desktop",
-    "path": "the one-shot command"
-   },
-   "setup": {
-    "date": "2026-09-09",
-    "rounds": 16
-   }
-  },
-  {
    "figure": "42",
    "unit": "s",
    "precision": "1 s",
