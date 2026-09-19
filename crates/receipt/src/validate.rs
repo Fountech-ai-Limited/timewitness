@@ -103,17 +103,35 @@ pub fn validate_with(receipt: &Receipt, anchors: &TrustAnchors) -> Result<Verifi
 /// honest agent writes, in any of them. So the answer is that such a receipt is not well formed,
 /// which is one rule in one place, and the reader is told which field and what was in it.
 ///
-/// The value is printed with `{:?}`, which escapes what it is refusing, or the refusal would plant
-/// the lines the refusal is about.
+/// The value is printed escaped, or the refusal would plant the lines the refusal is about, and it
+/// is cut to what a person reads, because a receipt may carry sixty kilobytes in one string and a
+/// refusal nobody can read is a refusal that gets skipped.
+///
+/// **What the rule is, said plainly so nobody reads it as more.** It refuses the Unicode control
+/// characters, which is every ASCII control and every C1 one, and that is what breaks a line in a
+/// report, in a shell variable and in anything reading a value as a C string. It does not refuse
+/// U+2028 and U+2029, which are separators rather than controls and which some readers treat as
+/// line breaks. Nothing in this product puts a receipt's strings anywhere those two would split a
+/// line: the fields report is read by `sed`, and neither verifier page writes a string into HTML.
+/// The day one of them does, this is the rule to widen.
 ///
 /// This does not stand alone and it was never meant to. `render::fields` holds every value it
 /// prints to one line as well, because a receipt refused here still reaches that report through the
 /// refusal path.
 fn check_strings(receipt: &Receipt) -> Result<(), ReceiptError> {
+    /// How much of the offending string the refusal shows.
+    const SHOWN: usize = 120;
+
     for (at, value) in receipt.strings() {
         if let Some(bad) = value.chars().find(|c| c.is_control()) {
+            let short: String = value.chars().take(SHOWN).collect();
+            let cut = if short.chars().count() < value.chars().count() {
+                format!("{short:?} and more")
+            } else {
+                format!("{short:?}")
+            };
             return Err(ReceiptError::Field(format!(
-                "{at} is {value:?}, which carries the control character {bad:?}. Nothing an agent \
+                "{at} is {cut}, which carries the control character {bad:?}. Nothing an agent \
                  names carries one, and a report is written a line at a time, so a receipt that \
                  could write its own lines into one is refused rather than read"
             )));
