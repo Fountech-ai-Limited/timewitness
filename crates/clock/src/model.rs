@@ -1287,13 +1287,22 @@ impl CounterAgeing {
         // A fit that cannot separate one rate in the band from another has measured nothing about
         // this counter. Its error bar is not knowledge and is not carried.
         if !separates_the_band(measured, &self.policy) {
-            return half;
+            return half.max(floor);
         }
         // Inside the band the assumption holds and caps the sum. A magnitude past half the band,
         // claimed or unclaimed, is the machine saying the band is wrong about it, and the sum is
         // carried whole.
+        //
+        // **The cap never takes the answer below the policy's own floor**, and the `max` is why.
+        // `Policy::fault` refuses a floor past half the band from 2026-09-19, so on a policy the
+        // validator has passed these two lines change nothing: `everything` is already at least the
+        // floor and the cap is at least the floor too. It is here because `Policy` is a public
+        // struct with public fields in a published library crate, so a caller reaches this
+        // arithmetic without the validator having run, and a guard that only holds where another
+        // guard ran is the class this product keeps catching. Measured on a floor of 1000.0 beside
+        // a band of 100.0, which answered 50.000 ppm at every age.
         if claimed + unclaimed <= half {
-            everything.min(half)
+            everything.min(half).max(floor)
         } else {
             everything
         }

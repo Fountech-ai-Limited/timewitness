@@ -368,6 +368,27 @@ impl Policy {
                 ));
             }
         }
+        // The two rates above have to agree with each other, and nothing asked that until
+        // 2026-09-19. The floor says how far the rate could be out at the least; the band says the
+        // rate's magnitude never passes half of it. A floor past half the band is a policy saying
+        // both at once, and it is not a policy allowing for worse hardware, it is one that cannot
+        // be honoured: `CounterAgeing::ppm` caps the widening at half the band, so on such a policy
+        // the arithmetic answers less than the policy's own minimum. Measured 2026-09-19 on a floor
+        // of 1000.0 beside a band of 100.0, which this function answered clean: 50.000 ppm at every
+        // age where the floor demands 1000, and 15 ms of dispersion at 300 s of age against the
+        // 300 ms the floor states. Twenty times narrower than the policy's own minimum, and the
+        // sentence above says a policy may allow for worse and never for better.
+        let half_the_band = self.frequency_span_ppm / 2.0;
+        if self.frequency_floor_ppm > half_the_band {
+            return Some(format!(
+                "frequency_floor_ppm is {} and frequency_span_ppm is {}, so the floor is past half \
+                 the band. The floor says the rate could be out by at least that much and the band \
+                 says its magnitude never passes half the band, and a policy cannot state both. \
+                 The widening is capped at half the band, so this policy would be answered \
+                 narrower than its own floor",
+                self.frequency_floor_ppm, self.frequency_span_ppm
+            ));
+        }
         let allowances = [
             ("holdover_allowance", self.holdover_allowance),
             ("safety_margin", self.safety_margin),

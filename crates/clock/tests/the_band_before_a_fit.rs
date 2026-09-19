@@ -66,14 +66,37 @@ fn legal_policies() -> Vec<Policy> {
                                 max_holdover: holdover,
                                 ..d()
                             };
-                            assert_eq!(policy.fault(), None, "{policy:?} is meant to be legal");
-                            out.push(policy);
+                            // A floor past half the band has been refused since 2026-09-19: the
+                            // floor says the rate could be out by at least that much and the band
+                            // says its magnitude never passes half the band, so a policy saying
+                            // both cannot be honoured. This sweep crosses every rate with every
+                            // other, so it builds those combinations, and what it must not do is
+                            // quietly drop a policy for some other reason. So the refusal is
+                            // matched rather than skipped.
+                            match policy.fault() {
+                                None => out.push(policy),
+                                Some(why) => assert!(
+                                    why.contains("past half the band"),
+                                    "{policy:?} is refused for something other than the floor \
+                                     passing half the band: {why}"
+                                ),
+                            }
                         }
                     }
                 }
             }
         }
     }
+    // The sweep is worth nothing if the refusal above has swallowed most of it, and a count that
+    // only ever goes down is the way that happens without anybody noticing. Three of the nine
+    // floor and band pairs are refused, the three whose floor is the widest rate, so six ninths of
+    // 972 stand. The number is written out rather than computed, because computing it from the
+    // same lists that built it would agree with anything.
+    assert_eq!(
+        out.len(),
+        648,
+        "the sweep is meant to cross six of its nine floor and band pairs over everything else"
+    );
     out
 }
 
@@ -116,8 +139,12 @@ fn before_a_fit_the_allowance_is_at_least_half_the_band_over_every_elapsed_on_ev
             cells += 1;
         }
     }
+    // 24624 from 2026-09-19, where it was 36936 before. Three of the nine floor and band pairs are
+    // now refused by `Policy::fault`, so two thirds of the policies stand and the ladder over each
+    // is unchanged. The floor is written out rather than computed, because a count computed from
+    // the lists that built it agrees with anything.
     assert!(
-        cells > 30_000,
+        cells >= 24_624,
         "{cells} cells is not the grid this file describes"
     );
 }

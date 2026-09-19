@@ -854,3 +854,97 @@ fn c17_a_bad_policy_refuses_every_method_and_the_callers_copy_reaches_nothing() 
     assert_eq!(model.policy().safety_margin, shipped().safety_margin);
     assert_eq!(callers.safety_margin, i128::MIN);
 }
+
+/// D1: a frequency floor past half the band, which the validator passed and the cap answered under.
+///
+/// The ninth attack, added 2026-09-19. The floor says how far the rate could be out at the least
+/// and the band says the rate's magnitude never passes half of it, so a floor past half the band
+/// states both at once. `Policy::fault` held each rate against its own shipped figure and asked
+/// nothing about the two together, so a floor of 1000.0 beside a band of 100.0 read clean, and
+/// `CounterAgeing::ppm` then capped the widening at half the band and answered 50.000 ppm at every
+/// age where the floor demands 1000. At 300 s of age that is 15 ms of dispersion against the 300 ms
+/// the floor states, twenty times narrower than the policy's own minimum, which is the one thing
+/// the validator's own sentence forbids: a policy may allow for worse and never for better.
+#[test]
+fn d1_a_frequency_floor_past_half_the_band() {
+    refused_or_no_narrower(
+        "d1",
+        Policy {
+            frequency_floor_ppm: 1_000.0,
+            frequency_span_ppm: 100.0,
+            ..shipped()
+        },
+    );
+}
+
+/// The same policy, asked of the validator directly, because the width test alone would pass on a
+/// cap that happened to be wide enough on this fixture.
+#[test]
+fn d1_the_validator_says_why_a_floor_past_half_the_band_is_refused() {
+    let fault = Policy {
+        frequency_floor_ppm: 1_000.0,
+        frequency_span_ppm: 100.0,
+        ..shipped()
+    }
+    .fault()
+    .expect("a floor past half the band is a fault");
+    assert!(
+        fault.contains("past half \nthe band") || fault.contains("past half the band"),
+        "{fault}"
+    );
+    assert!(fault.contains("1000"), "{fault}");
+    assert!(fault.contains("100"), "{fault}");
+
+    // A floor exactly at half the band is the edge and is allowed: the two agree there rather than
+    // contradicting each other.
+    assert_eq!(
+        Policy {
+            frequency_floor_ppm: 50.0,
+            frequency_span_ppm: 100.0,
+            ..shipped()
+        }
+        .fault(),
+        None
+    );
+    // And the shipped figures are well inside it, which is what makes this a guard on a caller
+    // rather than a change to what ships.
+    assert_eq!(shipped().fault(), None);
+}
+
+/// D2: the widening is never below the policy's own floor, whatever the band says.
+///
+/// The other half of D1, and it is asked of the arithmetic rather than of the validator, because
+/// `Policy` is a public struct with public fields in a published library crate and a caller reaches
+/// `CounterAgeing` without the validator having run. A guard that only holds where another guard
+/// ran is not a guard.
+#[test]
+fn d2_the_widening_is_never_below_the_policys_own_floor() {
+    use timewitness_clock::model::CounterAgeing;
+
+    for (floor, band) in [
+        (1_000.0_f64, 100.0_f64),
+        (500.0, 100.0),
+        (15.0, 100.0),
+        (15.0, 30.0),
+    ] {
+        let policy = Policy {
+            frequency_floor_ppm: floor,
+            frequency_span_ppm: band,
+            ..shipped()
+        };
+        let ageing = CounterAgeing::before_a_fit(&policy);
+        for age in [
+            0_i128,
+            NANOS_PER_SEC,
+            60 * NANOS_PER_SEC,
+            300 * NANOS_PER_SEC,
+        ] {
+            let ppm = ageing.ppm(age);
+            assert!(
+                ppm >= floor,
+                "a floor of {floor} ppm beside a band of {band} ppm widened at {ppm} ppm at an age \
+                 of {age} ns, which is under the policy's own minimum"
+            );
+        }
+    }
+}
