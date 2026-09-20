@@ -965,3 +965,168 @@ fn a_source_the_issuer_runs_itself_is_not_one_of_the_operators_behind_the_bound(
     sign_and_open(&issuer_runs_them(false))
         .expect("three sources run by three other parties is three operators");
 }
+
+/// A timescale this format cannot read is refused, and so is a smear policy.
+///
+/// Both fields were carried on every source and read by nothing until 2026-09-20. A receipt whose
+/// sources stated a timescale of `tai+37`, one stating a smear of `linear/86400`, one stating a
+/// pending leap second and one whose timescale was a string nobody has ever defined all passed with
+/// exit nought, and no line of the report mentioned either field.
+///
+/// The direction is the one the leap allow-list settled: name the values that permit, so a string
+/// this format has never seen refuses rather than being read as whatever is convenient.
+#[test]
+fn a_timescale_or_a_smear_this_format_cannot_read_is_refused() {
+    for stated in [
+        "tai",
+        "tai+",
+        "tai+thirty-seven",
+        "tai+37.5",
+        "tai+-99999999999999999999",
+        "TAI+37",
+        "UTC",
+        "utc ",
+        "",
+        "gps",
+    ] {
+        let mut r = receipt();
+        r.claim.sources = vec![
+            SourceRecord {
+                timescale: stated.to_string(),
+                ..record("a-1", "a.example", false)
+            },
+            record("b-1", "b.example", true),
+            record("c-1", "c.example", true),
+            record("d-1", "d.example", true),
+        ];
+        r.claim.sources_offered = 4;
+        r.claim.sources_kept = 3;
+
+        let refusal = sign_and_open(&r)
+            .expect_err("a timescale nothing here can read is not a timescale to measure against");
+        assert!(
+            matches!(refusal, ReceiptError::Field(_)),
+            "on {stated:?} got {refusal}"
+        );
+        assert!(
+            refusal.to_string().contains("answers on"),
+            "on {stated:?} got {refusal}"
+        );
+    }
+
+    for stated in [
+        "linear",
+        "linear/",
+        "linear/a-day",
+        "Linear/86400",
+        "NONE",
+        "none ",
+        "",
+        "smeared",
+    ] {
+        let mut r = receipt();
+        r.claim.sources = vec![
+            SourceRecord {
+                smear: stated.to_string(),
+                ..record("a-1", "a.example", false)
+            },
+            record("b-1", "b.example", true),
+            record("c-1", "c.example", true),
+            record("d-1", "d.example", true),
+        ];
+        r.claim.sources_offered = 4;
+        r.claim.sources_kept = 3;
+
+        let refusal = sign_and_open(&r)
+            .expect_err("a smear policy nothing here can read says nothing about UTC");
+        assert!(
+            matches!(refusal, ReceiptError::Field(_)),
+            "on {stated:?} got {refusal}"
+        );
+        assert!(
+            refusal.to_string().contains("smears a leap second"),
+            "on {stated:?} got {refusal}"
+        );
+    }
+}
+
+/// The shapes it does read still read, so the allow-list is a list and not a wall.
+///
+/// A rule that refuses everything is as wrong as one that permits everything, and only running both
+/// says which this is. A source off UTC is allowed to be in the list; what it may not be is kept,
+/// which the test below is about.
+#[test]
+fn the_timescales_and_smears_this_format_knows_are_read() {
+    for timescale in ["utc", "unknown", "tai+37", "tai+0", "tai+-1"] {
+        for smear in ["none", "unknown", "linear/86400", "linear/0"] {
+            let mut r = receipt();
+            r.claim.sources = vec![
+                SourceRecord {
+                    timescale: timescale.to_string(),
+                    smear: smear.to_string(),
+                    ..record("a-1", "a.example", false)
+                },
+                record("b-1", "b.example", true),
+                record("c-1", "c.example", true),
+                record("d-1", "d.example", true),
+            ];
+            r.claim.sources_offered = 4;
+            r.claim.sources_kept = 3;
+            sign_and_open(&r).unwrap_or_else(|e| {
+                panic!("{timescale} with a smear of {smear} is a shape this format reads, got {e}")
+            });
+        }
+    }
+}
+
+/// A source the selection kept had to have answered on UTC.
+///
+/// The conversion from anything else is the agent's, made with the offset the source itself stated,
+/// and nothing in a receipt lets a reader check it happened. On TAI that is thirty-seven seconds
+/// between what a receipt claims and what its sources said, which is the one thing a receipt exists
+/// to take out of the signer's hands. Every shipped source client speaks UTC, so this refuses
+/// nothing this product writes.
+#[test]
+fn a_source_the_bound_rests_on_had_to_have_answered_on_utc() {
+    for timescale in ["tai+37", "tai+0", "unknown"] {
+        let mut r = receipt();
+        r.claim.sources = vec![
+            SourceRecord {
+                timescale: timescale.to_string(),
+                ..record("a-1", "a.example", true)
+            },
+            record("b-1", "b.example", true),
+            record("c-1", "c.example", true),
+        ];
+        r.claim.sources_offered = 3;
+        r.claim.sources_kept = 3;
+
+        let refusal = sign_and_open(&r)
+            .expect_err("a bound resting on a conversion nobody can check is not a bound");
+        assert!(
+            matches!(refusal, ReceiptError::Inconsistent(_)),
+            "on {timescale:?} got {refusal}"
+        );
+        assert!(
+            refusal.to_string().contains("rather than UTC"),
+            "on {timescale:?} got {refusal}"
+        );
+    }
+
+    // The same source, not kept, holds up. So the refusal above is about the bound resting on it
+    // and not about the value being in the list at all.
+    let mut r = receipt();
+    r.claim.sources = vec![
+        SourceRecord {
+            timescale: "tai+37".to_string(),
+            ..record("a-1", "a.example", false)
+        },
+        record("b-1", "b.example", true),
+        record("c-1", "c.example", true),
+        record("d-1", "d.example", true),
+    ];
+    r.claim.sources_offered = 4;
+    r.claim.sources_kept = 3;
+    sign_and_open(&r)
+        .expect("a source on TAI that the selection dropped is a fact about the round");
+}

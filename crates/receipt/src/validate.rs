@@ -322,6 +322,36 @@ fn check_sources(receipt: &Receipt) -> Result<(), ReceiptError> {
             LEAP_VALUES.join(", ")
         )));
     }
+    // The same two doors for the other two things a source says about what it was speaking. Both
+    // were carried on every source and read by nothing until 2026-09-20: a receipt whose sources
+    // stated a timescale of `tai+37`, a smear of `linear/86400` and a timescale nobody has ever
+    // defined all passed, and no line of the report mentioned either field. A field a receipt
+    // carries and nothing reads is a field that can say anything.
+    if let Some(s) = c.unreadable_timescale() {
+        return Err(ReceiptError::Field(format!(
+            "source {} says it answers on {:?} and this format reads utc, unknown and \
+             tai+seconds, so nothing here can tell what its answers were measured against",
+            s.id, s.timescale
+        )));
+    }
+    if let Some(s) = c.unreadable_smear() {
+        return Err(ReceiptError::Field(format!(
+            "source {} says it smears a leap second as {:?} and this format reads none, unknown \
+             and linear/seconds, so nothing here can tell how far off UTC it may be",
+            s.id, s.smear
+        )));
+    }
+    // And a source the selection kept has to have answered on UTC, because the conversion from
+    // anything else is the agent's and no reader can check it. On TAI that is thirty-seven seconds
+    // between what the receipt claims and what its sources said. Every shipped source client speaks
+    // UTC, so this refuses nothing this product writes.
+    if let Some(s) = c.kept_off_utc() {
+        return Err(ReceiptError::Inconsistent(format!(
+            "source {} answered on {:?} rather than UTC and the receipt marks it as kept, so the \
+             bound rests on a conversion the agent made and nobody else can check",
+            s.id, s.timescale
+        )));
+    }
     // A source cannot be kept and also have told the agent its own clock was wrong. The agent drops
     // such a source before the intersection is taken, so a receipt marking one as kept describes a
     // round the shipped code cannot have run.

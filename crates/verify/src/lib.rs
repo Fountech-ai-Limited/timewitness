@@ -35,9 +35,10 @@ pub mod order;
 use timewitness_core::keylog::file::{HeadCheck, KeyLog};
 use timewitness_core::keylog::{check_consistency, consistency_proof, KeyEntry, Standing};
 use timewitness_core::time::{Nanos, NANOS_PER_MICRO, NANOS_PER_MILLI, NANOS_PER_SEC};
+use timewitness_core::{SmearPolicy, Timescale};
 use timewitness_receipt::anchors::TrustAnchors;
 use timewitness_receipt::report::Verified;
-use timewitness_receipt::schema::Role;
+use timewitness_receipt::schema::{reads_smear, reads_timescale, Role, SourceRecord};
 use timewitness_receipt::{chain_link, open_with, sha256_payload, Receipt, ReceiptError};
 
 pub use floor::Floor;
@@ -482,6 +483,7 @@ fn assess(
          of the sources that answered were kept, and the agent kept to the policy it states",
     ));
 
+    steps.push(what_the_sources_spoke(&receipt));
     steps.push(check_floor(&receipt, floor));
     steps.push(check_subject(&receipt, subject));
     steps.push(check_order(&receipt));
@@ -777,6 +779,92 @@ fn describe_difference(old: &KeyEntry, new: &KeyEntry) -> String {
 }
 
 /// The verifier's own floor, applied to the numbers rather than to what the receipt says about them.
+/// `what did each source say it was speaking`, which is the one thing in a receipt nobody read.
+///
+/// Every source carries the timescale it answered on and what it does with a leap second, and until
+/// 2026-09-20 no reader anywhere touched either. The agent reads the timescale, in
+/// `Sample::from_exchange`, where a source on TAI is converted to UTC using the offset it stated. A
+/// reader checking a receipt a stranger handed them was trusting the signer to have done that and
+/// had no way to see it, and on TAI the difference is thirty-seven seconds.
+///
+/// The refusals sit in `validate`, which is where a value nothing can read belongs, and which also
+/// refuses a kept source that answered on anything but UTC. So by the time a receipt reaches here
+/// every value is one this format knows and every source the bound rests on spoke UTC. What is left
+/// is to say so, because a reader who is told nothing cannot tell a receipt whose sources all spoke
+/// UTC from a receipt nobody looked at.
+///
+/// It never fails. A source off UTC that the selection dropped is a fact about the round rather
+/// than a fault in the receipt, and a source that smears is a source whose answers may be up to a
+/// second from UTC inside its own window, which the reading's own width already has to cover. Both
+/// are named rather than graded.
+fn what_the_sources_spoke(receipt: &Receipt) -> Step {
+    let question = "what did each source say it was speaking";
+    let sources = &receipt.claim.sources;
+
+    let mut said: Vec<String> = Vec::new();
+    for source in sources.iter().filter(|s| worth_saying(s)) {
+        let mut about: Vec<String> = Vec::new();
+        if !matches!(reads_timescale(&source.timescale), Some(Timescale::Utc)) {
+            about.push(format!("answered on {}", source.timescale));
+        }
+        if let Some(SmearPolicy::Linear { window_seconds }) = reads_smear(&source.smear) {
+            about.push(format!(
+                "spreads a leap second over {window_seconds} seconds rather than stepping"
+            ));
+        }
+        said.push(format!(
+            "{} {}{}",
+            source.id,
+            about.join(" and "),
+            if source.kept {
+                ""
+            } else {
+                ", and was not kept"
+            }
+        ));
+    }
+
+    if said.is_empty() {
+        return Step::held(
+            question,
+            format!(
+                "all {} of them answered on UTC, and none said it spreads a leap second out, so \
+                 nothing was converted on the way into this receipt",
+                sources.len()
+            ),
+        );
+    }
+
+    Step::held(
+        question,
+        format!(
+            "{} of {} said something other than plain UTC: {}. A source on another timescale was \
+             converted by the agent using the offset that source itself stated, which is the \
+             agent's arithmetic rather than anything this reader can check, and no source this \
+             bound rests on is one of them. A source spreading a leap second out may be up to a \
+             second from UTC inside its own window",
+            said.len(),
+            sources.len(),
+            said.join("; ")
+        ),
+    )
+}
+
+/// Whether what this source said about its own timescale is worth putting in front of a reader.
+///
+/// Two things are: a timescale that is not UTC, including one the source would not name, and a
+/// source that says it spreads a leap second out rather than stepping. Both move a source's answers
+/// away from the UTC the receipt claims.
+///
+/// A smear of `unknown` is not one of them, and that matters because it is the ordinary case: every
+/// shipped source client sets it, since NTP, NTS and Roughtime have no field in which a server says
+/// what it does with a leap second. Reporting it would put a line in front of every reader of every
+/// receipt, which is how a step that says something becomes a step nobody reads.
+fn worth_saying(source: &SourceRecord) -> bool {
+    !matches!(reads_timescale(&source.timescale), Some(Timescale::Utc))
+        || matches!(reads_smear(&source.smear), Some(SmearPolicy::Linear { .. }))
+}
+
 fn check_floor(receipt: &Receipt, floor: &Floor) -> Step {
     let question = "does the bound clear this reader's own floor";
     let width = receipt.width();
