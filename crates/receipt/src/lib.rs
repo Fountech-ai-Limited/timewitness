@@ -29,7 +29,7 @@ pub mod validate;
 pub mod value;
 
 pub use anchors::{RoughtimeServerKey, TrustAnchors};
-pub use cose::{open, open_with, AgentKey};
+pub use cose::{check_signature, envelope_parts, open, open_with, AgentKey, Envelope};
 pub use error::ReceiptError;
 pub use report::{Bracket, EntryReport, Outcome, Verified};
 pub use schema::{

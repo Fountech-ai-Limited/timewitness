@@ -54,6 +54,9 @@ use timewitness_receipt::cbor;
 use timewitness_receipt::Value;
 
 pub mod base64url;
+pub mod signed;
+
+pub use signed::Signed;
 
 /// The prefix every wire value carries, version and all.
 pub const PREFIX: &str = "tw1.";
@@ -202,6 +205,14 @@ pub enum Refusal {
     },
     /// A key on the wire is not text, and every field this form names is.
     KeyIsNotText,
+    /// It is not a signed exchange at all: the envelope is the wrong shape, or names another
+    /// algorithm.
+    ///
+    /// An unsigned body is refused here rather than read. A claim about somebody's clock that
+    /// nobody signed is a claim anybody on the path could have written.
+    NotSigned,
+    /// The signature does not match the body, or it was made by a different key.
+    SignatureDoesNotMatch,
     /// The values decode but say something that cannot be true.
     Incoherent {
         /// What is wrong with it, in words a person reads once.
@@ -236,6 +247,11 @@ impl core::fmt::Display for Refusal {
             Refusal::KeyIsNotText => {
                 write!(f, "a key on the wire is not text and every field here is")
             }
+            Refusal::NotSigned => write!(f, "it is not a signed exchange"),
+            Refusal::SignatureDoesNotMatch => write!(
+                f,
+                "the signature does not match the exchange, so either it was altered after it was                  signed or it was signed by a different key"
+            ),
             Refusal::Incoherent { detail } => write!(f, "{detail}"),
         }
     }
@@ -265,48 +281,12 @@ impl Exchange {
         cbor::encode(&Value::map(pairs))
     }
 
-    /// The whole header value, prefix and all.
-    #[must_use]
-    pub fn to_wire(&self) -> String {
-        let mut out = String::from(PREFIX);
-        out.push_str(&base64url::encode(&self.to_cbor()));
-        out
-    }
-
     /// The hash a response names its request by.
     #[must_use]
     pub fn body_hash(&self) -> Digest32 {
         let mut hasher = Sha256::new();
         hasher.update(self.to_cbor());
         hasher.finalize().into()
-    }
-
-    /// Read a header value back, or say why it was not read.
-    ///
-    /// # Errors
-    ///
-    /// Every failure is a [`Refusal`], and every refusal means the same thing to a receiver: no
-    /// exchange happened, carry on with the request.
-    pub fn from_wire(value: &str) -> Result<Self, Refusal> {
-        if value.chars().count() > MAX_WIRE_CHARS {
-            return Err(Refusal::TooLong {
-                chars: value.chars().count(),
-            });
-        }
-        let Some(rest) = value.strip_prefix(PREFIX) else {
-            return Err(Refusal::NotThisVersion {
-                found: value.chars().take(16).collect(),
-            });
-        };
-        let bytes = base64url::decode(rest).ok_or(Refusal::NotBase64)?;
-        let decoded = cbor::decode(&bytes).map_err(|_| Refusal::NotDeterministicCbor)?;
-        // The decoder is already strict, and this is the second half of the same rule the receipt
-        // format applies: re-encode what came back and require the same bytes, so a spelling nobody
-        // has thought of cannot get through by being accepted and then re-emitted differently.
-        if cbor::encode(&decoded) != bytes {
-            return Err(Refusal::NotDeterministicCbor);
-        }
-        Self::from_value(&decoded)
     }
 
     /// Read a decoded CBOR value as an exchange.

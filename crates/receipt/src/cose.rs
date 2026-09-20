@@ -95,6 +95,111 @@ impl AgentKey {
     }
 }
 
+/// A `COSE_Sign1` taken apart: the protected header, the payload, the signature, and the
+/// unprotected header as the value it decoded to.
+pub type Envelope = (Vec<u8>, Vec<u8>, Vec<u8>, Value);
+
+/// The three parts of a `COSE_Sign1` this product signs, with the algorithm already checked.
+///
+/// The protected header, the payload and the signature, in that order; the unprotected header is
+/// returned beside them as the value it decoded to, because a caller that cares what is in it has to
+/// hold it to its own rule and nothing here can do that for every caller.
+///
+/// Public because the countersign wire form signs its own body with the same envelope, and one copy
+/// of the arithmetic is the point: two readers of one format is two chances to disagree about what
+/// was signed.
+///
+/// # Errors
+///
+/// A [`ReceiptError::Signature`] where the bytes are not a `COSE_Sign1` of this shape, or where the
+/// protected header names an algorithm other than Ed25519.
+pub fn envelope_parts(bytes: &[u8]) -> Result<Envelope, ReceiptError> {
+    let envelope = cbor::decode(bytes)?;
+    let parts = envelope
+        .as_array()
+        .ok_or_else(|| ReceiptError::Signature("a signed value is a list of four things".into()))?;
+    if parts.len() != 4 {
+        return Err(ReceiptError::Signature(format!(
+            "a signed value has four parts and this one has {}",
+            parts.len()
+        )));
+    }
+
+    let protected = parts[0].as_bytes().ok_or_else(|| {
+        ReceiptError::Signature("the protected header is not a byte string".into())
+    })?;
+    let payload = parts[2]
+        .as_bytes()
+        .ok_or_else(|| ReceiptError::Signature("the payload is not a byte string".into()))?;
+    let signature = parts[3]
+        .as_bytes()
+        .ok_or_else(|| ReceiptError::Signature("the signature is not a byte string".into()))?;
+
+    // The protected header is itself deterministic CBOR and is checked as such, because it is part
+    // of what was signed.
+    let header = cbor::decode(protected)?;
+    let alg = header
+        .as_map_get(HEADER_ALG)
+        .and_then(|v| v.as_int())
+        .ok_or_else(|| ReceiptError::Signature("the protected header names no algorithm".into()))?;
+    if alg != ALG_EDDSA {
+        return Err(ReceiptError::Signature(format!(
+            "this is signed with COSE algorithm {alg} and this code checks Ed25519, which is minus \
+             eight"
+        )));
+    }
+
+    Ok((
+        protected.to_vec(),
+        payload.to_vec(),
+        signature.to_vec(),
+        parts[1].clone(),
+    ))
+}
+
+/// Check a signature over the `Sig_structure` the protected header and payload make.
+///
+/// The key is the caller's to find, and it comes from inside the payload rather than from the
+/// unprotected header, which is outside the signature and anybody's to rewrite.
+///
+/// # Errors
+///
+/// A [`ReceiptError::Signature`] where the key or the signature is not the right length or shape, or
+/// where the signature does not match.
+pub fn check_signature(
+    protected: &[u8],
+    payload: &[u8],
+    signature: &[u8],
+    key: &[u8],
+    key_owner: &str,
+    signed_thing: &str,
+) -> Result<(), ReceiptError> {
+    let key_bytes: [u8; 32] = key.try_into().map_err(|_| {
+        ReceiptError::Signature(format!("the {key_owner} public key is not 32 bytes"))
+    })?;
+    let verifying = VerifyingKey::from_bytes(&key_bytes).map_err(|e| {
+        ReceiptError::Signature(format!("the {key_owner} public key is not usable: {e}"))
+    })?;
+
+    let signature_bytes: [u8; 64] = signature
+        .try_into()
+        .map_err(|_| ReceiptError::Signature("an Ed25519 signature is 64 bytes".into()))?;
+    let signature = Signature::from_bytes(&signature_bytes);
+
+    // `verify_strict` rather than `verify`. The two differ on public keys and signature commitments
+    // with a small order component, which no honest signer produces and which give one signed
+    // message more than one valid signature. A format whose chain link is the hash of a file cannot
+    // afford a second valid spelling anywhere in it.
+    verifying
+        .verify_strict(&sig_structure(protected, payload), &signature)
+        .map_err(|_| {
+            ReceiptError::Signature(format!(
+                "the signature does not match the {signed_thing}, so either the {signed_thing} was \
+                 altered after it was signed or it was signed by a different key"
+            ))
+        })
+}
+
 /// What actually gets signed, per RFC 9052.
 fn sig_structure(protected: &[u8], payload: &[u8]) -> Vec<u8> {
     cbor::encode(&Value::Array(vec![
@@ -145,73 +250,22 @@ fn read_and_check_signature(bytes: &[u8]) -> Result<Receipt, ReceiptError> {
         )));
     }
 
-    let envelope = cbor::decode(bytes)?;
-    let parts = envelope.as_array().ok_or_else(|| {
-        ReceiptError::Signature("a signed receipt is a list of four things".into())
-    })?;
-    if parts.len() != 4 {
-        return Err(ReceiptError::Signature(format!(
-            "a signed receipt has four parts and this one has {}",
-            parts.len()
-        )));
-    }
+    let (protected, payload, signature, unprotected) = envelope_parts(bytes)?;
 
-    let protected = parts[0].as_bytes().ok_or_else(|| {
-        ReceiptError::Signature("the protected header is not a byte string".into())
-    })?;
-    let payload = parts[2]
-        .as_bytes()
-        .ok_or_else(|| ReceiptError::Signature("the payload is not a byte string".into()))?;
-    let signature_bytes = parts[3]
-        .as_bytes()
-        .ok_or_else(|| ReceiptError::Signature("the signature is not a byte string".into()))?;
-
-    // The protected header is itself deterministic CBOR and is checked as such, because it is part
-    // of what was signed.
-    let header = cbor::decode(protected)?;
-    let alg = header
-        .as_map_get(HEADER_ALG)
-        .and_then(|v| v.as_int())
-        .ok_or_else(|| ReceiptError::Signature("the protected header names no algorithm".into()))?;
-    if alg != ALG_EDDSA {
-        return Err(ReceiptError::Signature(format!(
-            "this receipt is signed with COSE algorithm {alg} and this code checks Ed25519, which \
-             is minus eight"
-        )));
-    }
-
-    let value = cbor::decode(payload)?;
+    let value = cbor::decode(&payload)?;
     validate::validate_shape(&value)?;
     let receipt = Receipt::from_value(&value)?;
 
-    let key_bytes: [u8; 32] =
-        receipt.agent_public_key.clone().try_into().map_err(|_| {
-            ReceiptError::Signature("the agent's public key is not 32 bytes".into())
-        })?;
-    let verifying = VerifyingKey::from_bytes(&key_bytes).map_err(|e| {
-        ReceiptError::Signature(format!("the agent's public key is not usable: {e}"))
-    })?;
+    check_signature(
+        &protected,
+        &payload,
+        &signature,
+        &receipt.agent_public_key,
+        "agent's",
+        "receipt",
+    )?;
 
-    let signature_bytes: [u8; 64] = signature_bytes
-        .try_into()
-        .map_err(|_| ReceiptError::Signature("an Ed25519 signature is 64 bytes".into()))?;
-    let signature = Signature::from_bytes(&signature_bytes);
-
-    // `verify_strict` rather than `verify`. The two differ on public keys and signature commitments
-    // with a small order component, which no honest agent produces and which give one signed message
-    // more than one valid signature. A format whose chain link is the hash of a file cannot afford a
-    // second valid spelling anywhere in it.
-    verifying
-        .verify_strict(&sig_structure(protected, payload), &signature)
-        .map_err(|_| {
-            ReceiptError::Signature(
-                "the signature does not match the receipt, so either the receipt was altered after \
-                 it was signed or it was signed by a different key"
-                    .to_string(),
-            )
-        })?;
-
-    check_unprotected_header(&parts[1], &receipt)?;
+    check_unprotected_header(&unprotected, &receipt)?;
 
     Ok(receipt)
 }
