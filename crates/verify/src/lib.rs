@@ -30,6 +30,7 @@
 pub mod anchor_file;
 pub mod cannot_prove;
 pub mod floor;
+pub mod order;
 
 use timewitness_core::keylog::file::{HeadCheck, KeyLog};
 use timewitness_core::keylog::{check_consistency, consistency_proof, KeyEntry, Standing};
@@ -40,6 +41,7 @@ use timewitness_receipt::schema::Role;
 use timewitness_receipt::{chain_link, open_with, sha256_payload, Receipt, ReceiptError};
 
 pub use floor::Floor;
+pub use order::{order_of_receipts, Link, PairReading, Verdict, Which};
 
 /// What the reader supplied as the thing the receipt is supposed to be about.
 #[derive(Clone, Copy, Debug)]
