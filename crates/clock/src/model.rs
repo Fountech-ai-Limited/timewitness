@@ -140,6 +140,10 @@ struct Candidate {
     sent_at: MonotonicNanos,
     taken_at: MonotonicNanos,
     interval: OffsetInterval,
+    /// The half width the source's own answer supports, before the model's ageing of it. It is
+    /// what the weighting is taken on; the interval above carries the ageing too and is what
+    /// Marzullo intersects. See `combine`.
+    own_half: Nanos,
     network_half: Nanos,
     timescale: Timescale,
     smear: SmearPolicy,
@@ -494,10 +498,15 @@ impl ClockModel {
         }
 
         let survivors: Vec<OffsetInterval> = kept.iter().map(|i| intervals[*i]).collect();
+        // Each survivor's own half width, in the same order, because the weighting is taken on what
+        // the sources said about themselves and not on the ageing term they all share.
+        let own_halves: Vec<Nanos> = kept.iter().map(|i| candidates[*i].own_half).collect();
         // The floor below which a source may not claim authority, which is its own number and not
         // the allowance for reading the local counter. See `Policy::weight_floor`.
         let width_floor = self.policy.weight_floor;
-        let Some(combined) = combine::combine(&survivors, &selection.region, width_floor) else {
+        let Some(combined) =
+            combine::combine(&survivors, &own_halves, &selection.region, width_floor)
+        else {
             return Validity::NoMajority {
                 present: found.offered,
                 agreeing: found.agreeing,
@@ -782,6 +791,7 @@ impl ClockModel {
                     sent_at: best.sent_at,
                     taken_at: best.taken_at,
                     interval: best.interval_at(now, &ageing, source_floor),
+                    own_half: best.own_half(source_floor),
                     network_half: best.split_direction_residual(),
                     timescale: best.timescale,
                     smear: best.smear,

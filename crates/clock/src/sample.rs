@@ -206,6 +206,20 @@ impl Sample {
         self.round_trip / 2
     }
 
+    /// The half width this sample's own answer supports, before the model ages it.
+    ///
+    /// Half the round trip plus what the source said about its own distance from its reference,
+    /// floored at `source_floor`. Both terms are the source's own, so this is the part of the
+    /// interval that tells one source apart from another in the same round.
+    ///
+    /// It is a method rather than a line inside [`Self::interval_at`] because two callers need the
+    /// same number and the weighting reads the wrong thing if they ever disagree: the interval a
+    /// source supports carries the ageing term and the weight it earns must not.
+    #[must_use]
+    pub fn own_half(&self, source_floor: Nanos) -> Nanos {
+        (self.split_direction_residual() + self.stated_uncertainty).max(source_floor.max(0))
+    }
+
     /// The interval this sample supports, aged forward to `now`.
     ///
     /// Three terms, and none of them is optional. Half the round trip is the split-direction
@@ -238,11 +252,10 @@ impl Sample {
     ) -> OffsetInterval {
         let age = now.since(self.taken_at);
         let dispersion = ageing.dispersion(age);
-        let stated = self.split_direction_residual() + self.stated_uncertainty;
         // Saturating, because the dispersion is carried at `WIDEST` whenever a term of it could not
         // be read, and a bound holding that is refused by the ceiling rather than wrapping on the
         // way to it.
-        let half = stated.max(source_floor.max(0)).saturating_add(dispersion);
+        let half = self.own_half(source_floor).saturating_add(dispersion);
         OffsetInterval::centred(self.offset, half)
     }
 }
