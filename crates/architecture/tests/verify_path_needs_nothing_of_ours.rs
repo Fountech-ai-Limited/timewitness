@@ -1,19 +1,32 @@
-//! Checking a receipt needs no account and no call to us, and this is what keeps it so.
+//! Two paths need no account and no call to us, and this is what keeps them so.
 //!
-//! Generating a receipt may one day go through a service of ours. Verifying one never does: a
-//! stranger checks a receipt with no account, no network call to us and nothing of ours in the loop,
-//! and a verifier that needed any of those would be a verifier we could switch off. Today that holds
-//! because nothing on the path could reach a network. The time it stops holding is when something is
-//! built beside the verifier and a key lookup, a token or a fallback to our host finds its way in, so
-//! the check is written now rather than then.
+//! **Checking a receipt.** Generating one may one day go through a service of ours. Verifying one
+//! never does: a stranger checks a receipt with no account, no network call to us and nothing of
+//! ours in the loop, and a verifier that needed any of those would be a verifier we could switch
+//! off.
 //!
-//! What counts as the verify path. The verifier crate, the WebAssembly build of it, every crate
-//! either of those links, every file of the command line that `timewitness verify` can reach, and
-//! the page the verifier is served in. The command line's files are found by reading them: from the
-//! arm of `main.rs` that runs `verify`, every module a reached file names is reached too, so a new
-//! file the verifier calls into is read the day it is added rather than the day somebody lists it.
-//! The rest of the command line is not on it: the agent and the stamp talk to time sources by
-//! design, and which of them may need an account is a separate question that is not settled.
+//! **Countersigning one.** The exchange is between two agents with nothing of ours in it, which is
+//! what makes receiver-only mode free and the counterparty's cost zero. A receiver that had to ask
+//! us anything would be a receiver we could charge, and the free half of the protocol would be free
+//! until we changed our minds.
+//!
+//! Both hold today because nothing on either path could reach a network. The time that stops
+//! holding is when something is built beside one of them and a key lookup, a token or a fallback to
+//! our host finds its way in, so the check is written now rather than then.
+//!
+//! What counts as a path. The crates named as its roots, the WebAssembly build where there is one,
+//! every crate any of those links, every file of the command line that its subcommand can reach,
+//! and any page it is served in. The command line's files are found by reading them: from the arm
+//! of `main.rs` that runs the subcommand, every module a reached file names is reached too, so a new
+//! file it calls into is read the day it is added rather than the day somebody lists it. The rest of
+//! the command line is not on either: the agent and the stamp talk to time sources by design, and
+//! which of them may need an account is a separate question that is not settled.
+//!
+//! The countersign path was added on 2026-09-20, when the receive half was built. Until then the
+//! promise that the exchange has nothing of ours in it was a sentence in a document and nothing
+//! checked it. Both seeds below were watched turning the build red before it went in, and the same
+//! seed was watched passing with the countersign entry taken out, which is what says the entry is
+//! doing the work rather than the verify path happening to cover it.
 //!
 //! Three rules, and each names what it refuses and why, so an honest change that trips one can say
 //! which rule it is arguing with:
@@ -41,23 +54,60 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The crates whose whole closure is the verify path.
-const ROOTS: [&str; 2] = ["timewitness-verify", "timewitness-verify-web"];
-
 /// Where the command line's modules live, and the file it starts in.
 const COMMAND_LINE_SRC: &str = "crates/cli/src";
 const COMMAND_LINE_MAIN: &str = "main.rs";
 
-/// The subcommand whose reach is the verify path.
-const VERIFY_SUBCOMMAND: &str = "verify";
-
-/// The command line's modules the reach has to find, because they are the ones `verify` runs through
-/// today. Finding fewer means the reader broke, not that the path got shorter.
-const COMMAND_LINE_FLOOR: [&str; 4] = ["verify_cmd", "args", "render", "as_json"];
-
 /// The page the verifier module is served in. The built page embeds the module and is not tracked;
 /// this is the source it is built from.
 const PAGE: &str = "verifier-page/page.html";
+
+/// One path this file holds to the three rules, with what it is called when it fails.
+///
+/// There are two of them and they make two different promises out of one set of rules, which is why
+/// the promise is a field rather than a sentence in a message. A failure that said "the verify path"
+/// about the countersign one would send a reader to the wrong claim.
+struct Guarded {
+    /// What the path is called in a failure.
+    name: &'static str,
+    /// The crates whose whole closure is on it.
+    roots: &'static [&'static str],
+    /// The subcommand whose reach through the command line is on it.
+    subcommand: &'static str,
+    /// The command line's modules the reach has to find, because they are the ones that subcommand
+    /// runs through today. Finding fewer means the reader broke, not that the path got shorter.
+    floor: &'static [&'static str],
+    /// A file outside any crate that is part of the path, with how it is reached.
+    extra: &'static [(&'static str, &'static str)],
+    /// What the path promises, in the words a failure gives.
+    promise: &'static str,
+}
+
+/// The two paths, and the second one arrived on 2026-09-20.
+///
+/// The verify path has been held here since 2026-09-14. The countersign path was not held by
+/// anything until the receive half was built, and the promise it makes is the one the whole
+/// peer-to-peer design rests on: the exchange is between two agents with nothing of ours in it, so a
+/// receiver countersigns with no account and at no cost. A promise nothing checks is a promise that
+/// is true until somebody adds a key lookup to it.
+const PATHS: [Guarded; 2] = [
+    Guarded {
+        name: "the verify path",
+        roots: &["timewitness-verify", "timewitness-verify-web"],
+        subcommand: "verify",
+        floor: &["verify_cmd", "args", "render", "as_json"],
+        extra: &[(PAGE, "the page")],
+        promise: "verifying needs no account and no call to anybody",
+    },
+    Guarded {
+        name: "the countersign path",
+        roots: &["timewitness-countersign"],
+        subcommand: "countersign",
+        floor: &["countersign_cmd", "args", "render"],
+        extra: &[],
+        promise: "a receiver countersigns with no account and nothing of ours in the exchange",
+    },
+];
 
 /// Packages that exist to reach a network. Any one of them in the closure fails the build.
 ///
@@ -341,7 +391,7 @@ fn manifest_path(package: &str) -> PathBuf {
 /// dependencies for them too. Everybody else's are followed through the lock file, which records only
 /// what they build with. Where the lock holds two versions of one name both are followed, which can
 /// only ever refuse more.
-fn closure() -> BTreeMap<String, String> {
+fn closure(roots: &[&str]) -> BTreeMap<String, String> {
     let root = workspace_root();
     let lock = fs::read_to_string(root.join("Cargo.lock"))
         .unwrap_or_else(|e| panic!("could not read Cargo.lock: {e}"));
@@ -353,7 +403,7 @@ fn closure() -> BTreeMap<String, String> {
     }
 
     let mut seen: BTreeMap<String, String> = BTreeMap::new();
-    let mut queue: Vec<(String, String)> = ROOTS
+    let mut queue: Vec<(String, String)> = roots
         .iter()
         .map(|r| ((*r).to_string(), (*r).to_string()))
         .collect();
@@ -396,8 +446,8 @@ fn closure() -> BTreeMap<String, String> {
 // The sources on the path
 // ---------------------------------------------------------------------------
 
-/// Every source file on the verify path, each with how it was reached.
-fn path_sources(linked: &BTreeMap<String, String>) -> BTreeMap<PathBuf, String> {
+/// Every source file on one path, each with how it was reached.
+fn path_sources(path: &Guarded, linked: &BTreeMap<String, String>) -> BTreeMap<PathBuf, String> {
     let root = workspace_root();
     let mut files = BTreeMap::new();
     for (name, chain) in linked.iter().filter(|(n, _)| n.starts_with("timewitness-")) {
@@ -417,12 +467,16 @@ fn path_sources(linked: &BTreeMap<String, String>) -> BTreeMap<PathBuf, String> 
     }
 
     let src = root.join(COMMAND_LINE_SRC);
-    let reached = command_line_reach(|relative| fs::read_to_string(src.join(relative)).ok());
-    for module in COMMAND_LINE_FLOOR {
+    let reached = command_line_reach(path.subcommand, |relative| {
+        fs::read_to_string(src.join(relative)).ok()
+    });
+    for module in path.floor {
         assert!(
-            reached.contains_key(module),
-            "the command line's {module} was not reached from the arm that runs `verify`, and it is \
-             on that path today, so the reader below has stopped seeing what it should"
+            reached.contains_key(*module),
+            "the command line's {module} was not reached from the arm that runs `{}`, and it \
+             is on {} today, so the reader below has stopped seeing what it should",
+            path.subcommand,
+            path.name
         );
     }
     for (module, (relative, chain)) in &reached {
@@ -434,13 +488,16 @@ fn path_sources(linked: &BTreeMap<String, String>) -> BTreeMap<PathBuf, String> 
         files.insert(path, chain.clone());
     }
 
-    let page = root.join(PAGE);
-    assert!(
-        page.is_file(),
-        "{PAGE} is named as part of the verify path and is not there; if it moved, tell this check \
-         where it went rather than dropping it"
-    );
-    files.insert(page, "the page".to_string());
+    for (relative, how) in path.extra {
+        let file = root.join(relative);
+        assert!(
+            file.is_file(),
+            "{relative} is named as part of {} and is not there; if it moved, tell this check \
+             where it went rather than dropping it",
+            path.name
+        );
+        files.insert(file, (*how).to_string());
+    }
     files
 }
 
@@ -459,16 +516,19 @@ fn path_sources(linked: &BTreeMap<String, String>) -> BTreeMap<PathBuf, String> 
 ///
 /// `read` takes a path relative to the crate's `src/` and gives the file's text, which is what lets
 /// the test below hand it a crate that lives only in memory.
-fn command_line_reach(read: impl Fn(&str) -> Option<String>) -> BTreeMap<String, (String, String)> {
+fn command_line_reach(
+    subcommand: &str,
+    read: impl Fn(&str) -> Option<String>,
+) -> BTreeMap<String, (String, String)> {
     let main = read(COMMAND_LINE_MAIN)
         .unwrap_or_else(|| panic!("{COMMAND_LINE_SRC}/{COMMAND_LINE_MAIN} could not be read"));
     let declared = declared_modules(&main);
 
-    let arm = verify_arm(&main, &declared).unwrap_or_else(|| {
+    let arm = arm_for(subcommand, &main, &declared).unwrap_or_else(|| {
         panic!(
-            "{COMMAND_LINE_MAIN} has no arm this check can read that runs `{VERIFY_SUBCOMMAND}` \
-             as `Some(\"{VERIFY_SUBCOMMAND}\") => module::...`; if the dispatch changed shape, \
-             teach this reader the new one rather than listing files"
+            "{COMMAND_LINE_MAIN} has no arm this check can read that runs `{subcommand}` as \
+             `Some(\"{subcommand}\") => module::...`; if the dispatch changed shape, teach this \
+             reader the new one rather than listing files"
         )
     });
 
@@ -480,9 +540,9 @@ fn command_line_reach(read: impl Fn(&str) -> Option<String>) -> BTreeMap<String,
 
     let mut queue: Vec<(String, String)> = vec![(
         arm.clone(),
-        format!("{COMMAND_LINE_MAIN} -> {arm}, the arm that runs {VERIFY_SUBCOMMAND}"),
+        format!("{COMMAND_LINE_MAIN} -> {arm}, the arm that runs {subcommand}"),
     )];
-    for name in named_by_main(&main, &declared) {
+    for name in named_by_main(subcommand, &main, &declared) {
         queue.push((name.clone(), format!("{COMMAND_LINE_MAIN} -> {name}")));
     }
 
@@ -539,9 +599,9 @@ fn identifier(text: &str) -> bool {
         && !text.starts_with(|c: char| c.is_ascii_digit())
 }
 
-/// The module the `verify` arm of the dispatch calls.
-fn verify_arm(main: &str, declared: &BTreeSet<String>) -> Option<String> {
-    let arm = format!("Some(\"{VERIFY_SUBCOMMAND}\") =>");
+/// The module the named arm of the dispatch calls.
+fn arm_for(subcommand: &str, main: &str, declared: &BTreeSet<String>) -> Option<String> {
+    let arm = format!("Some(\"{subcommand}\") =>");
     let line = main.lines().find(|l| l.contains(&arm))?;
     let after = &line[line.find(&arm)? + arm.len()..];
     let name = after.trim_start().split("::").next()?.trim();
@@ -550,17 +610,17 @@ fn verify_arm(main: &str, declared: &BTreeSet<String>) -> Option<String> {
 
 /// The declared modules `main.rs` names outside the arms that run another subcommand.
 ///
-/// Those arms are the one place `main.rs` names a module the verify path does not run. An arm is
+/// Those arms are the one place `main.rs` names a module this path does not run. An arm is
 /// recognised by its opening, `Some("name") =>`, and only its opening line is set aside; an arm
 /// written over several lines puts its module on the path, which refuses more rather than less.
-fn named_by_main(main: &str, declared: &BTreeSet<String>) -> BTreeSet<String> {
+fn named_by_main(subcommand: &str, main: &str, declared: &BTreeSet<String>) -> BTreeSet<String> {
     let kept: String = main
         .lines()
         .map(|line| {
             let trimmed = line.trim_start();
             let other_arm = trimmed.starts_with("Some(\"")
                 && trimmed.contains("\") =>")
-                && !trimmed.starts_with(&format!("Some(\"{VERIFY_SUBCOMMAND}\")"));
+                && !trimmed.starts_with(&format!("Some(\"{subcommand}\")"));
             if other_arm || mod_declaration(line).is_some() {
                 ""
             } else {
@@ -803,7 +863,7 @@ fn findings(text: &str) -> Vec<String> {
         let at = number + 1;
         if let Some(host) = our_host(line) {
             found.push(format!(
-                "line {at}: names {host}, and the verify path may not know any address of ours"
+                "line {at}: names {host}, and a path held here may not know any address of ours"
             ));
         }
         for (word, why) in SOURCE_RULES {
@@ -899,57 +959,66 @@ fn strings_in(line: &str) -> Vec<&str> {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn nothing_the_verifier_links_can_reach_a_network() {
-    let linked = closure();
-    for root in ROOTS {
+fn nothing_either_path_links_can_reach_a_network() {
+    for path in &PATHS {
+        let linked = closure(path.roots);
+        for root in path.roots {
+            assert!(
+                linked.contains_key(*root),
+                "{root} is not in its own closure, so this check read nothing"
+            );
+        }
+
+        let refused: Vec<String> = linked
+            .iter()
+            .filter(|(name, _)| NETWORK_PACKAGES.contains(&name.as_str()))
+            .map(|(name, chain)| format!("{name}, linked as {chain}"))
+            .collect();
         assert!(
-            linked.contains_key(root),
-            "{root} is not in its own closure, so this check read nothing"
+            refused.is_empty(),
+            "{} links a package that exists to reach a network, and {}:\n  {}",
+            path.name,
+            path.promise,
+            refused.join("\n  ")
         );
     }
-
-    let refused: Vec<String> = linked
-        .iter()
-        .filter(|(name, _)| NETWORK_PACKAGES.contains(&name.as_str()))
-        .map(|(name, chain)| format!("{name}, linked as {chain}"))
-        .collect();
-    assert!(
-        refused.is_empty(),
-        "the verify path links a package that exists to reach a network, and verifying needs no \
-         call to anybody:\n  {}",
-        refused.join("\n  ")
-    );
 }
 
 #[test]
-fn no_source_on_the_verify_path_needs_an_account_or_our_host() {
+fn no_source_on_either_path_needs_an_account_or_our_host() {
     let root = workspace_root();
-    let linked = closure();
-    let files = path_sources(&linked);
-    assert!(
-        files.len() > COMMAND_LINE_FLOOR.len() + 2,
-        "only {} files were read, so the crates on the path contributed none",
-        files.len()
-    );
-
     let mut refused = Vec::new();
-    for (file, chain) in &files {
-        let text = fs::read_to_string(file)
-            .unwrap_or_else(|e| panic!("could not read {}: {e}", file.display()));
-        let shown = file
-            .strip_prefix(&root)
-            .unwrap_or(file)
-            .display()
-            .to_string()
-            .replace('\\', "/");
-        for finding in findings(&text) {
-            refused.push(format!("{shown} {finding} (on the path as {chain})"));
+    for path in &PATHS {
+        let linked = closure(path.roots);
+        let files = path_sources(path, &linked);
+        assert!(
+            files.len() > path.floor.len() + 2,
+            "only {} files were read on {}, so the crates on it contributed none",
+            files.len(),
+            path.name
+        );
+
+        for (file, chain) in &files {
+            let text = fs::read_to_string(file)
+                .unwrap_or_else(|e| panic!("could not read {}: {e}", file.display()));
+            let shown = file
+                .strip_prefix(&root)
+                .unwrap_or(file)
+                .display()
+                .to_string()
+                .replace('\\', "/");
+            for finding in findings(&text) {
+                refused.push(format!(
+                    "{} {shown} {finding} (reached as {chain})",
+                    path.name
+                ));
+            }
         }
     }
     assert!(
         refused.is_empty(),
-        "a source on the verify path could reach a network, a service of ours or a credential, and \
-         verifying needs none of them:\n  {}",
+        "a source on one of these paths could reach a network, a service of ours or a credential, \
+         and neither path may need any of them:\n  {}",
         refused.join("\n  ")
     );
 }
@@ -1061,7 +1130,7 @@ mod tests {
             "pub fn run() { std::net::UdpSocket::bind(\"0.0.0.0:0\"); }\n",
         ),
     ]);
-    let reached = command_line_reach(read);
+    let reached = command_line_reach("verify", read);
     let names: Vec<&str> = reached.keys().map(String::as_str).collect();
     assert_eq!(
         names,
@@ -1090,7 +1159,7 @@ fn main() {
         ("verify_cmd.rs", "use crate::*;\n"),
         ("stamp_cmd.rs", "pub fn run() {}\n"),
     ]);
-    assert!(command_line_reach(read).contains_key("stamp_cmd"));
+    assert!(command_line_reach("verify", read).contains_key("stamp_cmd"));
 }
 
 #[test]

@@ -1,7 +1,8 @@
 # The countersign wire form, v1
 
-Supersedes nothing. First version, written 2026-09-20 and extended three times the same day, when
-the request half was signed, when the receive half was built, and when the ordering answer was. It is the shape that travels between two agents and the signature over it. Deciding
+Supersedes nothing. First version, written 2026-09-20 and extended four times the same day: the
+request half signed, the receive half built, the ordering answer, and receiver-only mode held by a
+check rather than by a sentence. It is the shape that travels between two agents and the signature over it. Deciding
 an order is a separate piece built on top of this one and is not described here.
 
 The version on the wire is `tw1`. The receipt format beside it is `v0` and the two numbers are not
@@ -295,7 +296,30 @@ The words and the fields open with the same verdict word, because two surfaces o
 two answers waiting to disagree. The number beside the verdict is `gap_ns` where there is an order
 and `overlap_ns` where there is not, named differently so a script cannot read one as the other.
 
+## Receiver-only mode, and what makes it free
+
+A receiver countersigns with no account, no certificate and no relationship with us, and it costs it
+nothing. That is not a pricing promise, it is what the protocol is: the exchange is between two
+agents and there is nothing of ours in it. It is the reason a sender can ask anybody to countersign.
+
+**It is checked rather than asserted, from 2026-09-20.**
+`crates/architecture/tests/verify_path_needs_nothing_of_ours.rs` held the verify path to three rules
+and nothing held this one. It now holds both: the countersign crate and everything it links, and
+every file of the command line that `timewitness countersign` reaches, may not link a package that
+exists to reach a network, may not name an address of ours, open a socket, start another program or
+read the environment, and may not carry the name of a credential.
+
+Two faults were seeded on the countersign path and watched turning the build red: an address of ours
+in the countersign crate, and a credential read in the countersign command. The same seed was then
+watched **passing** with the countersign entry taken out of the check, which is what says the entry
+is doing the work rather than the verify path happening to cover it.
+
+**What is left of this half.** A receiver's own agent makes its response through
+`Countersigned::answer`, which takes the request's bytes, the receiver's own interval and its own
+receipt. There is no way to do that from the command line yet, because a receiver's interval comes
+from its own agent rather than from an argument, and wiring that is its own piece of work. The
+shipped binary reads and checks a pair; it does not yet make one.
+
 ## What is not here yet
 
-Receiver-only mode, and the work of attacking all of it. They are the rest of the protocol and each
-is its own piece of work.
+A command-line way for a receiver to make its own half, and the work of attacking all of it.
