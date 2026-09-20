@@ -27,6 +27,8 @@
 //! **It does not enforce anything.** A receiver that will not countersign records a refusal and the
 //! request is the request it would have been with no header at all.
 
+use timewitness_core::time::{Nanos, UnixNanos};
+use timewitness_core::{order_of, MomentInterval, Order};
 use timewitness_receipt::AgentKey;
 
 use crate::signed::Signed;
@@ -180,5 +182,115 @@ impl Countersigned {
     #[must_use]
     pub const fn response(&self) -> &Signed {
         &self.response
+    }
+
+    /// Which of the two moments came first, or that these two claims do not say.
+    ///
+    /// The arithmetic is [`timewitness_core::order_of`] and it is not repeated here, because a
+    /// second copy of it is a second answer waiting to disagree with the first. What this adds is
+    /// what the answer means for a request and the response to it, which is a thing the general
+    /// arithmetic has no way to know.
+    #[must_use]
+    pub fn ordering(&self) -> Ordering {
+        let sent = moment(&self.request.exchange.interval);
+        let received = moment(&self.response.exchange.interval);
+        match order_of(&sent, &received) {
+            Order::Before { gap_ns } => Ordering::Established { gap_ns },
+            Order::Undecided { overlap_ns } => Ordering::Undecided { overlap_ns },
+            Order::After { gap_ns } => Ordering::Contradicted { gap_ns },
+            Order::Incoherent => Ordering::NotSayable,
+        }
+    }
+}
+
+fn moment(interval: &Interval) -> MomentInterval {
+    MomentInterval::new(
+        UnixNanos(interval.earliest_ns),
+        UnixNanos(interval.latest_ns),
+    )
+}
+
+/// What the two halves say about which moment came first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ordering {
+    /// The send moment is wholly before the receive moment, so the order is established.
+    ///
+    /// `gap_ns` is the clear space between the two intervals. It is carried because an order
+    /// established with a nanosecond to spare and one established with a second to spare are the
+    /// same verdict and are not the same evidence.
+    Established {
+        /// The clear space between the two intervals.
+        gap_ns: Nanos,
+    },
+    /// The two intervals touch or overlap, so these two claims do not settle the order.
+    ///
+    /// **This is an answer.** The request was certainly made before the response, in the world;
+    /// what is undecided is whether the two signed claims establish it, and they do not, because
+    /// each clock's own bound is wider than the distance between the two readings. Saying so is the
+    /// product working rather than failing, and the alternative, a midpoint comparison, would
+    /// answer every question and be wrong a share of the time nobody could afterwards measure.
+    Undecided {
+        /// How much of the two intervals is common to both, zero where they meet at a point.
+        overlap_ns: Nanos,
+    },
+    /// The receive moment is wholly before the send moment, which cannot be true.
+    ///
+    /// A response names its request by the hash of bytes that had to exist before the response was
+    /// made, so the receive moment cannot really precede the send moment. Both claims are therefore
+    /// not true at once: one of the two clocks is outside the bound its own agent stated, or one of
+    /// the two parties is lying. **Which of those it is cannot be told from the pair**, and the
+    /// answer says so rather than picking the more likely one.
+    Contradicted {
+        /// The clear space between the two intervals, the wrong way round.
+        gap_ns: Nanos,
+    },
+    /// One of the halves has its edges the wrong way round.
+    ///
+    /// It cannot be reached through this type, because such a half is refused when it is read and
+    /// again before it is signed, and a [`Countersigned`] only exists from halves that were read.
+    /// It is here so the mapping from the general arithmetic is total: a match arm that cannot
+    /// happen is cheaper than an arm that guesses.
+    NotSayable,
+}
+
+impl core::fmt::Display for Ordering {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            // Every arm opens with the same word the machine-readable surface gives, so a reader
+            // and a script cannot come away with two different verdicts from one pair.
+            Ordering::Established { gap_ns } => write!(
+                f,
+                "established: the request was made before the response, with {gap_ns} ns of clear \
+                 space between the two intervals"
+            ),
+            Ordering::Undecided { overlap_ns } => write!(
+                f,
+                "undecided: the two intervals overlap by {overlap_ns} ns, so these two claims do \
+                 not establish which moment came first"
+            ),
+            Ordering::Contradicted { gap_ns } => write!(
+                f,
+                "contradicted: the receive interval is {gap_ns} ns wholly before the send interval, \
+                 which cannot be true of a request and the response to it"
+            ),
+            Ordering::NotSayable => write!(
+                f,
+                "not-sayable: one half has its edges the wrong way round, so nothing follows from \
+                 the pair"
+            ),
+        }
+    }
+}
+
+impl Ordering {
+    /// The one word a script reads.
+    #[must_use]
+    pub const fn word(&self) -> &'static str {
+        match self {
+            Ordering::Established { .. } => "established",
+            Ordering::Undecided { .. } => "undecided",
+            Ordering::Contradicted { .. } => "contradicted",
+            Ordering::NotSayable => "not-sayable",
+        }
     }
 }

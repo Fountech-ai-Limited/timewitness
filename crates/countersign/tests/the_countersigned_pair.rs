@@ -4,15 +4,15 @@
 //! and signs. What this file proves is that each pairing refusal fires against a pair that passes,
 //! rather than that the honest case works.
 //!
-//! Two things this file deliberately proves are **not** checked, and both matter more than the
-//! refusals. A pair whose two intervals overlap reads exactly like one whose intervals do not, and
-//! a pair whose response is earlier than its request reads too. Deciding an order is the next slice
-//! and it has to be able to say undecided out loud, which a reader that refused the overlapping case
-//! would have quietly answered already, always in the same direction.
+//! Two things this file deliberately proves are **not** checked when a pair is read, and both
+//! matter more than the refusals. A pair whose two intervals overlap reads exactly like one whose
+//! intervals do not, and a pair whose response is earlier than its request reads too. Deciding an
+//! order is a separate question and it has to be able to say undecided out loud, which a reader that
+//! refused the overlapping case would have quietly answered already, always in the same direction.
 
 use sha2::{Digest, Sha256};
 use timewitness_countersign::{
-    Countersigned, Exchange, Interval, Refusal, Role, Signed, MAX_WIRE_CHARS,
+    Countersigned, Exchange, Interval, Ordering, Refusal, Role, Signed, MAX_WIRE_CHARS,
 };
 use timewitness_receipt::AgentKey;
 
@@ -373,4 +373,139 @@ fn nothing_is_signed_that_our_own_reader_would_refuse() {
 
     // And the control: the same helper with nothing wrong with it still signs.
     assert!(Signed::new(&a_request(), &sender()).is_ok());
+}
+
+// The ordering answer. The pairing above says these two halves are one exchange; this says what
+// they establish about which moment came first, which is a different question and often has no
+// answer.
+
+/// A pair whose receive interval is put wherever a case needs it.
+fn pair_with(received: Interval) -> Countersigned {
+    Countersigned::answer(
+        signed_request().to_bytes(),
+        digest(2),
+        1,
+        received,
+        digest(150),
+        &receiver(),
+    )
+    .expect("the pair is a pair whatever the clocks say")
+}
+
+fn shifted(by_ns: i128) -> Interval {
+    let sent = sender_interval();
+    Interval {
+        earliest_ns: sent.earliest_ns + by_ns,
+        reading_ns: sent.reading_ns + by_ns,
+        latest_ns: sent.latest_ns + by_ns,
+    }
+}
+
+#[test]
+fn two_intervals_that_do_not_touch_establish_the_order() {
+    let pair = pair_with(receiver_interval());
+    let gap = receiver_interval().earliest_ns - sender_interval().latest_ns;
+    assert!(gap > 0, "this case is the one where they do not touch");
+    assert_eq!(pair.ordering(), Ordering::Established { gap_ns: gap });
+    assert_eq!(pair.ordering().word(), "established");
+}
+
+#[test]
+fn two_intervals_that_overlap_are_undecided_and_the_answer_says_so() {
+    // The case this product exists to get right. The request was certainly made before the response
+    // in the world; what is undecided is whether these two claims establish it, and they do not,
+    // because each clock's own bound is wider than the distance between the two readings.
+    let pair = pair_with(shifted(1_000_000));
+    let overlap = sender_interval().latest_ns - (sender_interval().earliest_ns + 1_000_000);
+    assert_eq!(
+        pair.ordering(),
+        Ordering::Undecided {
+            overlap_ns: overlap
+        }
+    );
+    assert_eq!(pair.ordering().word(), "undecided");
+    assert!(
+        pair.ordering().to_string().contains("do not establish"),
+        "the words say it is not established: {}",
+        pair.ordering()
+    );
+}
+
+#[test]
+fn the_boundary_between_established_and_undecided_is_seeded_at_every_setting() {
+    // One nanosecond of clear space, exactly touching, and one nanosecond of overlap. Touching is
+    // undecided, because the two could be the same instant, and a comparison that was not strict
+    // would call that an order and be wrong every time afterwards without anybody seeing it.
+    let sent = sender_interval();
+    let width = sent.latest_ns - sent.earliest_ns;
+
+    let clear = pair_with(shifted(width + 1));
+    assert_eq!(clear.ordering(), Ordering::Established { gap_ns: 1 });
+
+    let touching = pair_with(shifted(width));
+    assert_eq!(touching.ordering(), Ordering::Undecided { overlap_ns: 0 });
+
+    let overlapping = pair_with(shifted(width - 1));
+    assert_eq!(
+        overlapping.ordering(),
+        Ordering::Undecided { overlap_ns: 1 }
+    );
+}
+
+#[test]
+fn a_receive_interval_wholly_before_the_send_interval_is_a_contradiction() {
+    // A response names its request by the hash of bytes that had to exist before the response was
+    // made, so this cannot be true. One of the two clocks is outside the bound its own agent stated,
+    // or one of the two parties is lying, and the pair cannot say which. It is not reported as the
+    // response having come first, because that is nonsense about a request and its answer.
+    let sent = sender_interval();
+    let width = sent.latest_ns - sent.earliest_ns;
+    let pair = pair_with(shifted(-(width + 5_000)));
+    assert_eq!(pair.ordering(), Ordering::Contradicted { gap_ns: 5_000 });
+    assert_eq!(pair.ordering().word(), "contradicted");
+    assert!(
+        pair.ordering().to_string().contains("cannot be true"),
+        "the words say what it means: {}",
+        pair.ordering()
+    );
+}
+
+#[test]
+fn the_undecided_answer_is_never_resolved_by_the_readings() {
+    // The reading is a display value. A midpoint comparison would answer every question and be
+    // wrong a share of the time nobody could afterwards measure, so it must not creep in. Here the
+    // two readings are in one order and the intervals overlap, and the answer is undecided.
+    let sent = sender_interval();
+    let mut received = shifted(1_000_000);
+    received.reading_ns = sent.reading_ns + 2_000_000;
+    let pair = pair_with(received);
+    assert!(
+        received.reading_ns > sent.reading_ns,
+        "the readings are in an order"
+    );
+    assert!(
+        matches!(pair.ordering(), Ordering::Undecided { .. }),
+        "and the answer is still undecided: {}",
+        pair.ordering()
+    );
+}
+
+#[test]
+fn a_wider_bound_on_either_side_loses_an_order_that_a_narrower_one_had() {
+    // The property the whole product turns on, said as a test: the order is established by the two
+    // bounds being narrow against the distance between the two moments, so widening either one
+    // takes the answer away. Nothing here narrows a bound to get it back.
+    let sent = sender_interval();
+    let gap = receiver_interval().earliest_ns - sent.latest_ns;
+    assert!(matches!(
+        pair_with(receiver_interval()).ordering(),
+        Ordering::Established { .. }
+    ));
+
+    let mut wider = receiver_interval();
+    wider.earliest_ns -= gap + 1;
+    assert!(
+        matches!(pair_with(wider).ordering(), Ordering::Undecided { .. }),
+        "widening the receiver's own bound loses the order"
+    );
 }

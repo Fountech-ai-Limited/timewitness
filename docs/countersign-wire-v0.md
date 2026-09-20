@@ -1,7 +1,7 @@
 # The countersign wire form, v1
 
-Supersedes nothing. First version, written 2026-09-20 and extended twice the same day, when the
-request half was signed and when the receive half was built. It is the shape that travels between two agents and the signature over it. Deciding
+Supersedes nothing. First version, written 2026-09-20 and extended three times the same day, when
+the request half was signed, when the receive half was built, and when the ordering answer was. It is the shape that travels between two agents and the signature over it. Deciding
 an order is a separate piece built on top of this one and is not described here.
 
 The version on the wire is `tw1`. The receipt format beside it is `v0` and the two numbers are not
@@ -242,9 +242,60 @@ its own clock, and those two statements are the whole of what a reader has. Neit
 evidence for the other party and countersigning does not make it so. The evidence for each interval
 is in the receipt that half names by hash, which this form does not carry.
 
+## The ordering answer
+
+Two moments are in a known order when every moment one of them could have been is before every
+moment the other could have been. Anything else is undecided. That is the whole rule, and it is
+interval disjointness rather than anything cleverer.
+
+It is the same statement as "the two readings are further apart than the two bounds added together",
+which is how the claim is usually said in words, except that the disjointness version stays correct
+when an interval is not centred on its reading, and an interval here is never promised to be.
+
+The arithmetic lives in one place, `crates/core/src/order.rs`, so that every surface answering this
+question answers it the same way. A second copy of it is a second answer waiting to disagree with the
+first.
+
+### The three things a pair can say
+
+| Verdict | When | What it means |
+|---|---|---|
+| `established` | the send interval is wholly before the receive interval | the order holds whatever either clock was really doing inside its own stated bound |
+| `undecided` | the two intervals touch or overlap | the request was made before the response in the world, and these two claims do not establish it |
+| `contradicted` | the receive interval is wholly before the send interval | the two claims cannot both be true, and the pair cannot say which one is wrong |
+
+**Touching at a point is undecided and not an order.** Where one interval ends exactly where the
+other begins, the two moments could be the same instant, so the comparison is strict. A comparison
+that was not strict would call that an order and be quietly wrong from then on.
+
+**Undecided is an answer.** The alternative, comparing the two readings, would answer every question
+and would be wrong a share of the time nobody could afterwards measure. The reading is a display
+value here exactly as it is in a receipt, and it takes no part in this arithmetic.
+
+**Contradicted is not "the response came first".** A response names its request by the hash of bytes
+that had to exist before the response was made, so a receive moment wholly before a send moment
+cannot really have happened. One of the two clocks is outside the bound its own agent stated, or one
+of the two parties is lying. Which of those it is does not follow from the pair, and the answer does
+not guess.
+
+**Nothing narrows one bound with the other.** Two agents each disciplined their own clock against
+their own sources, and neither one's bound is evidence about the other's. Combining them would be
+inventing accuracy out of two claims, which is the one thing this product exists not to do. So a
+widened bound on either side loses an order that a narrower one had, and no amount of countersigning
+gets it back.
+
+The answer is on the command line in words and as lines a script reads:
+
+```text
+timewitness countersign <the request> <the response>
+timewitness countersign <the request> <the response> --fields
+```
+
+The words and the fields open with the same verdict word, because two surfaces over one answer is
+two answers waiting to disagree. The number beside the verdict is `gap_ns` where there is an order
+and `overlap_ns` where there is not, named differently so a script cannot read one as the other.
+
 ## What is not here yet
 
-The ordering answer, receiver-only mode, and the work of attacking all of it. They are the rest of
-the protocol and each is its own piece of work. **Nothing here decides an order**, and two halves
-that have each been checked and paired are two statements about two clocks and not yet an answer
-about which came first.
+Receiver-only mode, and the work of attacking all of it. They are the rest of the protocol and each
+is its own piece of work.

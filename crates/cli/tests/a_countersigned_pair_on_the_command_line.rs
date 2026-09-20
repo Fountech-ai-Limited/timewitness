@@ -197,3 +197,168 @@ fn the_binary_refuses_more_than_two() {
         text(&out.stdout)
     );
 }
+
+// The ordering answer, through the tool. The verdict a reader sees has to be the verdict the crate
+// gives, and the undecided case has to read as an answer rather than as the tool having failed.
+
+fn pair_with(received: Interval) -> Countersigned {
+    Countersigned::answer(
+        a_signed_request().to_bytes(),
+        digest(2),
+        1,
+        received,
+        digest(150),
+        &receiver(),
+    )
+    .expect("the pair is a pair whatever the clocks say")
+}
+
+fn sent() -> Interval {
+    a_signed_request().exchange.interval
+}
+
+fn shifted(by_ns: i128) -> Interval {
+    let sent = sent();
+    Interval {
+        earliest_ns: sent.earliest_ns + by_ns,
+        reading_ns: sent.reading_ns + by_ns,
+        latest_ns: sent.latest_ns + by_ns,
+    }
+}
+
+fn said_about(pair: &Countersigned, extra: &[&str]) -> String {
+    let mut args = vec![
+        "countersign".to_string(),
+        pair.request().to_wire(),
+        pair.response().to_wire(),
+    ];
+    args.extend(extra.iter().map(ToString::to_string));
+    let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = run(&borrowed);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    text(&out.stdout)
+}
+
+#[test]
+fn the_binary_says_which_came_first_where_the_two_claims_settle_it() {
+    let width = sent().latest_ns - sent().earliest_ns;
+    let said = said_about(&pair_with(shifted(width + 1_000_000)), &[]);
+    assert!(
+        said.contains("Which came first."),
+        "it did not answer the question: {said}"
+    );
+    assert!(
+        said.contains("the request was made before the response"),
+        "it did not give the verdict: {said}"
+    );
+    assert!(
+        said.contains("1000000 ns of clear space"),
+        "it did not say how much room the answer had: {said}"
+    );
+}
+
+#[test]
+fn the_binary_says_undecided_out_loud_and_does_not_pick_one() {
+    // The case the product exists to be willing to say. A reader must be able to tell this from the
+    // tool having failed, so the exit is zero and the words say what is and is not established.
+    let width = sent().latest_ns - sent().earliest_ns;
+    let said = said_about(&pair_with(shifted(width - 1_000_000)), &[]);
+    assert!(
+        said.contains("undecided"),
+        "it did not say undecided: {said}"
+    );
+    assert!(
+        said.contains("do not establish"),
+        "it did not say what is not established: {said}"
+    );
+    assert!(
+        !said.contains("the request was made before the response,"),
+        "it picked an order it does not have: {said}"
+    );
+    assert!(
+        said.contains("Nothing here narrows one bound with the other"),
+        "it did not say what it refuses to do to get an answer: {said}"
+    );
+}
+
+#[test]
+fn the_binary_says_a_receive_moment_before_a_send_moment_cannot_be_true() {
+    let width = sent().latest_ns - sent().earliest_ns;
+    let said = said_about(&pair_with(shifted(-(width + 5_000))), &[]);
+    assert!(
+        said.contains("contradicted"),
+        "it did not name the contradiction: {said}"
+    );
+    assert!(
+        said.contains("cannot be true"),
+        "it did not say the two claims cannot both hold: {said}"
+    );
+    assert!(
+        said.contains("this does not guess"),
+        "it guessed which of the two is wrong: {said}"
+    );
+}
+
+#[test]
+fn the_fields_a_script_reads_carry_the_verdict_and_the_number_beside_it() {
+    let width = sent().latest_ns - sent().earliest_ns;
+
+    let ordered = said_about(&pair_with(shifted(width + 7)), &["--fields"]);
+    assert!(
+        ordered.contains("order=established\n"),
+        "the verdict is one word: {ordered}"
+    );
+    assert!(ordered.contains("gap_ns=7\n"), "with its gap: {ordered}");
+    assert!(
+        !ordered.contains("overlap_ns="),
+        "an order has no overlap to report: {ordered}"
+    );
+
+    let undecided = said_about(&pair_with(shifted(width - 7)), &["--fields"]);
+    assert!(
+        undecided.contains("order=undecided\n"),
+        "the verdict is one word: {undecided}"
+    );
+    assert!(
+        undecided.contains("overlap_ns=7\n"),
+        "with its overlap: {undecided}"
+    );
+    assert!(
+        !undecided.contains("gap_ns="),
+        "an overlap is not a gap and a script must not read one as the other: {undecided}"
+    );
+
+    // Each half is named by the hash of what travelled, so a script can tie the pair to a log.
+    assert!(
+        undecided.contains(&format!(
+            "request_sha256={}",
+            hex(&a_signed_request().envelope_hash())
+        )),
+        "the request is named by what travelled: {undecided}"
+    );
+}
+
+#[test]
+fn the_fields_verdict_is_the_one_the_words_give() {
+    // Two surfaces over one answer is two answers waiting to disagree. Every case is asked both
+    // ways and the two must line up.
+    let width = sent().latest_ns - sent().earliest_ns;
+    for (shift, word) in [
+        (width + 1, "established"),
+        (width, "undecided"),
+        (width - 1, "undecided"),
+        (-(width + 1), "contradicted"),
+    ] {
+        let pair = pair_with(shifted(shift));
+        let fields = said_about(&pair, &["--fields"]);
+        let words = said_about(&pair, &[]);
+        assert!(
+            fields.contains(&format!("order={word}\n")),
+            "the fields say {word}: {fields}"
+        );
+        assert!(
+            words.contains(word),
+            "and so do the words, at a shift of {shift}: {words}"
+        );
+    }
+}

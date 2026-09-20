@@ -56,7 +56,7 @@ pub mod base64url;
 pub mod countersigned;
 pub mod signed;
 
-pub use countersigned::Countersigned;
+pub use countersigned::{Countersigned, Ordering};
 pub use signed::Signed;
 
 /// The prefix every wire value carries, version and all.

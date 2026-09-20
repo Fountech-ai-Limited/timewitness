@@ -22,6 +22,7 @@ pub mod evidence;
 pub mod hash;
 pub mod interval;
 pub mod keylog;
+pub mod order;
 pub mod refusal;
 pub mod source;
 pub mod time;
@@ -31,6 +32,7 @@ pub use bound::{Bound, BoundBreakdown, EpsilonBasis, FusionRule, Reading, Stamp}
 pub use evidence::{Checked, EvidenceError};
 pub use hash::HashFunction;
 pub use interval::OffsetInterval;
+pub use order::{order_of, MomentInterval, Order};
 pub use refusal::{Refusal, Validity};
 pub use source::{
     Generations, LeapIndicator, Operator, SmearPolicy, SourceId, SourceKind, SourceState, Timescale,

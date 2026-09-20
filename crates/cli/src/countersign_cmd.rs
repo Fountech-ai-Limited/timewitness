@@ -16,7 +16,7 @@
 
 use std::fs;
 
-use timewitness_countersign::{Countersigned, Exchange, Role, Signed};
+use timewitness_countersign::{Countersigned, Exchange, Ordering, Role, Signed};
 
 use crate::args::Args;
 use crate::render;
@@ -29,9 +29,10 @@ pub fn run(args: &Args) -> Outcome {
         Err(outcome) => return outcome,
     };
 
+    let as_fields = args.flag("--fields");
     match values.as_slice() {
         [one] => read_one(one),
-        [request, response] => read_pair(request, response),
+        [request, response] => read_pair(request, response, as_fields),
         _ => refuse(
             "countersign takes one half of an exchange, or a request and the response to it, \
              and no more than two",
@@ -69,14 +70,53 @@ fn gather(args: &Args) -> Result<Vec<String>, Outcome> {
     }
 }
 
-fn read_pair(request: &str, response: &str) -> Outcome {
+fn read_pair(request: &str, response: &str, as_fields: bool) -> Outcome {
     match Countersigned::read(request, response) {
         Ok(pair) => Outcome {
-            text: describe_pair(&pair, request, response),
+            text: if as_fields {
+                fields_of(&pair)
+            } else {
+                describe_pair(&pair, request, response)
+            },
             code: 0,
         },
         Err(why) => unreadable(&format!("these two are not one exchange: {why}")),
     }
+}
+
+/// The pair as lines a script reads, in the same shape `verify --fields` uses.
+///
+/// The verdict is one word. The number beside it is the clear space where there is an order and the
+/// overlap where there is not, and they are named differently so that a script cannot read one as
+/// the other.
+fn fields_of(pair: &Countersigned) -> String {
+    let ordering = pair.ordering();
+    let mut out = String::new();
+    out.push_str(&format!("halves=2\norder={}\n", ordering.word()));
+    match ordering {
+        Ordering::Established { gap_ns } | Ordering::Contradicted { gap_ns } => {
+            out.push_str(&format!("gap_ns={gap_ns}\n"));
+        }
+        Ordering::Undecided { overlap_ns } => {
+            out.push_str(&format!("overlap_ns={overlap_ns}\n"));
+        }
+        Ordering::NotSayable => {}
+    }
+    for (which, half) in [("request", pair.request()), ("response", pair.response())] {
+        let e = &half.exchange;
+        out.push_str(&format!("{which}_key={}\n", hex(&e.key)));
+        out.push_str(&format!("{which}_payload={}\n", hex(&e.payload)));
+        out.push_str(&format!("{which}_sequence={}\n", e.sequence));
+        out.push_str(&format!("{which}_earliest_ns={}\n", e.interval.earliest_ns));
+        out.push_str(&format!("{which}_latest_ns={}\n", e.interval.latest_ns));
+        out.push_str(&format!(
+            "{which}_width_ns={}\n",
+            e.interval.latest_ns - e.interval.earliest_ns
+        ));
+        out.push_str(&format!("{which}_receipt={}\n", hex(&e.receipt)));
+        out.push_str(&format!("{which}_sha256={}\n", hex(&half.envelope_hash())));
+    }
+    out
 }
 
 fn read_one(value: &str) -> Outcome {
@@ -120,6 +160,8 @@ fn describe_pair(pair: &Countersigned, request: &str, response: &str) -> String 
     out.push_str(&describe_half(&pair.request().exchange, request));
     out.push_str("\nThe receiver's half.\n\n");
     out.push_str(&describe_half(&pair.response().exchange, response));
+    out.push_str("\nWhich came first.\n\n");
+    out.push_str(&order_said(&pair.ordering()));
     out.push_str(
         "\nWhat that establishes. Two parties who each hold a key each signed a statement about \
          its own clock, and those two statements are the whole of what you have. Neither interval \
@@ -146,6 +188,41 @@ fn describe(exchange: &Exchange, value: &str) -> String {
          `timewitness verify` on it to see what bounds the interval, and check its hash against the \
          one here.\n",
     );
+    out
+}
+
+/// The ordering verdict in words, with what it does and does not mean underneath it.
+///
+/// The undecided case gets the most words on purpose. It is the one a reader is most likely to
+/// misread as the tool having failed, and it is the one the product exists to be willing to say.
+fn order_said(ordering: &Ordering) -> String {
+    let mut out = format!("  {ordering}\n\n");
+    out.push_str(match ordering {
+        Ordering::Established { .. } => {
+            "  The two intervals do not touch, so every moment the request could have been is \
+             before\n  every moment the response could have been. That holds whatever either \
+             clock was\n  really doing inside its own stated bound. It is a claim about order and \
+             not about\n  accuracy.\n"
+        }
+        Ordering::Undecided { .. } => {
+            "  The request was made before the response, in the world. What these two claims do \
+             not\n  do is establish it: each agent's own bound is wider than the distance between \
+             the two\n  readings, so the two moments could have fallen either way round inside \
+             them, or at\n  the same instant. Nothing here narrows one bound with the other to \
+             reach an answer,\n  because two claims about two different clocks are not evidence \
+             about each other.\n"
+        }
+        Ordering::Contradicted { .. } => {
+            "  A response names its request by the hash of bytes that had to exist before the\n  \
+             response was made, so a receive moment wholly before the send moment cannot be true. \
+             At\n  least one of the two claims is wrong: a clock is outside the bound its own \
+             agent\n  stated, or a party is lying. Which of those it is cannot be told from the \
+             pair, and\n  this does not guess.\n"
+        }
+        Ordering::NotSayable => {
+            "  One half has its edges the wrong way round, so nothing follows from the pair.\n"
+        }
+    });
     out
 }
 
