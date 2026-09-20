@@ -314,12 +314,37 @@ in the countersign crate, and a credential read in the countersign command. The 
 watched **passing** with the countersign entry taken out of the check, which is what says the entry
 is doing the work rather than the verify path happening to cover it.
 
-**What is left of this half.** A receiver's own agent makes its response through
-`Countersigned::answer`, which takes the request's bytes, the receiver's own interval and its own
-receipt. There is no way to do that from the command line yet, because a receiver's interval comes
-from its own agent rather than from an argument, and wiring that is its own piece of work. The
-shipped binary reads and checks a pair; it does not yet make one.
+**A receiver makes its own half with the shipped binary, from 2026-09-20.**
+
+```
+timewitness stamp --subject the-reply --key agent.key --out reply-receipt.cbor
+timewitness countersign <the request> --answer --receipt reply-receipt.cbor --key agent.key
+```
+
+The second line prints the response value to send back as the header on the reply, and then the
+pair as `countersign` reads it, because the writer runs the reader over its own output before
+printing a word of it.
+
+**Everything the response says about the receiver's clock comes out of that receipt and none of it
+can be given on the command line.** `Countersigned::answer` takes an interval, a sequence and a
+receipt hash, and a command that took those three as arguments would let a receiver state an
+interval no clock of its ever read. So the interval is the receipt's interval, the sequence is the
+receipt's place in the receiver's own chain, the hash is the hash of those exact signed bytes, and
+the payload is what the receipt is a receipt for. The only things the command takes are the request
+and the key.
+
+**The key is read and never made, and it has to be the key that signed the receipt.** `stamp`
+generates a key where the file is absent, because a build runner has nobody to ask for one; here
+that would be the one key certain not to have signed the receipt being named. And a response signed
+by one key while naming a receipt signed by another would hand a reader two parties where they were
+told there was one, with nothing on the wire to say so, because the wire carries the receipt by hash
+rather than by content. The party that holds both is the only one that can see it, so it is refused
+there. It was watched refusing: with the check taken out of the build, one test goes red and it is
+the one written for it.
+
+Nothing in that path asks for an account, a certificate or a payment, and nothing in it reaches the
+network.
 
 ## What is not here yet
 
-A command-line way for a receiver to make its own half, and the work of attacking all of it.
+The work of attacking all of it.

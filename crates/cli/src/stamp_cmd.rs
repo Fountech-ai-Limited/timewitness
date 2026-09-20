@@ -688,11 +688,8 @@ fn entry(role: Role, scheme: &str, attestation: &Attestation, detail: String) ->
 /// as this agent.
 fn key_from(args: &Args) -> Result<AgentKey, String> {
     let path = args.required("--key").map_err(|e| e.0)?;
-    if let Ok(bytes) = fs::read(path) {
-        let seed: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| format!("{path} is not a 32 byte seed"))?;
-        return Ok(AgentKey::from_seed(&seed));
+    if let Some(key) = crate::key_file::key_at(path)? {
+        return Ok(key);
     }
 
     let mut seed = [0u8; 32];

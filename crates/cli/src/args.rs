@@ -38,6 +38,7 @@ const TAKES_A_VALUE: &[&str] = &[
     "--agent",
     "--endpoint",
     "--interval",
+    "--receipt",
     "--bind",
     "--log",
     "--add",
@@ -105,7 +106,11 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
         0,
     ),
     // Two, because a request and the response to it are read together. One is still one half.
-    ("countersign", &["--from", "--fields"], 2),
+    (
+        "countersign",
+        &["--from", "--fields", "--answer", "--receipt", "--key"],
+        2,
+    ),
     // Two, and two exactly: the order question is about a pair, and one receipt has nothing to be
     // in order with.
     (

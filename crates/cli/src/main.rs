@@ -11,6 +11,7 @@ mod agent_cmd;
 mod args;
 mod as_json;
 mod countersign_cmd;
+mod key_file;
 mod key_log_cmd;
 mod order_cmd;
 mod render;

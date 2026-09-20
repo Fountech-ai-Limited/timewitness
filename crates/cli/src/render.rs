@@ -189,7 +189,21 @@ pub fn usage() -> String {
     out.push_str("                          taking them on the command line, one to a line\n");
     out.push_str("      --fields            the pair as lines a script reads, rather than as\n");
     out.push_str("                          words. Both halves and one of established,\n");
-    out.push_str("                          undecided or contradicted\n\n");
+    out.push_str("                          undecided or contradicted\n");
+    out.push_str("      --answer            make the receive half of this exchange and sign it,\n");
+    out.push_str("                          rather than reading one. Needs --receipt and --key.\n");
+    out.push_str("                          Everything the response says about your clock comes\n");
+    out.push_str("                          out of that receipt, so there is no way to state an\n");
+    out.push_str(
+        "                          interval your own agent never read. No account and no\n",
+    );
+    out.push_str("                          network: answering costs the receiver nothing\n");
+    out.push_str("      --receipt <file>    the receipt your agent signed for what you are\n");
+    out.push_str("                          sending back. Its interval, its place in your chain\n");
+    out.push_str("                          and its hash are what the response carries\n");
+    out.push_str("      --key <file>        the key that signed that receipt. It is read and\n");
+    out.push_str("                          never made: a new key would be the one key certain\n");
+    out.push_str("                          not to have signed it\n\n");
     out.push_str("  timewitness order <receipt> <receipt> [options]\n");
     out.push_str("      Read two receipts and say which moment came first. Both are checked the\n");
     out.push_str("      way verify checks one, and then the two bounds are compared. No network\n");

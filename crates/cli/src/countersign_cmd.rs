@@ -16,9 +16,11 @@
 
 use std::fs;
 
-use timewitness_countersign::{Countersigned, Exchange, Ordering, Role, Signed};
+use timewitness_countersign::{Countersigned, Exchange, Interval, Ordering, Role, Signed};
+use timewitness_receipt::{chain_link, open};
 
 use crate::args::Args;
+use crate::key_file::key_at;
 use crate::render;
 use crate::verify_cmd::Outcome;
 
@@ -30,6 +32,13 @@ pub fn run(args: &Args) -> Outcome {
     };
 
     let as_fields = args.flag("--fields");
+    if args.flag("--answer") {
+        return match values.as_slice() {
+            [request] => answer(args, request, as_fields),
+            _ => refuse("--answer takes the one request being answered and nothing else"),
+        };
+    }
+
     match values.as_slice() {
         [one] => read_one(one),
         [request, response] => read_pair(request, response, as_fields),
@@ -38,6 +47,139 @@ pub fn run(args: &Args) -> Outcome {
              and no more than two",
         ),
     }
+}
+
+/// The receive half, made here, from a receipt this machine's own agent already signed.
+///
+/// **Everything the response says about this party's clock comes out of that receipt**, and none of
+/// it can be given on the command line. That is the whole of why this exists: the library call
+/// takes an interval, a sequence and a receipt hash, and a command line that took those three as
+/// arguments would let a receiver state an interval no clock of its ever read. So the interval is
+/// the receipt's interval, the sequence is the receipt's place in its own chain, the hash is the
+/// hash of those exact signed bytes, and the payload is what the receipt is a receipt for.
+///
+/// **Receiver-only mode is this command and nothing else.** No account, no key of ours, no network
+/// call, and nothing here asks whether the sender has paid for anything. The receipt it reads is
+/// one the receiver made for itself with `timewitness stamp`, and the exchange is between the two
+/// parties with nothing of ours in it.
+fn answer(args: &Args, request: &str, as_fields: bool) -> Outcome {
+    let receipt_path = match args.required("--receipt") {
+        Ok(path) => path,
+        Err(e) => return refuse(&e.0),
+    };
+    let bytes = match fs::read(receipt_path) {
+        Ok(bytes) => bytes,
+        Err(e) => return refuse(&format!("{receipt_path} could not be read: {e}")),
+    };
+    let receipt = match open(&bytes) {
+        Ok(receipt) => receipt,
+        Err(e) => {
+            return refuse(&format!(
+                "{receipt_path} is not a receipt this can read: {e}"
+            ))
+        }
+    };
+
+    let key_path = match args.required("--key") {
+        Ok(path) => path,
+        Err(e) => return refuse(&e.0),
+    };
+    let key = match key_at(key_path) {
+        Ok(Some(key)) => key,
+        Ok(None) => {
+            return refuse(&format!(
+                "{key_path} is not there. Answering means signing with the key that signed the \
+                 receipt being named, so this reads a key and never makes one"
+            ))
+        }
+        Err(text) => return refuse(&text),
+    };
+
+    // The response names a receipt by hash, and a reader who fetches that receipt finds the key
+    // that signed it. If that is not the key that signed the response, the reader is holding two
+    // halves of two different parties and nothing here would have told them. It is refused at the
+    // one place that can see both, which is here, in the party that holds them.
+    if key.public_key_bytes() != receipt.agent_public_key {
+        return refuse(&format!(
+            "the key in {key_path} did not sign the receipt in {receipt_path}, so a response \
+             signed with it would name a receipt of somebody else's"
+        ));
+    }
+
+    let payload: [u8; 32] = match receipt.payload.hash.clone().try_into() {
+        Ok(hash) => hash,
+        Err(_) => {
+            return refuse(&format!(
+                "the receipt in {receipt_path} stamps a hash that is not 32 bytes, and the \
+                 exchange carries a sha-256"
+            ))
+        }
+    };
+    let interval = Interval {
+        earliest_ns: receipt.claim.earliest.as_nanos(),
+        reading_ns: receipt.utc_estimate.as_nanos(),
+        latest_ns: receipt.claim.latest.as_nanos(),
+    };
+    let link: [u8; 32] = match chain_link(&bytes).try_into() {
+        Ok(hash) => hash,
+        Err(_) => return refuse("a sha-256 hash is 32 bytes"),
+    };
+
+    let pair = match Countersigned::answer_wire(
+        request,
+        payload,
+        receipt.sequence,
+        interval,
+        link,
+        &key,
+    ) {
+        Ok(pair) => pair,
+        Err(why) => {
+            return Outcome {
+                text: format!(
+                    "{}\n\n{}",
+                    render::failure(&format!("this request was not answered: {why}")),
+                    "Nothing was signed. A receiver that will not countersign carries on as though \
+                     no exchange happened, which is what this product does instead of enforcing.",
+                ),
+                code: 1,
+            }
+        }
+    };
+
+    // What is handed back is read back, through the same reader a stranger runs, before a word of
+    // it is printed. A writer that keeps its own list of what a valid pair looks like is a second
+    // answer waiting to disagree with the first.
+    let response = pair.response().to_wire();
+    let mut text = match Countersigned::read(request, &response) {
+        Ok(read) => {
+            if as_fields {
+                return Outcome {
+                    text: format!("{}\n{}", fields_of(&read), one_field("response", &response)),
+                    code: 0,
+                };
+            }
+            format!(
+                "{}\n\n{}\n\n",
+                "The response. Send this back as the X-Bounded-Time header on the reply.", response
+            )
+        }
+        Err(why) => {
+            return refuse(&format!(
+                "the response this built is one our own reader refuses, which is a fault in this \
+                 build rather than in the request: {why}"
+            ))
+        }
+    };
+    text.push_str(&describe_pair(&pair, request, &response));
+    Outcome { text, code: 0 }
+}
+
+/// One `name=value` line, for the field surface.
+fn one_field(name: &str, value: &str) -> String {
+    let mut out = String::new();
+    render::write_field(&mut out, name, value);
+    out
 }
 
 /// The values to read: from the command line, or from a file holding one to a line.

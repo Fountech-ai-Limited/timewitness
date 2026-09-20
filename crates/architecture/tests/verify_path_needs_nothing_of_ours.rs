@@ -103,7 +103,7 @@ const PATHS: [Guarded; 2] = [
         name: "the countersign path",
         roots: &["timewitness-countersign"],
         subcommand: "countersign",
-        floor: &["countersign_cmd", "args", "render"],
+        floor: &["countersign_cmd", "args", "render", "key_file"],
         extra: &[],
         promise: "a receiver countersigns with no account and nothing of ours in the exchange",
     },
