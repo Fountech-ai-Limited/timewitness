@@ -81,12 +81,10 @@ pub fn run(args: &Args) -> Outcome {
         anchors = anchors.with_key_log_signer("the key log signer you named", key);
     }
 
-    let mut floor = Floor::default();
-    match args.number("--min-width") {
-        Ok(Some(width)) => floor.min_interval_width = width,
-        Ok(None) => {}
-        Err(e) => return refuse(&e.0),
-    }
+    let floor = match floor_from(args) {
+        Ok(floor) => floor,
+        Err(text) => return refuse(&text),
+    };
 
     // The log is read off disk like everything else here. There is no fetch: a verifier that went
     // and got the log would be a verifier that needs us to be reachable, and a reader we can cut
@@ -138,8 +136,23 @@ fn key_log_from(args: &Args, option: &str) -> Result<Option<KeyLog>, String> {
         .map_err(|e| format!("the key log at {path} is not readable: {e}"))
 }
 
+/// The numbers this reader will not go below, with whatever the reader asked for on top.
+///
+/// It is here rather than inside the run so that `order` judges two receipts by the same floor
+/// `verify` judges one by. Two commands holding two floors would let a receipt be refused by one
+/// and used by the other in the same afternoon.
+pub(crate) fn floor_from(args: &Args) -> Result<Floor, String> {
+    let mut floor = Floor::default();
+    match args.number("--min-width") {
+        Ok(Some(width)) => floor.min_interval_width = width,
+        Ok(None) => {}
+        Err(e) => return Err(e.0),
+    }
+    Ok(floor)
+}
+
 /// What the reader decided to trust, before anything was read.
-fn anchors_from(args: &Args) -> Result<TrustAnchors, String> {
+pub(crate) fn anchors_from(args: &Args) -> Result<TrustAnchors, String> {
     if args.flag("--no-anchors") {
         // A legitimate state and not a degraded one. Every arithmetic claim the receipt makes about
         // itself is still checked, and an attestation nobody here holds a key for is reported as

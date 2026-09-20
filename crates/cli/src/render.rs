@@ -190,6 +190,23 @@ pub fn usage() -> String {
     out.push_str("      --fields            the pair as lines a script reads, rather than as\n");
     out.push_str("                          words. Both halves and one of established,\n");
     out.push_str("                          undecided or contradicted\n\n");
+    out.push_str("  timewitness order <receipt> <receipt> [options]\n");
+    out.push_str("      Read two receipts and say which moment came first. Both are checked the\n");
+    out.push_str("      way verify checks one, and then the two bounds are compared. No network\n");
+    out.push_str("      and no account. Where the two bounds overlap the answer is that nobody\n");
+    out.push_str("      can say, which is an answer: it means the two stamps are closer\n");
+    out.push_str("      together than the bound on either of them. Where the two receipts are\n");
+    out.push_str("      of one chain it also says which was signed first, which is a different\n");
+    out.push_str("      statement, resting on a hash rather than on a clock, and it never\n");
+    out.push_str("      settles the question the bounds left open.\n\n");
+    out.push_str("      --anchors <file>    your own trust material, as verify takes it\n");
+    out.push_str("      --no-anchors        trust nothing, and report an attestation as\n");
+    out.push_str("                          unchecked rather than checking it\n");
+    out.push_str("      --min-width <ns>    the narrowest bound you will accept, applied to\n");
+    out.push_str("                          both of them\n");
+    out.push_str("      --fields            the reading as one field per line, for a script.\n");
+    out.push_str("                          One of established, undecided, contradicted or\n");
+    out.push_str("                          not-sayable, and whether it stands\n\n");
     out.push_str("  timewitness cannot-prove\n");
     out.push_str("      What this product cannot prove, in full. It ships with the claim rather\n");
     out.push_str("      than under it.\n\n");
@@ -389,7 +406,7 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
 /// say that a character could not be represented. Dropping would quietly turn one value into
 /// another that reads as sound; replacing leaves something on the line that is obviously neither a
 /// number nor a word, and keeps every field on the line it belongs to.
-fn write_field(out: &mut String, name: &str, value: impl core::fmt::Display) {
+pub(crate) fn write_field(out: &mut String, name: &str, value: impl core::fmt::Display) {
     let written = value.to_string();
     let held: String = written
         .chars()
@@ -827,7 +844,7 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 /// Break a long line at spaces, so a terminal does not do it in the middle of a number.
-fn wrap(text: &str, width: usize) -> Vec<String> {
+pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
     for word in text.split_whitespace() {

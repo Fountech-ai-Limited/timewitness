@@ -230,6 +230,10 @@ step "The hook's steps are this file's" bash -c "node scripts/steps-match.mjs --
 # place that catches a markdown change before it ships without the site copy beside it. Strictly more
 # than CI does, which is the point of the hook rather than a difference to reconcile.
 step "The limitation list, on all three surfaces" bash scripts/three-surfaces.sh
+# And the newest release against its own copy of that list, which is a different question: the one
+# above asks whether three surfaces of this commit agree, and this asks whether the thing a reader
+# can actually download says what it can actually do.
+step "The newest release against its own limitation list" bash -c "bash scripts/the-order-item-matches-the-release.sh --self-test && bash scripts/the-order-item-matches-the-release.sh"
 # Here the site copy is beside this tree, so its sentences are held to the policy as well.
 step "Every sentence agrees with the shipped policy" bash -c "python3 scripts/policy-sentences.py && python3 scripts/policy-sentences.py --self-test"
 # Here the site repository is usually beside this one, so this run also holds the two copies of the

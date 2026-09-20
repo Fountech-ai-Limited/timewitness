@@ -106,6 +106,13 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
     ),
     // Two, because a request and the response to it are read together. One is still one half.
     ("countersign", &["--from", "--fields"], 2),
+    // Two, and two exactly: the order question is about a pair, and one receipt has nothing to be
+    // in order with.
+    (
+        "order",
+        &["--anchors", "--no-anchors", "--min-width", "--fields"],
+        2,
+    ),
     ("cannot-prove", &[], 0),
 ];
 

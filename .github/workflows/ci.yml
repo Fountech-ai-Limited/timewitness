@@ -180,6 +180,15 @@ jobs:
           TW_SURFACES_SITE: tree
         run: bash scripts/three-surfaces.sh
 
+      - name: The newest release against its own limitation list
+        # Two files in one released tree, held to each other: what that release can do, and what its
+        # own list says it cannot. `main` is allowed to be ahead of it, which is why this asks about
+        # the newest tag rather than about the commit being graded. The second run is this one
+        # backwards, at every setting of the rule and once against real bytes.
+        run: |
+          bash scripts/the-order-item-matches-the-release.sh --self-test
+          bash scripts/the-order-item-matches-the-release.sh
+
       - name: Every sentence agrees with the shipped policy
         # The check above holds each surface to its twin, and on 2026-09-15 it was green over four
         # faults that every surface shared. This one reads the floor, the two ceilings, the Roughtime
