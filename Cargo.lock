@@ -773,6 +773,7 @@ dependencies = [
  "timewitness-agent",
  "timewitness-clock",
  "timewitness-core",
+ "timewitness-countersign",
  "timewitness-platform",
  "timewitness-receipt",
  "timewitness-roughtime-server",

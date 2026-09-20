@@ -21,6 +21,7 @@ pub struct Args {
 
 /// Options that take a value after them. Anything else beginning with two dashes is a flag.
 const TAKES_A_VALUE: &[&str] = &[
+    "--from",
     "--subject",
     "--digest",
     "--anchors",
@@ -103,6 +104,7 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
         ],
         0,
     ),
+    ("countersign", &["--from"], 1),
     ("cannot-prove", &[], 0),
 ];
 

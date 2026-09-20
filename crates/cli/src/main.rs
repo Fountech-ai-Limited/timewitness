@@ -2,13 +2,15 @@
 //!
 //! It wires the clock model, the receipt issuer and the verifier together and does no work of its
 //! own. Two subcommands carry the product: `verify`, which a consumer runs and which needs nothing
-//! of ours, and `stamp`, which a producer runs and which does.
+//! of ours, and `stamp`, which a producer runs and which does. `countersign` is the third of that
+//! kind: it reads one half of an exchange off the command line and needs no network either.
 
 #![forbid(unsafe_code)]
 
 mod agent_cmd;
 mod args;
 mod as_json;
+mod countersign_cmd;
 mod key_log_cmd;
 mod render;
 mod roughtime_serve_cmd;
@@ -66,6 +68,7 @@ fn main() -> ExitCode {
         Some("agent") => agent_cmd::run(&parsed),
         Some("roughtime-serve") => roughtime_serve_cmd::run(&parsed),
         Some("key-log") => key_log_cmd::run(&parsed),
+        Some("countersign") => countersign_cmd::run(&parsed),
         Some("cannot-prove") => verify_cmd::Outcome {
             text: render::cannot_prove_document(),
             code: 0,

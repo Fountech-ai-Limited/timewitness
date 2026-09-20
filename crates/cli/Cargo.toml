@@ -18,6 +18,7 @@ timewitness-sources = { workspace = true }
 timewitness-clock = { workspace = true }
 timewitness-platform = { workspace = true }
 timewitness-agent = { workspace = true }
+timewitness-countersign = { workspace = true }
 timewitness-receipt = { workspace = true }
 timewitness-verify = { workspace = true }
 # What `timewitness roughtime-serve` runs. It was a development dependency for one test until the

@@ -1,8 +1,8 @@
 # The countersign wire form, v1
 
-Supersedes nothing. First version, written 2026-09-20. It is the shape that travels between two
-agents and nothing else: signing, verifying a signature and deciding an order are separate pieces
-built on top of this one, and none of them is described here.
+Supersedes nothing. First version, written 2026-09-20 and extended the same day when the request
+half was signed. It is the shape that travels between two agents and the signature over it. Deciding
+an order is a separate piece built on top of this one and is not described here.
 
 The version on the wire is `tw1`. The receipt format beside it is `v0` and the two numbers are not
 related; they version different things and they move separately.
@@ -29,12 +29,17 @@ That is the whole of it, and the limits below are part of the claim rather than 
 ## The form
 
 ```text
-X-Bounded-Time: tw1.<base64url, no padding, of deterministic CBOR>
+X-Bounded-Time: tw1.<base64url, no padding, of a signed COSE_Sign1>
 ```
 
-On an MCP tool call the same CBOR body travels as a field rather than as a header, and everything
+On an MCP tool call the same signed bytes travel as a field rather than as a header, and everything
 below the encoding is identical. A test holds the two routes to each other, so the protocol cannot
 come to mean two things.
+
+**An unsigned body is refused rather than read.** Until 2026-09-20 the value was the body on its
+own, which made it a claim about somebody's clock that anybody on the path could have written. What
+travels now is that body inside a signature, and a value that is not a signed one gets the same
+silence any other unreadable value gets.
 
 ### The prefix
 
@@ -50,6 +55,13 @@ lengths only, the shortest form of every integer, keys sorted by their own encod
 repeated, and no floating point at all. The reader re-encodes what it decoded and requires the same
 bytes, so a spelling it has not been taught about cannot get through by being accepted and then
 re-emitted differently.
+
+**A key the form does not name is refused.** That is the one second spelling the re-encode rule
+above cannot see: an unknown field is part of the decoded value, so it encodes back to the bytes it
+arrived as and the comparison passes. A reader that then looked up only the names it knows would
+drop the field and re-emit the clean spelling, which is two values meaning the same thing and
+hashing differently. The version is read before the walk over the keys, so a later version of this
+form is refused for its version rather than for the fields it carries.
 
 | Key | Type | What it is |
 |---|---|---|
@@ -109,6 +121,10 @@ differently:
 | too long | past 4,096 characters |
 | not base64 | the part after the prefix is not base64url without padding |
 | not deterministic CBOR | the bytes are not the deterministic encoding of what they decode to |
+| not signed | it is not a `COSE_Sign1` of this shape, or the header names another algorithm |
+| signature does not match | it was altered after it was signed, or signed by a different key |
+| unknown field | a key the form does not name is in the body |
+| key is not text | a key on the wire is not text, and every field this form names is |
 | missing field | one the form requires is not there |
 | wrong type | one is there and is the wrong shape |
 | incoherent | the values decode and say something that cannot be true |
@@ -124,9 +140,41 @@ character below the bits that became bytes. A decoder that accepts two spellings
 an attacker a second header that means the same thing and hashes differently, which is the fault
 deterministic CBOR is chosen to avoid one layer up.
 
+## The signature
+
+The body is signed through the same envelope a receipt is, `COSE_Sign1` from RFC 9052 with Ed25519,
+which COSE numbers minus eight. What is signed is the `Sig_structure` the specification defines,
+being the literal text `Signature1`, the protected header bytes, an empty external-data byte string
+and the payload. It is one function shared with the receipt format rather than a second copy, because
+two readers of one signature format is two chances to disagree about what was signed.
+
+**The key a signature is checked against is the `key` field inside the signed body.** It is never the
+key identifier in the unprotected header, which sits outside the signature and is anybody's to
+rewrite. That header carries a copy so a reader can see whose it claims to be before doing the work,
+and the copy is held to the signed one: it holds that one entry and nothing else, or the value is
+refused. Without that rule a holder could restate one signed exchange as several byte strings that
+all verify, by dropping the identifier, relabelling it, or padding a label nobody reads, and a
+response names its request by the hash of what travelled.
+
+A signed request is **383 characters** on the wire, read 2026-09-20 off
+`crates/countersign/tests/the_signed_request.rs`, against a ceiling of 4,096.
+
+A stranger checks one with the shipped binary and no network:
+
+```text
+timewitness countersign <the header value>
+timewitness countersign --from a-file-holding-it.txt
+```
+
+**What a verified signature establishes, and it is less than it looks.** The party holding that key
+signed that statement about its own clock. It is not evidence that the clock was right, and it is not
+third-party evidence for anybody: the evidence for the interval is in the receipt the claim came
+from, which this form names by hash and does not carry. Fetch that receipt, run `timewitness verify`
+on it, and check its hash against the one in the exchange.
+
 ## What is not here yet
 
-Signing, verifying a signature, the receive half, the ordering answer, receiver-only mode, and the
-work of attacking all of it. They are the rest of the protocol and each is its own piece of work. Nothing in
-this file signs anything, and an exchange read back by this code is a shape that parsed and not a
-statement anybody has vouched for.
+The receive half, the ordering answer, receiver-only mode, and the work of attacking all of it. They
+are the rest of the protocol and each is its own piece of work. Nothing here decides an order, and
+two halves that have each been checked are two statements about two clocks and not yet an answer
+about which came first.
