@@ -33,7 +33,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -119,7 +119,7 @@ impl Reading {
 pub enum Dropped {
     /// The packet was not a request this server should answer.
     NotOurs(String),
-    /// The address has sent more than its share lately.
+    /// The network it is on has sent more than its share lately.
     RateLimited,
     /// The server has no usable statement about its own clock, so it will not date anything.
     NoReading(String),
@@ -153,7 +153,7 @@ impl core::fmt::Display for Dropped {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Dropped::NotOurs(d) => write!(f, "not a request for this server: {d}"),
-            Dropped::RateLimited => write!(f, "over this address's share of the socket"),
+            Dropped::RateLimited => write!(f, "over this network's share of the socket"),
             Dropped::NoReading(d) => write!(f, "this server will not date a response: {d}"),
             Dropped::CouldNotAnswer(d) => write!(f, "this server could not build a response: {d}"),
             Dropped::CouldNotSend(d) => write!(f, "the socket would not send the response: {d}"),
@@ -445,18 +445,36 @@ fn delegation_from(
 /// and is chosen for it: a decaying counter is one allocation per address that never goes away, and
 /// a map that is emptied cannot be grown without bound by an attacker picking new addresses.
 ///
-/// Keyed on the address and not the port, from 2026-09-15. Until then the key was the whole
-/// `SocketAddr`, so a client varying its source port was never limited and the map grew by one
-/// entry per port it chose. And the map has a ceiling of distinct addresses per window, because a
-/// key on the address alone is still a map an attacker fills by choosing addresses: past the
-/// ceiling a new address gets nothing until the window ends, which is what the emptied map already
-/// does for everybody, and the addresses already counted keep their share.
+/// Keyed on the network and not the port, and not on the address either.
+///
+/// The port went first, on 2026-09-15: until then the key was the whole `SocketAddr`, so a client
+/// varying its source port was never limited and the map grew by one entry per port it chose. The
+/// address followed on 2026-09-20, because an IPv6 client is handed a whole /64 and picks any
+/// address inside it at no cost, so an allowance per address is no allowance at all. Measured that
+/// day: one /64 filled a 65,536 entry map in under nine milliseconds, sustained at 419 kbit/s, and
+/// every packet sat inside its own fresh allowance. So IPv6 counts on the /64 and IPv4 on the
+/// address, which is the one host it names.
+///
+/// The map still has a ceiling of distinct networks per window, because a map keyed on anything is
+/// a map somebody can try to fill. **What is past the ceiling is answered and not counted, out of
+/// one shared allowance.** Until 2026-09-20 it was refused, and the comment here said that this was
+/// "what the emptied map already does for everybody". An emptied map refuses nobody; it gives
+/// everybody a fresh allowance. The two are opposites, and the sentence saying they were the same
+/// is the part that stopped anybody looking for five days. Refusing there hands an attacker a
+/// switch: fill the map and every client not already in it is turned away, which is every agent
+/// synchronising for the first time and every agent after a reboot.
+///
+/// The shared allowance is what stops the other direction. Answering everything past the ceiling
+/// would make this a server that signs on demand for anyone willing to send it 65,536 packets
+/// first. One allowance the size of one network's bounds the work at the ceiling's share plus one,
+/// and it is emptied with the map.
 pub struct RateLimit {
     per_window: u32,
     window: Duration,
     started: Instant,
     seen: HashMap<IpAddr, u32>,
     address_ceiling: usize,
+    past_the_ceiling: u32,
 }
 
 /// How many distinct addresses one window will count before a new one is refused.
@@ -475,6 +493,7 @@ impl RateLimit {
             started: Instant::now(),
             seen: HashMap::new(),
             address_ceiling: DEFAULT_ADDRESS_CEILING,
+            past_the_ceiling: 0,
         }
     }
 
@@ -495,15 +514,36 @@ impl RateLimit {
     pub fn allows(&mut self, from: SocketAddr, now: Instant) -> bool {
         if now.duration_since(self.started) >= self.window {
             self.seen.clear();
+            self.past_the_ceiling = 0;
             self.started = now;
         }
-        let address = from.ip();
-        if !self.seen.contains_key(&address) && self.seen.len() >= self.address_ceiling {
-            return false;
+        let network = Self::network_of(from.ip());
+        if !self.seen.contains_key(&network) && self.seen.len() >= self.address_ceiling {
+            // Answered rather than refused, and out of one allowance rather than its own, so the
+            // map stays bounded and so does the work. See the note on this type for why refusing
+            // here is the switch an attacker was being handed.
+            self.past_the_ceiling = self.past_the_ceiling.saturating_add(1);
+            return self.past_the_ceiling <= self.per_window;
         }
-        let count = self.seen.entry(address).or_insert(0);
+        let count = self.seen.entry(network).or_insert(0);
         *count += 1;
         *count <= self.per_window
+    }
+
+    /// The network one allowance is counted against: the /64 for IPv6, the address itself for IPv4.
+    ///
+    /// A /64 is what an IPv6 client is given, so every address in it is the same client and the low
+    /// 64 bits are free for it to vary. An IPv4 address names one host, so it is its own network
+    /// and grouping it further would put unrelated clients on one allowance.
+    fn network_of(address: IpAddr) -> IpAddr {
+        match address {
+            IpAddr::V4(v4) => IpAddr::V4(v4),
+            IpAddr::V6(v6) => {
+                let mut octets = v6.octets();
+                octets[8..].fill(0);
+                IpAddr::V6(Ipv6Addr::from(octets))
+            }
+        }
     }
 }
 
@@ -1002,9 +1042,9 @@ mod tests {
 
     #[test]
     fn the_map_of_addresses_has_a_ceiling_per_window() {
-        // A limit keyed on the address is still a map an attacker fills by picking addresses, so
-        // the map has a ceiling. Past it a new address gets nothing until the window ends, which
-        // is what an emptied map already does for everybody else.
+        // The map has a ceiling, because a limit keyed on who is asking is a map an attacker fills
+        // by being lots of people. What the ceiling may never do is turn the server off for
+        // everybody who is not already in it.
         let mut limit = RateLimit::new(3, Duration::from_secs(60)).with_address_ceiling(2);
         let start = Instant::now();
         let a: SocketAddr = "203.0.113.1:2002".parse().unwrap();
@@ -1013,18 +1053,84 @@ mod tests {
         assert!(limit.allows(a, start));
         assert!(limit.allows(b, start));
         assert!(
-            !limit.allows(c, start),
-            "a third address is over the ceiling"
+            limit.allows(c, start),
+            "a first-ever honest client is answered with the map at its ceiling"
         );
+        assert_eq!(limit.addresses(), 2, "and it was not added to the map");
         assert!(
             limit.allows(a, start),
             "the two already counted keep their share"
         );
-        assert_eq!(limit.addresses(), 2, "the refused address was not added");
+        assert!(limit.allows(a, start), "which is three packets");
+        assert!(
+            !limit.allows(a, start),
+            "and no more than their share: that was the fourth from a"
+        );
         assert!(
             limit.allows(c, start + Duration::from_secs(61)),
             "the window ends and the map is emptied"
         );
+    }
+
+    #[test]
+    fn past_the_ceiling_the_work_is_still_bounded() {
+        // Answering everybody past the ceiling would be a server that signs on demand for anyone
+        // who first sends it 65,536 packets. So what is past the ceiling shares one allowance, and
+        // the total work in a window stays the ceiling's share plus that one.
+        let mut limit = RateLimit::new(3, Duration::from_secs(60)).with_address_ceiling(1);
+        let start = Instant::now();
+        let inside: SocketAddr = "203.0.113.1:2002".parse().unwrap();
+        assert!(limit.allows(inside, start));
+        let mut answered = 0;
+        for n in 0..50u32 {
+            let from: SocketAddr = format!("198.51.100.{}:2002", n % 256).parse().unwrap();
+            if limit.allows(from, start) {
+                answered += 1;
+            }
+        }
+        assert_eq!(
+            answered, 3,
+            "everything past the ceiling shares one address's allowance"
+        );
+        assert_eq!(limit.addresses(), 1, "and none of it grew the map");
+        assert!(
+            limit.allows(inside, start),
+            "the one inside the ceiling still has its own share"
+        );
+        // The shared allowance is emptied with the map, or the first window's attacker would shut
+        // the overflow path for every window after it.
+        let later = start + Duration::from_secs(61);
+        let fresh: SocketAddr = "198.51.100.200:2002".parse().unwrap();
+        assert!(
+            limit.allows(fresh, later),
+            "the window ends and so does that"
+        );
+    }
+
+    #[test]
+    fn one_network_of_addresses_fills_one_entry_and_not_the_map() {
+        // An IPv6 client is handed a whole /64 and picks any address inside it at no cost. Counting
+        // addresses there counts nothing: on 2026-09-20 one /64 filled a 65,536 entry map in under
+        // nine milliseconds for 419 kbit/s, and every packet was inside its own fresh allowance.
+        let mut limit = RateLimit::new(3, Duration::from_secs(60)).with_address_ceiling(1_000);
+        let start = Instant::now();
+        let mut answered = 0;
+        for n in 0..50u32 {
+            let from: SocketAddr = format!("[2001:db8::{n:x}]:2002").parse().unwrap();
+            if limit.allows(from, start) {
+                answered += 1;
+            }
+        }
+        assert_eq!(
+            limit.addresses(),
+            1,
+            "fifty addresses in one /64 are one network and one entry"
+        );
+        assert_eq!(answered, 3, "and they share one network's allowance");
+        // A different /64 is a different client and is counted separately.
+        let elsewhere: SocketAddr = "[2001:db8:0:1::1]:2002".parse().unwrap();
+        assert!(limit.allows(elsewhere, start));
+        assert_eq!(limit.addresses(), 2);
     }
 
     /// A transport whose sends fail as often as it is told to, and which hands the serve loop the
