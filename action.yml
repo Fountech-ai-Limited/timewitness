@@ -70,6 +70,20 @@ inputs:
       sixteen rounds. Past it the Action fails rather than issuing a receipt whose bound says nothing.
     required: false
     default: "2000000000"
+  deadline:
+    description: >-
+      How long the whole stamping run may take, in seconds, before it answers by refusing. Every
+      call it makes carries its own timeout, five seconds for NTP, NTS and Roughtime, eight for
+      drand and fifteen for the timestamp authority, and until 2026-09-20 nothing bounded the
+      command itself. What that costs a runner in the worst case is arithmetic rather than a
+      measurement: sixteen rounds by nine sources by five seconds is 720 seconds of polling before
+      the evidence calls, on a network that drops the packets rather than refusing them, which is
+      the ordinary shape of a locked-down build environment. It sits above the arithmetic for a run
+      where a third of the sources blackhole, which is sixteen rounds by three sources by five
+      seconds, or 240 seconds of waiting, after which that run still answers correctly on the rest.
+      A healthy run takes seconds. Raise it if you also raise rounds or gap.
+    required: false
+    default: "300"
   previous:
     description: >-
       The receipt from the step before this one, where you are stamping several events in one
@@ -137,6 +151,7 @@ runs:
         TW_OUTPUT: ${{ inputs.output }}
         TW_KEY: ${{ inputs.key }}
         TW_ROUNDS: ${{ inputs.rounds }}
+        TW_DEADLINE: ${{ inputs.deadline }}
         TW_MAX_WIDTH: ${{ inputs.max-width }}
         TW_PREVIOUS: ${{ inputs.previous }}
         TW_SEQUENCE: ${{ inputs.sequence }}

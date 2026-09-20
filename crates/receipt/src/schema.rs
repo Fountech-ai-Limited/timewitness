@@ -280,6 +280,45 @@ pub const LEAP_VALUES: [&str; 4] = ["none", "add-second", "delete-second", "unsy
 /// otherwise.
 const SOUND_LEAP: [&str; 3] = ["none", "add-second", "delete-second"];
 
+/// What a source said it was speaking, read back off the wire.
+///
+/// The writer produces three shapes and no others: `utc`, `unknown`, and `tai+` with a whole number
+/// of seconds. Anything else is a string this format cannot read, and a reader is told so rather
+/// than being left to guess.
+///
+/// This exists because `timescale` and `smear` were carried on every source and read by nothing.
+/// The agent does read the timescale, in `Sample::from_exchange`, where a source answering on TAI
+/// is converted to UTC using the offset it stated. The verifier did not, so a reader checking a
+/// receipt a stranger handed them was trusting the signer to have done that conversion with no way
+/// to see whether it was done, and a receipt on TAI is thirty-seven seconds from the UTC it claims.
+#[must_use]
+pub fn reads_timescale(stated: &str) -> Option<Timescale> {
+    match stated {
+        "utc" => Some(Timescale::Utc),
+        "unknown" => Some(Timescale::Unknown),
+        other => other
+            .strip_prefix("tai+")
+            .and_then(|seconds| seconds.parse().ok())
+            .map(|offset_seconds| Timescale::Tai { offset_seconds }),
+    }
+}
+
+/// What a source said it does with a leap second, read back off the wire.
+///
+/// `none`, `unknown`, and `linear/` with a whole number of seconds, which is the window the smear
+/// is spread across.
+#[must_use]
+pub fn reads_smear(stated: &str) -> Option<SmearPolicy> {
+    match stated {
+        "none" => Some(SmearPolicy::None),
+        "unknown" => Some(SmearPolicy::Unknown),
+        other => other
+            .strip_prefix("linear/")
+            .and_then(|seconds| seconds.parse().ok())
+            .map(|window_seconds| SmearPolicy::Linear { window_seconds }),
+    }
+}
+
 impl AgentClaim {
     /// Whether one listed source was a candidate for the intersection.
     ///
@@ -314,6 +353,40 @@ impl AgentClaim {
         self.sources
             .iter()
             .find(|s| !LEAP_VALUES.contains(&s.leap.as_str()))
+    }
+
+    /// The first listed source whose timescale this format cannot read, where there is one.
+    #[must_use]
+    pub fn unreadable_timescale(&self) -> Option<&SourceRecord> {
+        self.sources
+            .iter()
+            .find(|s| reads_timescale(&s.timescale).is_none())
+    }
+
+    /// The first listed source whose smear policy this format cannot read, where there is one.
+    #[must_use]
+    pub fn unreadable_smear(&self) -> Option<&SourceRecord> {
+        self.sources
+            .iter()
+            .find(|s| reads_smear(&s.smear).is_none())
+    }
+
+    /// The first source the selection kept that answered on anything other than UTC.
+    ///
+    /// A source on another timescale is converted on the way in, by the agent, using the offset the
+    /// source itself stated. Nothing in a receipt lets a reader check that conversion happened, and
+    /// on TAI the difference is thirty-seven seconds, so a receipt resting its bound on such a
+    /// source is asking to be taken on trust about the one thing the receipt exists to avoid. No
+    /// shipped source client speaks anything but UTC, so this refuses nothing this product writes.
+    ///
+    /// Counted over kept sources alone. A source that answered on another timescale and was not
+    /// kept contributed nothing to the bound, and it stays in the list so a reader can see it
+    /// answered.
+    #[must_use]
+    pub fn kept_off_utc(&self) -> Option<&SourceRecord> {
+        self.sources.iter().find(|s| {
+            s.kept && !matches!(reads_timescale(&s.timescale), Some(Timescale::Utc) | None)
+        })
     }
 
     /// How many of the sources that answered were candidates for the intersection.

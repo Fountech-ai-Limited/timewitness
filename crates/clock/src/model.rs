@@ -1236,6 +1236,29 @@ fn read_against_the_band(fit: &Fit, policy: &Policy) -> BandReading {
 /// when it was taken still holds it after ageing. A machine outside the band is [`BandReading`], is
 /// stated on the honesty surfaces, and is not something this arithmetic can promise.
 ///
+/// **On two of the three branches that first assumption is the whole of it, and on the third it is
+/// not.** Before a fit, and on a fit the model will not stand behind, the widening is at least half
+/// the band, which is the largest magnitude a part may honestly show, so the sentence above holds
+/// whatever the rate inside the band turns out to be. `crates/clock/tests/the_band_before_a_fit.rs`
+/// asserts that on both. On a fit the model does stand behind, the widening is the sum of what the
+/// fit measured, and the sum can be smaller than half the band: a fit claiming 12.0 ppm at a
+/// standard error of 1.0 widens at 37 ppm, and a machine at -50.0 ppm is inside the band and has
+/// moved 50 ppm.
+///
+/// **So the claimed branch needs a second assumption, and it is this: the machine's true rate lies
+/// inside the coverage interval of the fit the model is standing behind.** A regression through the
+/// sources' own answers measures the rate it is fitting, so that is the ordinary case rather than a
+/// get-out, and under it the branch is sound at every age.
+/// `crates/clock/tests/the_band_after_a_claimed_fit.rs` asserts it, and asserts the counter-example
+/// beside it so the condition cannot be dropped without arguing with a number.
+///
+/// Where the second assumption fails the shortfall is bounded and small: at most 306 us on
+/// `Policy::default`, worst at a fit claiming nought at a standard error of nought against a machine
+/// at the band edge at seventeen seconds of age, against a bound this product reaches of about
+/// 154 ms. Nothing reachable produces a wrong bound from it. The sentence is written out because it
+/// is what a later run reads when it is deciding whether the floor can come out, and until
+/// 2026-09-20 it said less than it needed to.
+///
 /// A term that cannot be read is infinite and never nought; see `readable`. `ppm_over` carries an
 /// infinite rate as [`WIDEST`] and the ceiling refuses it, which is the same refusal said plainly.
 /// The cap is applied only once every term has been read, so an unreadable input is never capped
