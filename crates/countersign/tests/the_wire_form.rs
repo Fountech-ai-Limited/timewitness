@@ -6,6 +6,7 @@
 //! Every refusal below is watched refusing against a value that passes, so a green run says the
 //! branch fired rather than that the test ran.
 
+use sha2::{Digest, Sha256};
 use timewitness_countersign::{
     base64url, Exchange, Interval, Refusal, Role, Signed, MAX_WIRE_CHARS, PREFIX,
 };
@@ -63,7 +64,7 @@ fn a_response() -> Exchange {
         },
         receipt: digest(150),
         key: a_key().public_key_bytes(),
-        answers: Some(a_request().body_hash()),
+        answers: Some(signed(&a_request()).envelope_hash()),
     }
 }
 
@@ -370,14 +371,23 @@ fn the_same_body_reads_the_same_whether_it_came_from_a_header_or_a_tool_call() {
 }
 
 #[test]
-fn the_hash_a_response_names_its_request_by_is_the_hash_of_the_request_body() {
-    let request = a_request();
+fn the_hash_a_response_names_its_request_by_is_the_hash_of_the_signed_request() {
+    // It names the envelope and not the claim inside it. One body can carry more than one valid
+    // signature, because Ed25519 verification asks only that a signature is valid and not that it is
+    // the one a well behaved signer would have produced, so a body hash would leave a sender holding
+    // two byte strings and able to present either as the thing that was answered.
+    let request = signed(&a_request());
     let response = a_response();
-    assert_eq!(response.answers, Some(request.body_hash()));
+    assert_eq!(response.answers, Some(request.envelope_hash()));
     // And it moves when the request does, or it is binding nothing.
-    let mut other = request.clone();
-    other.sequence += 1;
-    assert_ne!(other.body_hash(), request.body_hash());
+    let mut changed = a_request();
+    changed.sequence += 1;
+    assert_ne!(signed(&changed).envelope_hash(), request.envelope_hash());
+    // It is the hash of exactly what travels, which is the thing a reader can reproduce.
+    let mut hasher = Sha256::new();
+    hasher.update(request.to_bytes());
+    let by_hand: [u8; 32] = hasher.finalize().into();
+    assert_eq!(request.envelope_hash(), by_hand);
 }
 
 #[test]

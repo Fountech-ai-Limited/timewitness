@@ -24,10 +24,11 @@
 //! countersigning makes one so. The third-party evidence lives in the receipt each claim came from,
 //! which this form names by hash and does not carry.
 
+use sha2::{Digest, Sha256};
 use timewitness_receipt::{cbor, check_signature, envelope_parts, AgentKey, Value};
 
 use crate::base64url;
-use crate::{Exchange, Refusal, MAX_WIRE_CHARS, PREFIX};
+use crate::{Digest32, Exchange, Refusal, MAX_WIRE_CHARS, PREFIX};
 
 /// One party's claim and the signature over it, as it travels.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +53,14 @@ impl Signed {
             return Err(Refusal::WrongType { name: "key" });
         }
         let body = cbor::decode(&exchange.to_cbor()).map_err(|_| Refusal::NotDeterministicCbor)?;
+        // Nothing is signed that our own reader would refuse. Without this a caller can sign an
+        // exchange whose edges are out of order, or a response naming no request, and get a value
+        // that goes out and that nobody on earth can read back, this side included. The check is the
+        // reader itself rather than a second list of the same conditions, because a second list is
+        // the thing that drifts.
+        if Exchange::from_value(&body)? != *exchange {
+            return Err(Refusal::NotDeterministicCbor);
+        }
         let envelope = key.sign_value(&body);
         let signed = Self {
             exchange: exchange.clone(),
@@ -76,6 +85,24 @@ impl Signed {
     #[must_use]
     pub fn to_bytes(&self) -> &[u8] {
         &self.envelope
+    }
+
+    /// The name of this half: the sha256 of the signed bytes, which is what a response answers.
+    ///
+    /// **This hashes the envelope and not the body inside it, and the difference is the whole
+    /// point.** Slice two named a request by the hash of [`Exchange::to_cbor`], which is the claim
+    /// on its own. Ed25519 verification asks only that a signature is valid, not that it is the one
+    /// a well behaved signer would have produced, so a party can sign one body twice with two
+    /// different nonces and hold two valid signatures over it. Under a body hash both of those are
+    /// the same request to a response, and the sender then holds two byte strings it can each
+    /// present as the thing that was answered. Hashing the envelope closes that: one response names
+    /// exactly one signed request as it travelled, which is the rule the unprotected header check
+    /// below already applies one layer in.
+    #[must_use]
+    pub fn envelope_hash(&self) -> Digest32 {
+        let mut hasher = Sha256::new();
+        hasher.update(&self.envelope);
+        hasher.finalize().into()
     }
 
     /// Read a signed header value back, checking the signature, or say why it was not read.

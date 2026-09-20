@@ -104,7 +104,8 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
         ],
         0,
     ),
-    ("countersign", &["--from"], 1),
+    // Two, because a request and the response to it are read together. One is still one half.
+    ("countersign", &["--from"], 2),
     ("cannot-prove", &[], 0),
 ];
 

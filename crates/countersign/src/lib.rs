@@ -49,13 +49,14 @@
 
 #![forbid(unsafe_code)]
 
-use sha2::{Digest, Sha256};
 use timewitness_receipt::cbor;
 use timewitness_receipt::Value;
 
 pub mod base64url;
+pub mod countersigned;
 pub mod signed;
 
+pub use countersigned::Countersigned;
 pub use signed::Signed;
 
 /// The prefix every wire value carries, version and all.
@@ -153,7 +154,13 @@ pub struct Exchange {
     pub receipt: Digest32,
     /// The public key of the agent that signs this half, 32 bytes of Ed25519.
     pub key: Vec<u8>,
-    /// For a response, the request it answers, named by the hash of the request's own encoded body.
+    /// For a response, the request it answers, named by the sha256 of the signed request as it
+    /// travelled.
+    ///
+    /// It is the hash of the whole envelope and not of the claim inside it. The reason is in
+    /// [`Signed::envelope_hash`] and it is short: one body can carry more than one valid signature,
+    /// so a body hash would let a sender hold two byte strings and present either as the thing that
+    /// was answered.
     ///
     /// `None` on a request. A response without it is refused, because a response that names no
     /// request can be pasted onto any request at all.
@@ -213,6 +220,20 @@ pub enum Refusal {
     NotSigned,
     /// The signature does not match the body, or it was made by a different key.
     SignatureDoesNotMatch,
+    /// The two halves are not one exchange: the response does not name this request.
+    ///
+    /// Its own name for a way a pair goes wrong, rather than a general incoherence, because this is
+    /// the check the whole pairing rests on. A response is only about the request whose signed bytes
+    /// it names, and a pair that fails here is two unrelated halves somebody has put side by side.
+    DoesNotAnswerThisRequest,
+    /// One key signed both halves, so there are not two parties here.
+    ///
+    /// What a countersigned exchange is for is that neither party can be contradicted by the
+    /// other's clock. Where one key signed both, there is no other party and the ordering argument
+    /// is a party agreeing with itself. It is refused rather than reported, for the same reason a
+    /// response naming no request is: a reader who has to notice it is a reader who will one day
+    /// not.
+    OneKeySignedBothHalves,
     /// The values decode but say something that cannot be true.
     Incoherent {
         /// What is wrong with it, in words a person reads once.
@@ -250,7 +271,15 @@ impl core::fmt::Display for Refusal {
             Refusal::NotSigned => write!(f, "it is not a signed exchange"),
             Refusal::SignatureDoesNotMatch => write!(
                 f,
-                "the signature does not match the exchange, so either it was altered after it was                  signed or it was signed by a different key"
+                "the signature does not match the exchange, so either it was altered after it \n                 was signed or it was signed by a different key"
+            ),
+            Refusal::DoesNotAnswerThisRequest => write!(
+                f,
+                "the response names a different request, so these two halves are not one exchange"
+            ),
+            Refusal::OneKeySignedBothHalves => write!(
+                f,
+                "one key signed both halves, so there is no second party and nothing here is \n                 a countersignature"
             ),
             Refusal::Incoherent { detail } => write!(f, "{detail}"),
         }
@@ -279,14 +308,6 @@ impl Exchange {
             pairs.push(("req", Value::Bytes(answers.to_vec())));
         }
         cbor::encode(&Value::map(pairs))
-    }
-
-    /// The hash a response names its request by.
-    #[must_use]
-    pub fn body_hash(&self) -> Digest32 {
-        let mut hasher = Sha256::new();
-        hasher.update(self.to_cbor());
-        hasher.finalize().into()
     }
 
     /// Read a decoded CBOR value as an exchange.

@@ -1,7 +1,7 @@
 # The countersign wire form, v1
 
-Supersedes nothing. First version, written 2026-09-20 and extended the same day when the request
-half was signed. It is the shape that travels between two agents and the signature over it. Deciding
+Supersedes nothing. First version, written 2026-09-20 and extended twice the same day, when the
+request half was signed and when the receive half was built. It is the shape that travels between two agents and the signature over it. Deciding
 an order is a separate piece built on top of this one and is not described here.
 
 The version on the wire is `tw1`. The receipt format beside it is `v0` and the two numbers are not
@@ -74,7 +74,7 @@ form is refused for its version rather than for the fields it carries.
 | `hi` | integer | The latest UTC the moment could have been. |
 | `rcpt` | 32 bytes | The full signed receipt this claim was taken from, named by hash. |
 | `key` | 32 bytes | The Ed25519 public key of the agent that signs this half. |
-| `req` | 32 bytes | On a response only: the request it answers, by the hash of the request's own encoded body. |
+| `req` | 32 bytes | On a response only: the request it answers, by the sha256 of the signed request as it travelled. See "The receive half". |
 
 `lo <= mid <= hi` or the value is refused. A response without `req` is refused, because a response
 that names no request can be pasted onto any request at all. A request carrying `req` is refused,
@@ -172,9 +172,79 @@ third-party evidence for anybody: the evidence for the interval is in the receip
 from, which this form names by hash and does not carry. Fetch that receipt, run `timewitness verify`
 on it, and check its hash against the one in the exchange.
 
+## The receive half
+
+The receiver reads the request **on the bytes it arrived as**, checks the signature over those
+bytes, and then makes its own half: the hash of what it is sending back, where that sits in its own
+chain, the interval its own clock gives it, the receipt that interval came from, and the name of the
+request it is answering. It signs that with its own key. The two halves together are the
+countersigned exchange.
+
+The request is read from its bytes rather than taken as something already parsed, because the
+property the pair rests on is about bytes. A caller that had parsed the request elsewhere and passed
+the parsed thing in could hand the receiver a claim that never travelled in this spelling.
+
+### What `req` names, and it changed on 2026-09-20
+
+**`req` is the sha256 of the signed request as it travelled: the whole `COSE_Sign1`, not the body
+inside it.** Until the receive half was built it was the hash of the body, and the reason for the
+change is short. Ed25519 verification asks only that a signature is valid, not that it is the one a
+well behaved signer would have produced, so one body can carry more than one valid signature. Under a
+body hash both of those are the same request to a response, and the sender then holds two byte
+strings and can present either as the thing that was answered. Naming the envelope closes it: one
+response names exactly one signed request. It is the same rule the unprotected header already applies
+one layer in, followed through one layer out.
+
+A reader reproduces the name with no special tooling: sha256 of the bytes the base64url in the header
+decodes to.
+
+### What a pair is checked for, and the one thing it is not
+
+Three checks, and each has its own refusal so the reason can be recorded:
+
+| Refusal | When |
+|---|---|
+| does not answer this request | the response names something other than the signed request beside it |
+| one key signed both halves | there is one party here and not two |
+| incoherent | the half given as the request is not a request, or the half given as the response is not a response |
+
+**The two intervals are not compared and nothing about their order is checked.** That is deliberate
+and it is the part to get right. Two intervals that overlap leave the order undecided, so a reader
+that refused a pair unless the response were later would have answered the ordering question at parse
+time, always in the same direction, and nobody would see it happen. A pair whose intervals overlap
+reads exactly like one whose intervals do not, and so does a pair whose receive interval is wholly
+earlier than its send interval. Both have tests of their own saying so.
+
+**Nothing is signed that this reader would refuse.** The writer runs the reader over what it is about
+to sign and refuses where the reader would, rather than keeping a second list of the same conditions
+beside it. Without that a caller can sign an exchange whose edges are out of order, or a response
+naming no request, and get a value that goes out and that nobody on earth can read back, this side
+included.
+
+A signed response is **435 characters** on the wire and a signed request is **383**, read 2026-09-20
+off `crates/countersign/tests/the_countersigned_pair.rs`, which measures them rather than quoting
+them, against a ceiling of 4,096. The response is the longer because it carries the extra field
+naming the request.
+
+A stranger checks a whole pair with the shipped binary and no network:
+
+```text
+timewitness countersign <the request> <the response>
+timewitness countersign --from a-file-holding-both.txt
+```
+
+The file holds one header value to a line, so a request and the response to it sit in one file the
+way they sit in a log. One line is still one half, and one value on the command line still reads as
+one half, so the two routes have not come apart.
+
+**What a checked pair establishes.** Two parties who each hold a key each signed a statement about
+its own clock, and those two statements are the whole of what a reader has. Neither interval is
+evidence for the other party and countersigning does not make it so. The evidence for each interval
+is in the receipt that half names by hash, which this form does not carry.
+
 ## What is not here yet
 
-The receive half, the ordering answer, receiver-only mode, and the work of attacking all of it. They
-are the rest of the protocol and each is its own piece of work. Nothing here decides an order, and
-two halves that have each been checked are two statements about two clocks and not yet an answer
+The ordering answer, receiver-only mode, and the work of attacking all of it. They are the rest of
+the protocol and each is its own piece of work. **Nothing here decides an order**, and two halves
+that have each been checked and paired are two statements about two clocks and not yet an answer
 about which came first.
