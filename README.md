@@ -255,7 +255,7 @@ does not is `docs/verifier.md`.
 One line in a workflow file:
 
 ```yaml
-- uses: Fountech-ai-Limited/timewitness@v0
+- uses: Fountech-ai-Limited/timewitness@v0.1
   with:
     subject: dist/widget.tar.gz
 ```
