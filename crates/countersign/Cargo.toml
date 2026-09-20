@@ -1,0 +1,17 @@
+[package]
+name = "timewitness-countersign"
+description = "The countersign wire form: what travels in an X-Bounded-Time header or on an MCP tool call."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+timewitness-core = { workspace = true }
+timewitness-receipt = { workspace = true }
+sha2 = { version = "0.10", default-features = false }
+
+[lints]
+workspace = true
