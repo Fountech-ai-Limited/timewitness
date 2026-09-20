@@ -98,6 +98,20 @@ pub fn usage() -> String {
     out.push_str("      --gap <s>           seconds to wait between polling rounds, none by\n");
     out.push_str("                          default and at most 300. A longer cadence is the\n");
     out.push_str("                          agent's, `timewitness agent --interval`\n");
+    out.push_str(
+        "      --deadline <s>      how long the whole run may take before it answers by\n",
+    );
+    out.push_str(
+        "                          refusing, 300 by default and at most 3600. Every call\n",
+    );
+    out.push_str(
+        "                          it makes has its own timeout and nothing bounded the\n",
+    );
+    out.push_str(
+        "                          command: on a network that drops packets rather than\n",
+    );
+    out.push_str("                          refusing them the shipped settings poll for twelve\n");
+    out.push_str("                          minutes before answering\n");
     out.push_str("      --sequence <n>      where this receipt sits in a chain\n");
     out.push_str("      --previous <file>   the receipt before it in that chain\n");
     out.push_str(
