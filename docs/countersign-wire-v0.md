@@ -1,8 +1,8 @@
 # The countersign wire form, v1
 
-Supersedes nothing. First version, written 2026-09-20 and extended four times the same day: the
-request half signed, the receive half built, the ordering answer, and receiver-only mode held by a
-check rather than by a sentence. It is the shape that travels between two agents and the signature over it. Deciding
+Supersedes nothing. First version, written 2026-09-20 and extended five times the same day: the
+request half signed, the receive half built, the ordering answer, receiver-only mode held by a
+check rather than by a sentence, and the pair attacked. It is the shape that travels between two agents and the signature over it. Deciding
 an order is a separate piece built on top of this one and is not described here.
 
 The version on the wire is `tw1`. The receipt format beside it is `v0` and the two numbers are not
@@ -345,6 +345,48 @@ the one written for it.
 Nothing in that path asks for an account, a certificate or a payment, and nothing in it reaches the
 network.
 
+## Attacking a pair
+
+Written 2026-09-20, with the attacks in `crates/countersign/tests/attacking_a_countersigned_pair.rs`.
+A test that only shows the honest case working is a test that would pass over a reader checking
+nothing, so each of these starts from a pair that is known good and changes one thing about it.
+
+**Every bit of either half, flipped in turn.** Over four thousand single-bit changes across the two
+signed byte strings, and every one of them is refused: a change either breaks the signature, breaks
+the shape, or changes the bytes the other half names. The battery counts what it tried and fails if
+the number is small, because a battery that silently tried nothing passes and looks exactly like one
+that tried everything. With the signature check taken out of the build it goes red, along with the
+payload case below and nothing else.
+
+**A response moved onto another request of the same sender.** Two requests differing in one field,
+each signed, and the response to the first offered against the second. Refused, because the response
+names the bytes of the request it answered.
+
+**What a response names, proved as arithmetic.** The hash it carries is the sha256 of the whole
+signed request and not of the claim inside it. Ed25519 asks that a signature is valid rather than
+that it is the one a well behaved signer would have produced, so one body can carry more than one
+valid signature, and a response naming the body would leave a sender holding two spellings it could
+each present as the thing that was answered.
+
+**Two of the attacks on the list are not attacks.** Swapping which key signs which half is an
+exchange between the same two parties in the other direction, and it reads as one: the protocol
+names roles, not parties. Sending one request twice and having it answered twice gives two valid
+pairs, which is a retry. Both are tested to read as valid, deliberately.
+
+**So a replayed request is not visible to a holder of one exchange**, and that is a limitation of
+the form rather than a hole in it. An exchange carries nothing about any other exchange, so a reader
+holding one cannot tell whether there were others. A reader holding both can see that the two
+responses answer the same request, because both name it by the same hash.
+
+**A pair signed by two keys nobody has heard of is a valid pair.** There is no key list to fail, and
+what such a pair establishes is that two keys signed two statements about two clocks. Whether either
+key belongs to anybody is a question this form does not answer, and the report to a reader says so
+rather than implying otherwise.
+
 ## What is not here yet
 
-The work of attacking all of it.
+**A second valid signature over one body, built rather than reasoned about.** The case above is
+proved by showing what the response names; showing the two spellings themselves needs a signer that
+picks its own nonce, which means curve arithmetic this repository does not carry today. It is worth
+building when something else needs that dependency, and it would strengthen a decision rather than
+change it.
