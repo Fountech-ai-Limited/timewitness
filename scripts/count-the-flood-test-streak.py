@@ -23,6 +23,7 @@ plants what the counter has to refuse and watches it refuse each one.
 """
 
 import argparse
+import hashlib
 import io
 import json
 import pathlib
@@ -42,6 +43,12 @@ NEED = 20
 # --workspace` goes on passing after the test it was counted for has been deleted.
 TEST_FN = "a_flood_of_oversize_datagrams_for_a_minute_does_not_stop_the_server"
 TEST_FILE = "crates/roughtime-server/tests/over_a_real_socket.rs"
+# The counted test's body as it stands at SINCE, hashed with its line endings normalised so a
+# Windows checkout and a Linux one agree. A name is not the test: the function can be there, not
+# ignored, and assert nothing, and every check above it goes on passing. So the body is pinned, and
+# a deliberate change to it is one line of work here rather than a streak that silently restarts
+# counting something else. Recompute with --body-sha256 and put the answer here in the same commit.
+BODY_SHA256 = "47c95457e35175fa7660c7a462848a3e9dea8b1ef096e09ef803c0812ce3f502"
 
 
 def gh(args):
@@ -62,37 +69,47 @@ def runs_from_github(root):
         "--limit", "200", "--json", "databaseId,headSha,conclusion,status,createdAt"]))
     listed = [r for r in listed if r["status"] == "completed"]
     since_time = min((r["createdAt"] for r in listed if r["headSha"] == SINCE), default=None)
-    # A run on a commit `main` no longer has says nothing about the code `main` carries, so it
-    # neither counts nor resets the streak. It is still printed. Dropping one in silence is how a
-    # counter reads higher than the history it is counted over: one such run sits on a merge commit
-    # that `main` dropped on 2026-09-19, and a count taken by hand counted it.
+    # A run on a commit `main` no longer has is read like any other run and then counted differently,
+    # and the two halves of that are not one judgement. A pass on such a commit says nothing about
+    # the code `main` carries, so it does not count toward the twenty. A failure is the test failing,
+    # whatever `main` later did with the commit, so it resets. Until 2026-09-20 both sat on one
+    # branch and a failing one was thrown away, which is how a counter reads higher than the history
+    # it was counted over.
     orphaned = [r for r in listed
                 if r["headSha"] not in rank and since_time and r["createdAt"] >= since_time]
     kept = [r for r in listed if r["headSha"] in rank]
     kept.sort(key=lambda r: (rank[r["headSha"]], r["databaseId"]))
-    out = []
-    for r in orphaned:
-        out.append({"id": r["databaseId"], "sha": r["headSha"], "run_conclusion": r["conclusion"],
-                    "jobs": [], "orphaned": True})
-    for r in kept:
+
+    def as_record(r, orphan):
         jobs = json.loads(gh([
             "api", "repos/%s/actions/runs/%d/attempts/1/jobs" % (REPO, r["databaseId"])]))
-        out.append({
+        record = {
             "id": r["databaseId"],
             "sha": r["headSha"],
+            "created": r["createdAt"],
             "run_conclusion": r["conclusion"],
             "jobs": [{"name": j["name"],
                       "steps": [{"name": s["name"], "conclusion": s["conclusion"]}
                                 for s in j.get("steps", [])]}
                      for j in jobs["jobs"]],
-        })
+        }
+        if orphan:
+            record["orphaned"] = True
+        return record
+
+    out = [as_record(r, False) for r in kept]
+    # An orphan goes where it happened rather than at the front. A failing one that reset a streak
+    # in the middle of the history has to reset it in the middle of the reading too, and a list with
+    # every orphan at the top can only ever reset a streak of nought.
+    for r in sorted(orphaned, key=lambda r: r["createdAt"]):
+        record = as_record(r, True)
+        at = next((i for i, k in enumerate(out) if k["created"] > r["createdAt"]), len(out))
+        out.insert(at, record)
     return out
 
 
 def step_verdict(run):
     """What the counted step did on attempt 1, or why the run cannot be counted."""
-    if run.get("orphaned"):
-        return "on a commit main no longer has, so it counts for nothing either way"
     found = None
     for job in run["jobs"]:
         for step in job["steps"]:
@@ -107,6 +124,43 @@ def step_verdict(run):
     return "success"
 
 
+# The body a name check cannot tell from the real one: present, not ignored, and asserting nothing.
+GUTTED = "\n".join([
+    "fn %s() {" % TEST_FN,
+    '    assert!(true, "an honest client is answered after the flood");',
+    "}",
+])
+
+
+def hash_of(written):
+    """The sha256 of a test body, with its line endings normalised."""
+    flat = "\n".join(line.rstrip("\r") for line in written.split("\n"))
+    return hashlib.sha256(flat.encode("utf-8")).hexdigest()
+
+
+def the_body(text):
+    """The counted test as it is written, from its `fn` line to its closing brace.
+
+    A step name says the suite ran and a function name says the function is there. Neither says the
+    test still measures what it was counted for, and a body replaced by an assertion that cannot
+    fail leaves both of them true.
+    """
+    start = re.search(r"^fn %s\(" % re.escape(TEST_FN), text, re.M)
+    if not start:
+        return None
+    depth = 0
+    i = text.index("{", start.start())
+    while i < len(text):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start.start():i + 1]
+        i += 1
+    return None
+
+
 def the_test_is_still_there(root):
     path = pathlib.Path(root) / TEST_FILE
     if not path.exists():
@@ -116,18 +170,32 @@ def the_test_is_still_there(root):
         return False, "%s no longer holds %s" % (TEST_FILE, TEST_FN)
     if re.search(r"#\[ignore", body):
         return False, "%s carries an ignore attribute" % TEST_FILE
-    return True, "%s holds %s and nothing in the file is ignored" % (TEST_FILE, TEST_FN)
+    written = the_body(body)
+    if written is None:
+        return False, "%s holds %s and its body cannot be read" % (TEST_FILE, TEST_FN)
+    got = hash_of(written)
+    if got != BODY_SHA256:
+        return False, ("%s has moved: the body hashes %s and the streak was counted over %s. "
+                       "Change BODY_SHA256 in the same commit that changes the test, or the count "
+                       "carries on over a test that measures something else"
+                       % (TEST_FN, got[:16], BODY_SHA256[:16]))
+    return True, ("%s holds %s, nothing in the file is ignored, and the body still hashes %s"
+                  % (TEST_FILE, TEST_FN, BODY_SHA256[:16]))
 
 
 def count(runs, need, out=sys.stdout):
     streak = 0
     for run in runs:
         verdict = step_verdict(run)
-        print("run %-12s %s  %s: %s" % (run["id"], run["sha"][:7], STEP, verdict), file=out)
-        if run.get("orphaned"):
-            continue
+        orphan = run.get("orphaned")
+        print("run %-12s %s  %s: %s%s"
+              % (run["id"], run["sha"][:7], STEP, verdict,
+                 "  (on a commit main no longer has)" if orphan else ""), file=out)
         if verdict == "success":
-            streak += 1
+            # A pass on a commit `main` dropped is not evidence about the code `main` carries, so it
+            # does not count. It does not reset either: nothing failed.
+            if not orphan:
+                streak += 1
         else:
             print("   streak reset here, it stood at %d" % streak, file=out)
             streak = 0
@@ -164,9 +232,18 @@ def self_test(root):
          [run("a" * 40, passed) for _ in range(19)] + [run("e" * 40, skipped)], 0, False),
         ("nineteen clean runs is not twenty",
          [run("a" * 40, passed) for _ in range(19)], 19, False),
-        ("a run on a commit main no longer has neither counts nor resets",
-         [dict(run("g" * 40, failed), orphaned=True)] + [run("a" * 40, passed) for _ in range(20)],
+        ("a passing run on a commit main no longer has neither counts nor resets",
+         [run("a" * 40, passed) for _ in range(10)]
+         + [dict(run("g" * 40, passed), orphaned=True)]
+         + [run("a" * 40, passed) for _ in range(10)],
          20, True),
+        # The half the orphan rule got wrong. Not counting a pass is the conservative direction and
+        # not resetting on a failure is the reckless one, and the two sat on one branch.
+        ("a failing run on a commit main no longer has still resets the streak",
+         [run("a" * 40, passed) for _ in range(10)]
+         + [dict(run("g" * 40, failed), orphaned=True)]
+         + [run("a" * 40, passed) for _ in range(10)],
+         10, False),
         ("and it cannot be used to make up the twenty",
          [dict(run("g" * 40, passed), orphaned=True)] + [run("a" * 40, passed) for _ in range(19)],
          19, False),
@@ -200,6 +277,10 @@ def self_test(root):
                 ("the test renamed out of the tree", body.replace("fn %s(" % TEST_FN, "fn gone(")),
                 ("the test left in place but ignored",
                  body.replace("fn %s(" % TEST_FN, "#[ignore]\nfn %s(" % TEST_FN)),
+                # The one a name check cannot see. The function is there, it is not ignored, and
+                # it asserts nothing, so every check above it goes on passing.
+                ("the test gutted to an assertion that cannot fail",
+                 body.replace(the_body(body), GUTTED)),
                 ("the file gone altogether", None)]:
             if planted is None:
                 planted_path.unlink()
@@ -219,7 +300,17 @@ def main():
     ap.add_argument("--need", type=int, default=NEED)
     ap.add_argument("--from-json", help="read the runs from a file instead of the API")
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--body-sha256", action="store_true",
+                    help="print the counted test's body hash as it stands in this tree")
     args = ap.parse_args()
+
+    if args.body_sha256:
+        written = the_body((root / TEST_FILE).read_text(encoding="utf-8"))
+        if written is None:
+            print("%s does not hold a readable %s" % (TEST_FILE, TEST_FN))
+            return 1
+        print(hash_of(written))
+        return 0
 
     if args.self_test:
         bad = self_test(root)
