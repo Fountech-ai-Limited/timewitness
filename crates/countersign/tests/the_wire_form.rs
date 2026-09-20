@@ -365,3 +365,107 @@ fn the_hash_a_response_names_its_request_by_is_the_hash_of_the_request_body() {
     other.sequence += 1;
     assert_ne!(other.body_hash(), request.body_hash());
 }
+
+#[test]
+fn a_field_the_form_does_not_name_is_refused() {
+    // This is the one second spelling the re-encode guard cannot see. An unknown field is in the
+    // decoded value, so it encodes back to the bytes it arrived as and the comparison passes; the
+    // reader then looks up the names it knows and never walks the map, so the field is dropped and
+    // `to_wire` re-emits the clean spelling. Two values that mean the same thing and hash
+    // differently is what `base64url.rs` says the whole design exists to remove, and from the slice
+    // that signs `to_cbor()` it would be a signature over bytes nobody sent.
+    let shapes: [(&str, Value); 6] = [
+        ("zz", Value::text("anything at all")),
+        ("sig", Value::Bytes(vec![0x5a; 64])),
+        ("v2", Value::Int(2)),
+        ("", Value::text("a field with no name")),
+        (
+            "nested",
+            Value::Array(vec![Value::Int(1), Value::text("two")]),
+        ),
+        ("order", Value::text("first")),
+    ];
+    for (name, extra) in &shapes {
+        let wire = wire_with(&a_request(), |pairs| {
+            pairs.push((key_of(name), extra.clone()));
+        });
+        assert_eq!(
+            Exchange::from_wire(&wire),
+            Err(Refusal::UnknownField {
+                name: (*name).to_string()
+            }),
+            "a request carrying `{name}` was not refused"
+        );
+    }
+
+    // And on a response as well as on a request, because the response half is where an added
+    // `order` field would do its work.
+    let wire = wire_with(&a_response(), |pairs| {
+        pairs.push((key_of("order"), Value::text("first")));
+    });
+    assert_eq!(
+        Exchange::from_wire(&wire),
+        Err(Refusal::UnknownField {
+            name: "order".to_string()
+        }),
+        "a response carrying `order` was not refused"
+    );
+
+    // The same through the tool call route, which shares everything below the encoding.
+    let Value::Map(mut pairs) = cbor::decode(&a_request().to_cbor()).expect("our own bytes decode")
+    else {
+        panic!("the body is a map");
+    };
+    pairs.push((key_of("zz"), Value::Int(1)));
+    pairs.sort_by_cached_key(|(k, _)| cbor::encode(k));
+    assert_eq!(
+        Exchange::from_value(&Value::Map(pairs)),
+        Err(Refusal::UnknownField {
+            name: "zz".to_string()
+        })
+    );
+
+    // A long name is reported short, so a refusal cannot be made to carry a paragraph of somebody
+    // else's text into whatever records it.
+    let long = "z".repeat(200);
+    let wire = wire_with(&a_request(), |pairs| {
+        pairs.push((key_of(&long), Value::Int(1)));
+    });
+    match Exchange::from_wire(&wire) {
+        Err(Refusal::UnknownField { name }) => assert_eq!(name.chars().count(), 32),
+        other => panic!("a 200 character field name gave {other:?}"),
+    }
+
+    // A key that is not text at all, which the encoding allows and this form does not.
+    let wire = wire_with(&a_request(), |pairs| {
+        pairs.push((Value::Int(9), Value::Int(1)));
+    });
+    assert_eq!(Exchange::from_wire(&wire), Err(Refusal::KeyIsNotText));
+
+    // The control: the same helper with nothing added still passes, so the six above failed for
+    // the field and not for the rebuild.
+    let wire = wire_with(&a_request(), |_| {});
+    assert_eq!(Exchange::from_wire(&wire), Ok(a_request()));
+}
+
+#[test]
+fn a_version_this_does_not_know_is_refused_before_its_unknown_fields_are() {
+    // A later version of this form will carry fields v1 does not name, and a reader that refuses it
+    // for the fields rather than for the version tells the next person the wrong thing. So the
+    // version is read first and the walk over the keys comes after it.
+    let wire = wire_with(&a_request(), |pairs| {
+        for (k, v) in pairs.iter_mut() {
+            if k == &key_of("v") {
+                *v = Value::Int(2);
+            }
+        }
+        pairs.push((key_of("something_v2_carries"), Value::Int(1)));
+    });
+    assert!(
+        matches!(
+            Exchange::from_wire(&wire),
+            Err(Refusal::NotThisVersion { .. })
+        ),
+        "a v2 body with a v2 field was refused for the field rather than for the version"
+    );
+}

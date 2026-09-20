@@ -65,6 +65,15 @@ pub const PREFIX: &str = "tw1.";
 /// payload is a version anybody on the path can rewrite.
 pub const VERSION: i128 = 1;
 
+/// Every field name this form knows, in the order the encoder writes them.
+///
+/// It sits beside the writer on purpose. A field added to [`Exchange::to_cbor`] and not added here
+/// is refused by our own reader, which shows up as a failing test rather than as a header the other
+/// side quietly drops.
+pub const FIELDS: [&str; 10] = [
+    "v", "role", "hash", "seq", "lo", "mid", "hi", "rcpt", "key", "req",
+];
+
 /// The longest header value this will emit or accept, in characters.
 ///
 /// Four kilobytes. Common servers refuse a single header line at 8 KB and a whole header block at 8
@@ -179,6 +188,20 @@ pub enum Refusal {
         /// Which one.
         name: &'static str,
     },
+    /// A field the form does not name is on the wire.
+    ///
+    /// This is the one second spelling the re-encode guard in [`Exchange::from_wire`] cannot see.
+    /// An unknown field is part of the decoded value, so it encodes back to the bytes it arrived
+    /// as and that comparison passes. A reader that then looks up only the names it knows drops
+    /// the field and re-emits the clean spelling, which is two values meaning the same thing and
+    /// hashing differently. Refusing it here is what stops a signature over [`Exchange::to_cbor`]
+    /// covering bytes that never travelled.
+    UnknownField {
+        /// What it was called, at most the first thirty-two characters.
+        name: String,
+    },
+    /// A key on the wire is not text, and every field this form names is.
+    KeyIsNotText,
     /// The values decode but say something that cannot be true.
     Incoherent {
         /// What is wrong with it, in words a person reads once.
@@ -207,6 +230,12 @@ impl core::fmt::Display for Refusal {
             }
             Refusal::MissingField { name } => write!(f, "`{name}` is not there"),
             Refusal::WrongType { name } => write!(f, "`{name}` is the wrong shape"),
+            Refusal::UnknownField { name } => {
+                write!(f, "`{name}` is a field this form does not name")
+            }
+            Refusal::KeyIsNotText => {
+                write!(f, "a key on the wire is not text and every field here is")
+            }
             Refusal::Incoherent { detail } => write!(f, "{detail}"),
         }
     }
@@ -322,6 +351,29 @@ impl Exchange {
             return Err(Refusal::NotThisVersion {
                 found: format!("{PREFIX} carrying v {}", int("v")?),
             });
+        }
+
+        // Every key is one this form names, or the whole value is refused. The version is read
+        // first, above, because a later version of this form will carry fields v1 does not name and
+        // refusing that for the field rather than for the version tells the next reader the wrong
+        // thing.
+        //
+        // This is the half of the second-spelling rule that `from_wire`'s re-encode guard cannot
+        // reach. An unknown field is in the decoded value, so it encodes back to the bytes it
+        // arrived as and that comparison passes; ignoring it here and re-emitting the clean
+        // spelling would leave two values that mean the same thing and hash differently, which is
+        // the fault deterministic encoding exists to remove. From the slice that signs
+        // `to_cbor()`, it would be a signature over bytes nobody sent.
+        for (key, _) in pairs {
+            match key {
+                Value::Text(name) if FIELDS.contains(&name.as_str()) => {}
+                Value::Text(name) => {
+                    return Err(Refusal::UnknownField {
+                        name: name.chars().take(32).collect(),
+                    })
+                }
+                _ => return Err(Refusal::KeyIsNotText),
+            }
         }
 
         let role = match get("role") {
