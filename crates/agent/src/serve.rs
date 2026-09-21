@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use timewitness_clock::MonotonicClock;
+use timewitness_clock::{BandReading, MonotonicClock};
 use timewitness_sources::{Exchange, TimeSource};
 
 use crate::resident::Resident;
@@ -272,6 +272,7 @@ pub fn poll_forever(
     report: &Reporter,
 ) {
     let mut round = 0usize;
+    let mut band_said = None;
     loop {
         let mut exchanges = Vec::with_capacity(sources.len());
         for source in &mut sources {
@@ -297,7 +298,9 @@ pub fn poll_forever(
             }
         }
 
-        take(shared, &exchanges, report);
+        if let Some(line) = band_line(&mut band_said, take(shared, &exchanges, report)) {
+            report(line);
+        }
 
         round += 1;
         std::thread::sleep(if round < cadence.settling_rounds {
@@ -308,20 +311,46 @@ pub fn poll_forever(
     }
 }
 
-/// Hand a round to the model, under the lock and no longer.
-fn take(shared: &Arc<Mutex<Resident>>, exchanges: &[Exchange], report: &Reporter) {
+/// The line to print when the band reading changes to a different answer, and nothing otherwise.
+///
+/// The operator is the one person the band reading was written for: whether the assumption about
+/// this machine's crystal holds is a fact about the machine, and until 2026-09-21 only a program
+/// written against the clock crate could see it. So the agent says it, once each time the answer
+/// changes kind rather than every round, because a line every thirty-two seconds is a log nobody
+/// reads. A change of magnitude inside one answer is not a new answer.
+fn band_line(
+    said: &mut Option<std::mem::Discriminant<BandReading>>,
+    now: Option<BandReading>,
+) -> Option<String> {
+    let now = now?;
+    let kind = std::mem::discriminant(&now);
+    if *said == Some(kind) {
+        return None;
+    }
+    *said = Some(kind);
+    Some(format!("this machine's rate against the band: {now}"))
+}
+
+/// Hand a round to the model, under the lock and no longer, and say what the fit made of the band.
+fn take(
+    shared: &Arc<Mutex<Resident>>,
+    exchanges: &[Exchange],
+    report: &Reporter,
+) -> Option<BandReading> {
     match shared.lock() {
         Ok(mut resident) => {
             let validity = resident.take(exchanges);
             if !validity.is_valid() {
                 report(format!("the model will not answer: {validity:?}"));
             }
+            resident.band()
         }
         // The polling thread is the only one that can leave the model half updated, and it is this
         // one, so reaching here means the answering side panicked while reading. Saying so is all
         // there is to do; the answering side refuses on the same condition.
         Err(_) => {
-            report("the model was left in an unknown state and this agent will not use it".into())
+            report("the model was left in an unknown state and this agent will not use it".into());
+            None
         }
     }
 }
@@ -395,4 +424,37 @@ pub fn answer(
         report(format!("a caller went away before the answer did: {e}"));
     }
     let _ = stream.flush();
+}
+
+#[cfg(test)]
+mod band_tests {
+    use super::*;
+
+    #[test]
+    fn the_band_is_said_once_each_time_the_answer_changes_kind() {
+        let mut said = None;
+        let cannot = BandReading::CannotTell { error_ppm: 900.0 };
+        let inside = |m: f64| BandReading::Inside { magnitude_ppm: m };
+        let lines: Vec<Option<String>> = [
+            None,
+            Some(cannot),
+            Some(BandReading::CannotTell { error_ppm: 400.0 }),
+            Some(inside(3.0)),
+            Some(inside(3.5)),
+            Some(cannot),
+        ]
+        .into_iter()
+        .map(|now| band_line(&mut said, now))
+        .collect();
+        let printed: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, line)| line.as_ref().map(|_| i))
+            .collect();
+        assert_eq!(printed, vec![1, 3, 5], "{lines:?}");
+        let first = lines[1].as_deref().unwrap_or_default();
+        assert!(first.contains("cannot tell"), "{first}");
+        let second = lines[3].as_deref().unwrap_or_default();
+        assert!(second.contains("inside the band"), "{second}");
+    }
 }
