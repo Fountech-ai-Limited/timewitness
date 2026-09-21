@@ -161,6 +161,33 @@ def the_body(text):
     return None
 
 
+# The attributes the counted test carries, and it carries this one and no other. The body hash does
+# not see the lines above `fn`, so until 2026-09-21 a `#[cfg(any())]` there compiled the test out of
+# every build, `cargo test` never listed it, and this counter went on printing that the body still
+# hashed right. The same went for `#[cfg(windows)]` on a Linux runner and `#[cfg_attr(unix, ignore)]`,
+# which the ignore search below does not match because the word is not straight after the bracket.
+ATTRIBUTES = ["#[test]"]
+
+
+def the_attributes(text):
+    """Every attribute between the item before the counted test and its `fn` line, comments left out.
+
+    Rust lets blank lines and comments sit between an attribute and what it applies to, so this
+    reads back to the end of the previous item rather than to the first line that is not `#[`.
+    """
+    start = re.search(r"^fn %s\(" % re.escape(TEST_FN), text, re.M)
+    lines = text[:start.start()].split("\n")[:-1]
+    found = []
+    for line in reversed(lines):
+        bare = line.strip()
+        if line[:1] not in ("", " ", "\t", "#", "/") and bare.endswith(("}", ";", "{")):
+            break
+        if not bare or bare.startswith("//"):
+            continue
+        found.append(bare)
+    return list(reversed(found))
+
+
 def the_test_is_still_there(root):
     path = pathlib.Path(root) / TEST_FILE
     if not path.exists():
@@ -170,6 +197,14 @@ def the_test_is_still_there(root):
         return False, "%s no longer holds %s" % (TEST_FILE, TEST_FN)
     if re.search(r"#\[ignore", body):
         return False, "%s carries an ignore attribute" % TEST_FILE
+    # An inner attribute switches the whole file, and the test in it, on a condition.
+    if re.search(r"^\s*#!\[", body, re.M):
+        return False, "%s carries an inner attribute, which can compile the whole file out" % TEST_FILE
+    carried = the_attributes(body)
+    if carried != ATTRIBUTES:
+        return False, ("%s carries %s above it, and the only attribute it may carry is %s, because "
+                       "anything else can take it out of the run it is counted over"
+                       % (TEST_FN, " ".join(carried) or "nothing", " ".join(ATTRIBUTES)))
     written = the_body(body)
     if written is None:
         return False, "%s holds %s and its body cannot be read" % (TEST_FILE, TEST_FN)
@@ -281,6 +316,17 @@ def self_test(root):
                 # it asserts nothing, so every check above it goes on passing.
                 ("the test gutted to an assertion that cannot fail",
                  body.replace(the_body(body), GUTTED)),
+                # Four ways to keep the body whole and the test out of the run. None of them was
+                # seen until 2026-09-21, because the hash starts at `fn`.
+                ("the test compiled out by cfg(any())",
+                 body.replace("fn %s(" % TEST_FN, "#[cfg(any())]\nfn %s(" % TEST_FN)),
+                ("the test compiled out on Linux, a blank line above",
+                 body.replace("#[test]\nfn %s(" % TEST_FN, "#[cfg(windows)]\n\n#[test]\nfn %s(" % TEST_FN)),
+                ("the test ignored on Linux by cfg_attr",
+                 body.replace("fn %s(" % TEST_FN, "#[cfg_attr(unix, ignore)]\nfn %s(" % TEST_FN)),
+                ("the test compiled out over two lines",
+                 body.replace("fn %s(" % TEST_FN, "#[cfg(all(\n    windows,\n    unix\n))]\nfn %s(" % TEST_FN)),
+                ("the whole file compiled out", "#![cfg(any())]\n" + body),
                 ("the file gone altogether", None)]:
             if planted is None:
                 planted_path.unlink()
@@ -290,6 +336,15 @@ def self_test(root):
             print("%-52s %-5s  %s" % (label, str(there).lower(), why))
             if there:
                 bad += 1
+        # And the other side: a comment above the test changes nothing it runs, so it stands.
+        planted_path.parent.mkdir(parents=True, exist_ok=True)
+        planted_path.write_text(
+            body.replace("fn %s(" % TEST_FN, "// Why this test is counted.\nfn %s(" % TEST_FN),
+            encoding="utf-8", newline="")
+        there, why = the_test_is_still_there(tmp)
+        print("%-52s %-5s  %s" % ("a comment added above the test", str(there).lower(), why))
+        if not there:
+            bad += 1
     return bad
 
 
