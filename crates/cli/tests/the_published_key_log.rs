@@ -230,6 +230,7 @@ fn a_head_carrying_a_signature_over_another_head_fails_the_step() {
     // head of the full log, the file still parses: the size and the root on the head line are the
     // right ones. Only the signature says otherwise.
     let shorter = KeyLog {
+        checkpoints: Vec::new(),
         entries: honest.entries[..1].to_vec(),
         head: None,
     };

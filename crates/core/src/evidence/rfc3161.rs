@@ -457,6 +457,7 @@ impl Inspected<'_> {
         }
 
         let signer = format!("{} serial {}", authority.name, hex(&token.serial));
+        let stated = self.stated_instant();
         match self.supports(authority.accuracy_where_the_token_states_none) {
             Some((earliest, latest)) => Checked::over(
                 SCHEME,
@@ -465,16 +466,15 @@ impl Inspected<'_> {
                 latest,
                 token.nonce.clone(),
                 checks,
-            ),
+            )
+            .map(|checked| checked.stating(stated)),
             // The signature holds and the authority has still put no number on its own clock, so
             // there is no edge in UTC to hand back. Answering with the stated time would say the
             // authority vouched for a perfect clock, which is the one thing it declined to do.
-            None => Ok(Checked::with_no_interval(
-                SCHEME,
-                signer,
-                token.nonce.clone(),
-                checks,
-            )),
+            None => Ok(
+                Checked::with_no_interval(SCHEME, signer, token.nonce.clone(), checks)
+                    .stating(stated),
+            ),
         }
     }
 }

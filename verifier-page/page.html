@@ -118,6 +118,9 @@ and carries signed evidence from parties who have never heard of us. This page c
     anybody but you.</label>
     <input type="file" id="subject">
     <p class="notice" id="subject-notice" hidden></p>
+    <label for="key-log">A copy of the key log, if you have one. Read here and never sent; nothing is
+    fetched to check it.</label>
+    <input type="file" id="key-log">
     <button type="submit" id="go" disabled>Check it</button>
   </fieldset>
 </form>
@@ -240,9 +243,21 @@ function renderResult(result) {
   // the command line prints, count of attestations checked included. This page composing its own
   // is how the two would drift. The line under it, how wide the outside evidence brackets the moment
   // and whose the width is, comes from the same place for the same reason.
-  if (result.accepted) {
+  if (result.key_log_error) {
+    renderUnavailable(result.key_log_error + ". Nothing was checked.");
+    return;
+  }
+  // Where the checking code graded the receipt as a certificate, its first line is the one the
+  // command line prints first, and the receipt's own verdict follows it rather than being hidden.
+  const grade = result.certificate;
+  if (result.accepted && grade && !grade.holds) {
+    verdict.className = "verdict refused";
+    verdict.textContent = grade.headline;
+    bracket.textContent = result.verdict + " " + (result.bracket || "");
+    detail.textContent = grade.detail;
+  } else if (result.accepted) {
     verdict.className = "verdict held";
-    verdict.textContent = result.verdict;
+    verdict.textContent = grade ? grade.headline : result.verdict;
     bracket.textContent = result.bracket || "";
     detail.textContent =
       "Read the list below rather than the lines above it. A check nobody could run is not a check " +
@@ -397,6 +412,7 @@ document.getElementById("form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const receiptFile = document.getElementById("receipt").files[0];
   const subjectFile = document.getElementById("subject").files[0];
+  const keyLogFile = document.getElementById("key-log").files[0];
   if (!receiptFile) return;
 
   const form = document.getElementById("form");
@@ -418,9 +434,13 @@ document.getElementById("form").addEventListener("submit", async (event) => {
       wasm.tw_free(receipt);
       throw error;
     }
-    const result = take(wasm.tw_verify(receipt, subject, subjectFile ? 1 : 0));
+    const keyLog = keyLogFile ? put(new Uint8Array(await keyLogFile.arrayBuffer())) : 0;
+    const result = keyLogFile
+      ? take(wasm.tw_verify_with_key_log(receipt, subject, subjectFile ? 1 : 0, keyLog, 1))
+      : take(wasm.tw_verify(receipt, subject, subjectFile ? 1 : 0));
     wasm.tw_free(receipt);
     if (subject !== 0) wasm.tw_free(subject);
+    if (keyLog !== 0) wasm.tw_free(keyLog);
 
     renderResult(result);
   } catch (error) {

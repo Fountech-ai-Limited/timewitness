@@ -29,6 +29,7 @@
 
 pub mod anchor_file;
 pub mod cannot_prove;
+pub mod certificate;
 pub mod floor;
 pub mod order;
 
@@ -155,6 +156,9 @@ pub struct Assessment {
     pub anchors_held: usize,
     /// What was established about the key log, where the reader supplied one.
     pub key_log: Option<KeyLogReport>,
+    /// Whether the receipt is a TimeWitness certificate, where this reader holds that
+    /// certification has begun and every version 0 check held.
+    pub certificate: Option<certificate::Grade>,
 }
 
 /// What a reader established about the key log they supplied, for a script reading fields.
@@ -177,6 +181,9 @@ pub const KEY_LOG_QUESTION: &str = "is that key one of ours";
 /// The question the kept log step answers.
 pub const KEPT_LOG_QUESTION: &str = "is this log an extension of the one you kept";
 
+/// The question asked of the certificate a receipt is held on, once it is found.
+pub const CERTIFICATE_QUESTION: &str = "was that certificate published before its window began";
+
 impl Assessment {
     /// Whether every check that ran held.
     ///
@@ -186,6 +193,27 @@ impl Assessment {
     #[must_use]
     pub fn accepted(&self) -> bool {
         !self.steps.iter().any(|s| s.state.is_failure())
+    }
+
+    /// Whether the receipt stands: every check that ran held, and where this reader grades
+    /// certificates, it is one or was signed before there were any. This is the exit code.
+    #[must_use]
+    pub fn holds(&self) -> bool {
+        self.accepted()
+            && self
+                .certificate
+                .as_ref()
+                .map_or(true, certificate::Grade::stands)
+    }
+
+    /// The line a reader stops at: the certificate grade where it changes what they should take
+    /// away, and the verdict otherwise.
+    #[must_use]
+    pub fn headline(&self) -> String {
+        self.certificate
+            .as_ref()
+            .and_then(certificate::Grade::first_line)
+            .unwrap_or_else(|| self.verdict())
     }
 
     /// The step that refused it, where one did.
@@ -433,6 +461,7 @@ fn assess(
             agent_entries: log.agent_entries(),
             head: log.check_head(&held),
         }),
+        certificate: None,
     };
 
     // Size first, because everything after it allocates from what the file says about itself.
@@ -473,7 +502,10 @@ fn assess(
             short_hex(&receipt.agent_public_key)
         ),
     ));
-    steps.push(against_the_key_log(&receipt, key_log, &held));
+    match anchors.certification_began {
+        None => steps.push(against_the_key_log(&receipt, key_log, &held)),
+        Some(began) => steps.push(the_log_for_certificates(key_log, anchors, &held, began)),
+    }
     if let (Some(log), Some(kept)) = (key_log, kept) {
         steps.push(against_the_kept_log(log, kept, &held));
     }
@@ -487,6 +519,22 @@ fn assess(
     steps.push(check_floor(&receipt, floor));
     steps.push(check_subject(&receipt, subject));
     steps.push(check_order(&receipt));
+
+    // The certificate grade, only over a receipt every other check held, because a refusal is
+    // already the first thing a reader is told and a grade beside it would be a second verdict.
+    if let Some(began) = anchors.certification_began {
+        if !steps.iter().any(|s| s.state.is_failure()) {
+            let grade = certificate::grade(&receipt, &evidence, key_log, &held, began);
+            if let (certificate::Grade::Held { entry, .. }, Some(log)) = (&grade, key_log) {
+                if let Err(why) = certificate::check_the_certificate(log, *entry, anchors) {
+                    steps.push(Step::failed(CERTIFICATE_QUESTION, why));
+                }
+            }
+            if !steps.iter().any(|s| s.state.is_failure()) {
+                assessment.certificate = Some(grade);
+            }
+        }
+    }
 
     assessment.steps = steps;
     assessment.receipt = Some(receipt);
@@ -646,6 +694,82 @@ fn against_the_key_log(receipt: &Receipt, key_log: Option<&KeyLog>, held: &[[u8;
             ),
         ),
     }
+}
+
+/// `is that key one of ours`, where this reader grades certificates.
+///
+/// The window is no longer judged here, and never on the receipt's reading: the certificate grade
+/// above the steps judges it on outside evidence. What is left for this step is the log itself:
+/// whether it is ours, and whether it states the cutoff this reader holds. A log that states another
+/// cutoff, or certifies a window before it, fails here, and the receipt read against it is refused.
+fn the_log_for_certificates(
+    key_log: Option<&KeyLog>,
+    anchors: &TrustAnchors,
+    held: &[[u8; 32]],
+    began: timewitness_core::UnixNanos,
+) -> Step {
+    let question = KEY_LOG_QUESTION;
+    let Some(log) = key_log else {
+        return Step::not_checked(
+            question,
+            "no key log was supplied, so whether the app certified this key is not answered. The \
+             line above the steps says so",
+        );
+    };
+    let signer =
+        match log.check_head(held) {
+            HeadCheck::Checked(signer) => signer,
+            HeadCheck::BadSignature => return Step::failed(
+                question,
+                "the head on this key log is not signed by the key the head itself names, so the \
+                 log has been edited or the signature was moved onto it from somewhere else. \
+                 Nothing in it is worth reading",
+            ),
+            HeadCheck::SignerNotHeld(signer) => {
+                return Step::not_checked(
+                    question,
+                    format!(
+                    "the log carries {} entries under a head signed by {}, and that is not a key \
+                     this reader holds for us. Whatever the list says, it is not us saying it",
+                    log.entries.len(),
+                    short_hex(&signer)
+                ),
+                )
+            }
+            HeadCheck::None => {
+                return Step::not_checked(
+                    question,
+                    format!(
+                        "the log carries {} entries and no signed head, so it is signed by nobody",
+                        log.entries.len()
+                    ),
+                )
+            }
+        };
+    if !log.checkpoints_are_ours(held) {
+        return Step::not_checked(
+            question,
+            "an earlier head in this log is not signed by a key this reader holds for us, so the \
+             dates it gives the entries under it are nobody's",
+        );
+    }
+    if let Err(why) = certificate::check_the_log(log, anchors, began) {
+        return Step::failed(question, why);
+    }
+    Step::held(
+        question,
+        format!(
+            "the log states {} entries under {} heads, the newest signed by {}, a key this reader \
+             holds for us, and it does not contradict certification beginning at {} ns. **This is \
+             a list we signed and not third-party evidence.** Whether this key was certified when \
+             the receipt was signed is judged above the steps on outside evidence alone, never on \
+             the receipt's own reading",
+            log.entries.len(),
+            log.heads().count(),
+            short_hex(&signer),
+            began.as_nanos()
+        ),
+    )
 }
 
 /// `is this log an extension of the one you kept`, for a reader holding an earlier copy.

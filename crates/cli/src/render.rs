@@ -274,8 +274,20 @@ pub fn version() -> String {
 pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
     let mut out = String::new();
 
+    // Where this reader grades certificates, the grade comes first when it changes what a reader
+    // should take away, with what it rests on under it, and the verdict every version 0 check
+    // earned follows, so the outside signatures a receipt that is not a certificate still carries
+    // are never hidden behind it.
+    if let Some(first) = a.certificate.as_ref().and_then(|g| g.first_line()) {
+        out.push_str(&first);
+        out.push('\n');
+    }
     out.push_str(&a.verdict());
     out.push('\n');
+    if let Some(grade) = &a.certificate {
+        out.push_str(&grade.detail());
+        out.push('\n');
+    }
     // Directly under the verdict, and under `--quiet` too, because this is the line that stops the
     // one above being read as outside parties vouching for the width. One line, unwrapped like the
     // verdict, so a script taking the first two lines takes both whole.
@@ -467,6 +479,10 @@ pub(crate) fn write_field(out: &mut String, name: &str, value: impl core::fmt::D
 pub fn fields(a: &Assessment) -> String {
     let mut out = String::new();
     write_field(&mut out, "accepted", a.accepted());
+    if let Some(grade) = &a.certificate {
+        write_field(&mut out, "certificate", grade.word());
+        write_field(&mut out, "holds", a.holds());
+    }
     if let Some(step) = a.refusal() {
         write_field(&mut out, "refused_at", &step.question);
         write_field(&mut out, "refusal", step.state.detail());

@@ -15,6 +15,8 @@
 //! - `tw_free(address)` gives them back.
 //! - `tw_verify(receipt, subject, has_subject)` takes two of those addresses and returns the address
 //!   of a buffer whose first four bytes are the length, little endian, of the UTF-8 JSON after them.
+//! - `tw_verify_with_key_log(receipt, subject, has_subject, key_log, has_key_log)` is the same with a
+//!   copy of the key log the reader holds, read here as text and never fetched.
 //! - `tw_cannot_prove()` returns the same shape, holding the list of what this product cannot prove.
 //!
 //! The caller frees everything it was given with `tw_free`. Nothing here dereferences a pointer,
@@ -37,8 +39,11 @@ mod randomness;
 
 use std::sync::{Mutex, PoisonError};
 
+use timewitness_core::keylog::file::parse as parse_key_log;
 use timewitness_receipt::{json, Value};
-use timewitness_verify::{anchor_file, cannot_prove, verify, Floor, State, Subject};
+use timewitness_verify::{
+    anchor_file, cannot_prove, verify, verify_with_key_log, Floor, State, Subject,
+};
 
 /// Every buffer this module has handed out, kept alive and owned here.
 ///
@@ -137,6 +142,73 @@ pub extern "C" fn tw_verify(receipt: usize, subject: usize, has_subject: u32) ->
         Some(text) => answer(&text),
         None => 0,
     }
+}
+
+/// Check a receipt against a copy of the key log the reader was handed, and answer with JSON.
+///
+/// The log is bytes the reader chose, read here and never fetched. Where it is not a key log the
+/// answer is `{"key_log_error": ...}` and nothing else, because a reader who supplied a log that
+/// could not be read did not ask the question without it.
+#[allow(
+    unsafe_code,
+    reason = "exporting a function to WebAssembly is what this crate is for"
+)]
+#[no_mangle]
+pub extern "C" fn tw_verify_with_key_log(
+    receipt: usize,
+    subject: usize,
+    has_subject: u32,
+    key_log: usize,
+    has_key_log: u32,
+) -> usize {
+    let text = held(|buffers| {
+        let receipt_bytes = find(buffers, receipt)?;
+        let subject = if has_subject == 0 {
+            None
+        } else {
+            Some(find(buffers, subject)?)
+        };
+        let log = if has_key_log == 0 {
+            None
+        } else {
+            Some(find(buffers, key_log)?)
+        };
+        Some(json_with_key_log(receipt_bytes, subject, log))
+    });
+    match text {
+        Some(text) => answer(&text),
+        None => 0,
+    }
+}
+
+/// [`tw_verify_with_key_log`] with no addresses in the way, for the tests.
+#[must_use]
+pub fn json_with_key_log(receipt: &[u8], subject: Option<&[u8]>, key_log: Option<&[u8]>) -> String {
+    let log = match key_log.map(|bytes| {
+        std::str::from_utf8(bytes)
+            .map_err(|_| "the key log is not text".to_string())
+            .and_then(|text| parse_key_log(text).map_err(|e| e.to_string()))
+    }) {
+        None => None,
+        Some(Ok(log)) => Some(log),
+        Some(Err(why)) => {
+            return json::render(&Value::map([(
+                "key_log_error",
+                Value::text(format!("the key log could not be read: {why}")),
+            )]))
+        }
+    };
+    let subject = match subject {
+        Some(bytes) => Subject::Bytes(bytes),
+        None => Subject::NotSupplied,
+    };
+    as_json(&verify_with_key_log(
+        receipt,
+        subject,
+        &anchor_file::published(),
+        &Floor::default(),
+        log.as_ref(),
+    ))
 }
 
 /// Check a receipt and answer with the JSON the page reads, with no addresses in the way.
@@ -370,6 +442,18 @@ fn as_json(a: &timewitness_verify::Assessment) -> String {
         top.push(("basis_reason", Value::text(evidence.basis_reason.clone())));
     }
 
+    // In the same shape as the command line's, and only where the reader grades certificates.
+    if let Some(grade) = &a.certificate {
+        top.push((
+            "certificate",
+            Value::map([
+                ("grade", Value::text(grade.word())),
+                ("headline", Value::text(a.headline())),
+                ("detail", Value::text(grade.detail())),
+                ("holds", Value::Bool(a.holds())),
+            ]),
+        ));
+    }
     json::render(&Value::map(top))
 }
 

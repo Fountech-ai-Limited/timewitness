@@ -79,7 +79,27 @@ pub fn run(args: &Args) -> Outcome {
     // Whatever the entries now are, the head describes them or there is no head. A head left over
     // from before an append would state a root the file no longer hashes to, and the format refuses
     // to read that file at all, so leaving one behind would produce a log nobody can use.
-    log.head = None;
+    //
+    // A `v2` log is a history and keeps every head it served, so there the old head stays, above
+    // the entries appended since, and what was appended has to be signed.
+    let previous = log.head.take();
+    let history = before.needs_version_2();
+    if history {
+        if let Some(previous) = previous {
+            if previous.head.size == log.entries.len() {
+                return fail(
+                    "this log is a history of signed heads and nothing was appended to sign",
+                );
+            }
+            log.checkpoints.push(previous);
+        }
+        if args.value("--sign").is_none() {
+            return fail(
+                "this log is a history of signed heads, and entries appended to it are signed in \
+                 the same run. Give --sign",
+            );
+        }
+    }
     if let Some(signing_path) = args.value("--sign") {
         match sign_head(&log, Path::new(signing_path)) {
             Ok(head) => log.head = Some(head),
@@ -145,6 +165,13 @@ fn entry_from(args: &Args, key: &str, log: &KeyLog) -> Result<KeyEntry, String> 
                 "--role retired is not how a key is retired. Use --retire <key>".to_string(),
             )
         }
+        Some(word @ ("certificate" | "cutoff")) => {
+            return Err(format!(
+                "--role {word} is not written here. A certificate is appended by the app, which \
+                 checks who is asking, and the cutoff is written once, with a beacon and a \
+                 witness on the head that carries it"
+            ))
+        }
         Some(word) => Role::from_word(word)
             .ok_or_else(|| format!("--role is agent or server and was given {word:?}"))?,
     };
@@ -202,6 +229,7 @@ fn entry_from(args: &Args, key: &str, log: &KeyLog) -> Result<KeyEntry, String> 
         deployment,
         valid_from,
         valid_until,
+        issued: None,
     })
 }
 
@@ -246,6 +274,7 @@ fn retirement_from(args: &Args, key: &str, log: &KeyLog) -> Result<KeyEntry, Str
         deployment: args.value("--label").unwrap_or("retired").to_string(),
         valid_from: at,
         valid_until: None,
+        issued: None,
     })
 }
 
@@ -309,6 +338,7 @@ mod tests {
 
     fn entry(key: u8) -> KeyEntry {
         KeyEntry {
+            issued: None,
             public_key: [key; 32],
             role: Role::Agent,
             deployment: "a deployment".to_string(),
@@ -399,6 +429,7 @@ mod tests {
 
     fn log(keys: &[u8]) -> KeyLog {
         KeyLog {
+            checkpoints: Vec::new(),
             entries: keys.iter().copied().map(entry).collect(),
             head: None,
         }
