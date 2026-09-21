@@ -125,13 +125,7 @@ impl Resident {
     /// in the receipt that nothing was ever held to.
     #[must_use]
     pub fn policy_record(&self) -> PolicyRecord {
-        let policy = self.model.policy();
-        PolicyRecord {
-            max_bound_width: policy.max_bound_width,
-            min_sources: policy.min_sources as u32,
-            min_operators: Some(policy.min_operators as u32),
-            max_holdover: Some(policy.max_holdover),
-        }
+        crate::wire::policy_record(self.model.policy())
     }
 
     /// Take a round of exchanges and run a selection over them.

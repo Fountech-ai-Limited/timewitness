@@ -61,6 +61,7 @@ fn a_receipt(
         oscillator_holdover: 1,
         model_residual: 1,
         safety_margin: 0,
+        unclaimed_rate: None,
     };
     receipt.agent_public_key = key.public_key_bytes();
     key.sign(&receipt).expect("the agent signs its own receipt")
@@ -371,6 +372,7 @@ fn an_order_over_a_receipt_that_did_not_hold_does_not_stand() {
         oscillator_holdover: 1,
         model_residual: 1,
         safety_margin: 0,
+        unclaimed_rate: None,
     };
     let refused = key.sign(&refused).expect("it still signs");
 

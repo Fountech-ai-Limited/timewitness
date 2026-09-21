@@ -25,12 +25,12 @@ use crate::anchors::{RoughtimeServerKey, TrustAnchors};
 use crate::error::ReceiptError;
 use crate::report::{Bracket, EntryReport, Outcome, Verified};
 use crate::schema::{
-    reads_timescale, AgentClaim, Evidence, Payload, Receipt, Role, FORMAT_VERSION, LEAP_VALUES,
+    reads_timescale, AgentClaim, Evidence, Payload, Receipt, Role, LEAP_VALUES, READS,
 };
 use crate::value::Value;
 use timewitness_core::evidence::{drand, rfc3161, roughtime, Checked};
 use timewitness_core::time::{Nanos, UnixNanos, NANOS_PER_SEC};
-use timewitness_core::{EpsilonBasis, Timescale};
+use timewitness_core::{EpsilonBasis, SourceKind, Timescale};
 
 /// The widest a third-party sandwich may be before it stops supporting anything.
 ///
@@ -67,6 +67,7 @@ pub fn validate_with(receipt: &Receipt, anchors: &TrustAnchors) -> Result<Verifi
     check_interval(receipt)?;
     check_breakdown(receipt)?;
     check_sources(receipt)?;
+    check_what_version_1_states(receipt)?;
     check_against_its_own_policy(receipt)?;
     for entry in &receipt.evidence {
         check_evidence_entry(entry)?;
@@ -81,6 +82,8 @@ pub fn validate_with(receipt: &Receipt, anchors: &TrustAnchors) -> Result<Verifi
         basis_granted: granted,
         basis_reason: reason,
         anchors_held: anchors.count(),
+        // Carried outside the signed body, so it is read off the envelope by the caller that has it.
+        signature_witness: None,
     })
 }
 
@@ -197,8 +200,113 @@ pub fn validate_shape(value: &Value) -> Result<(), ReceiptError> {
 }
 
 fn check_version(receipt: &Receipt) -> Result<(), ReceiptError> {
-    if receipt.version != FORMAT_VERSION {
+    if !READS.contains(&receipt.version) {
         return Err(ReceiptError::UnknownVersion(receipt.version));
+    }
+    Ok(())
+}
+
+/// The fields version 1 added, held to what they say and to each other.
+///
+/// A version 0 receipt carries none of them and nothing here is asked of it. A version 1 receipt has
+/// to carry all of them, which the decoder already requires of a receipt read from bytes; this says
+/// it again for a receipt built in memory, which is what a signer hands the validator.
+fn check_what_version_1_states(receipt: &Receipt) -> Result<(), ReceiptError> {
+    let c = &receipt.claim;
+    if receipt.version < 1 {
+        return Ok(());
+    }
+    let Some(unclaimed) = c.breakdown.unclaimed_rate else {
+        return Err(ReceiptError::Field(
+            "a version 1 receipt says how much of the holdover is a rate its agent is not \
+             correcting for, and this one does not"
+                .into(),
+        ));
+    };
+    if !c.policy.states_the_width_terms() {
+        return Err(ReceiptError::Field(
+            "a version 1 receipt states the three terms that set its width, the floor under one \
+             source's interval and the two oscillator rates, and this one does not"
+                .into(),
+        ));
+    }
+    if c.taken_by.is_none() {
+        return Err(ReceiptError::Field(
+            "a version 1 receipt says whether its reading was taken by the process that signed it \
+             or read from a resident agent, and this one does not"
+                .into(),
+        ));
+    }
+    if c.policy.max_holdover.is_none() || c.policy.min_operators.is_none() {
+        return Err(ReceiptError::Field(
+            "a version 1 receipt states its holdover ceiling and its floor on operators, and this \
+             one leaves one out"
+                .into(),
+        ));
+    }
+
+    // The part and the whole. A part of the holdover larger than the holdover is a receipt whose
+    // own numbers do not describe each other, and a rate the agent claims beside a rate it says it
+    // is not claiming is the same receipt saying two things.
+    if unclaimed < 0 {
+        return Err(ReceiptError::Inconsistent(
+            "unclaimed_rate_ns is negative, and no part of a width can be".into(),
+        ));
+    }
+    if unclaimed > c.breakdown.oscillator_holdover {
+        return Err(ReceiptError::Inconsistent(format!(
+            "the receipt says {unclaimed} ns of its holdover is a rate it is not correcting for, \
+             and the whole holdover is {} ns",
+            c.breakdown.oscillator_holdover
+        )));
+    }
+    if unclaimed > 0 && c.frequency_ppb != 0 {
+        return Err(ReceiptError::Inconsistent(
+            "the receipt claims a rate and also says part of its holdover covers a rate it is not \
+             correcting for, and a model does one or the other"
+                .into(),
+        ));
+    }
+
+    // The width terms. None of them can be negative, and a band of nought is refused as unset for
+    // the reason a ceiling of nought is: it is what the field holds when nobody filled it in.
+    if let Some(floor) = c.policy.source_interval_floor {
+        if floor < 0 {
+            return Err(ReceiptError::Inconsistent(
+                "the floor under a source's interval is negative".into(),
+            ));
+        }
+    }
+    if let Some(slew) = c.policy.frequency_slew_ppb_per_s {
+        if slew < 0 {
+            return Err(ReceiptError::Inconsistent(
+                "the rate the agent assumes an oscillator can move at is negative".into(),
+            ));
+        }
+    }
+    if let Some(span) = c.policy.frequency_span_ppb {
+        if span <= 0 {
+            return Err(ReceiptError::Inconsistent(
+                "the band the agent assumes an oscillator stays inside is nought or less, which \
+                 is what the field holds when nobody set it"
+                    .into(),
+            ));
+        }
+    }
+
+    // A source of a kind this format does not know. Version 0 reads one as plain NTP, which is the
+    // safe direction only while no kind this format lacks carries a signature; the day one does, an
+    // older reader would downgrade it without saying so. Version 1 refuses instead, and names it.
+    if let Some(s) = c
+        .sources
+        .iter()
+        .find(|s| SourceKind::from_wire(&s.kind).is_none())
+    {
+        return Err(ReceiptError::Field(format!(
+            "source {} is of kind {:?} and this format knows ntp, nts, roughtime and \
+             local-hardware, so nothing here can say what an answer of that kind proves",
+            s.id, s.kind
+        )));
     }
     Ok(())
 }
@@ -989,6 +1097,25 @@ fn examine_witness(
     printed_nonce_is_the_signed_one(entry, inspected.nonce())
         .map_err(|why| on_its_own("rfc3161", &why))?;
 
+    under_a_held_authority(
+        &inspected,
+        anchors,
+        |label_held| about_the_label(entry, label_held),
+        entry.detail.as_deref(),
+    )
+}
+
+/// A token, tried under every authority the reader pinned one of its certificates for.
+///
+/// Nobody holding a pin for it is an answer rather than a failure: the token is reported as not
+/// checked and why. A token that fails under a pin the reader holds refuses the whole receipt,
+/// because a signature that does not check out is not a weaker claim, it is a wrong one.
+fn under_a_held_authority(
+    inspected: &rfc3161::Inspected<'_>,
+    anchors: &TrustAnchors,
+    about_the_label: impl Fn(bool) -> String,
+    label: Option<&str>,
+) -> Result<Outcome, ReceiptError> {
     let carried = inspected.certificate_digests();
     let holders: Vec<&rfc3161::Authority> = anchors
         .timestamp_authorities
@@ -1006,7 +1133,7 @@ fn examine_witness(
             .iter()
             .map(|authority| authority.accepted_certificates.len())
             .sum();
-        let label_held = entry.detail.as_deref().is_some_and(|label| {
+        let label_held = label.is_some_and(|label| {
             anchors
                 .timestamp_authorities
                 .iter()
@@ -1017,7 +1144,7 @@ fn examine_witness(
              it holds {pinned}, so nothing here can check the signature{}",
             carried.len(),
             if carried.len() == 1 { "" } else { "s" },
-            about_the_label(entry, label_held)
+            about_the_label(label_held)
         )));
     }
     let mut last = (String::new(), String::new());
@@ -1032,6 +1159,55 @@ fn examine_witness(
         &format!("the certificate this reader pinned for {}", last.0),
         &last.1,
     ))
+}
+
+/// The witness over a receipt's own signature, which version 1 carries outside the signed body.
+///
+/// Every other outside signature in a receipt is about the thing stamped, so it places the subject
+/// and never the signing. This one is an RFC 3161 token over the SHA-256 of the 64 signature bytes,
+/// and it is held to everything the evidence entries are held to, with that digest where theirs has
+/// the payload hash: a token about any other signature is refused whatever the reader holds.
+///
+/// A checked witness dated before a checked beacon the receipt carries is refused as well. The
+/// beacon's value is inside the signature, so the signing came after the beacon, and a witness saying
+/// the signature existed before it is a receipt whose evidence contradicts itself.
+pub(crate) fn examine_signature_witness(
+    blob: &[u8],
+    signature: &[u8],
+    anchors: &TrustAnchors,
+    report: &Verified,
+) -> Result<EntryReport, ReceiptError> {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(signature).to_vec();
+    let inspected = rfc3161::inspect(blob, &digest).map_err(|e| {
+        ReceiptError::Inconsistent(format!(
+            "the witness over this receipt's signature fails a check that needs no key to see: {e}"
+        ))
+    })?;
+    let outcome = under_a_held_authority(&inspected, anchors, |_| String::new(), None)?;
+    if let (
+        Outcome::Checked {
+            latest: Some(witnessed),
+            ..
+        },
+        Some(beacon),
+    ) = (&outcome, report.bracket().not_earlier)
+    {
+        if *witnessed < beacon {
+            return Err(ReceiptError::Inconsistent(
+                "the witness over this receipt's signature is dated before the beacon inside the \
+                 signature was published, so the evidence says the receipt was signed before it \
+                 could have been"
+                    .into(),
+            ));
+        }
+    }
+    Ok(EntryReport {
+        role: Role::NotLaterThan,
+        scheme: rfc3161::SCHEME.to_string(),
+        detail: Some("over this receipt's own signature".to_string()),
+        outcome,
+    })
 }
 
 /// Whether the receipt may claim its bound rests on outside signatures.

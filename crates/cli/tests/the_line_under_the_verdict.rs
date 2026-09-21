@@ -249,6 +249,7 @@ fn claiming_a_sandwich(widen: bool, allowance: i128) -> PathBuf {
             oscillator_holdover: 0,
             model_residual: 0,
             safety_margin: 0,
+            unclaimed_rate: None,
         };
         assert!(
             receipt.utc_estimate >= earliest && receipt.utc_estimate <= latest,

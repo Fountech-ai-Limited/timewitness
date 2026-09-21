@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 
 use timewitness_core::SourceKind;
-use timewitness_receipt::schema::{Receipt, SourceRecord};
+use timewitness_receipt::schema::{Receipt, SourceRecord, TakenBy};
 use timewitness_verify::{
     cannot_prove, width_in_words, Assessment, State, Subject, KEPT_LOG_QUESTION, KEY_LOG_QUESTION,
 };
@@ -251,10 +251,15 @@ pub fn usage() -> String {
 /// nothing of the building machine's own environment comes in through it.
 #[must_use]
 pub fn version() -> String {
+    let reads: Vec<String> = timewitness_receipt::READS
+        .iter()
+        .map(|v| format!("v{v}"))
+        .collect();
     format!(
-        "timewitness {}\nreads receipt format v{}",
+        "timewitness {}\nwrites receipt format v{} and reads {}",
         env!("CARGO_PKG_VERSION"),
-        timewitness_receipt::FORMAT_VERSION
+        timewitness_receipt::FORMAT_VERSION,
+        reads.join(" and ")
     )
 }
 
@@ -362,6 +367,15 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
             width_in_words(b.network_half)
         ));
         out.push_str("                first line rather than added to it\n");
+        if let Some(unclaimed) = b.unclaimed_rate {
+            out.push_str(&format!(
+                "  {:>12}  of the oscillator's share, a rate the agent is not correcting for.\n\
+                 \x20               Reported, and already inside the third line\n",
+                width_in_words(unclaimed)
+            ));
+        }
+
+        out.push_str(&terms_lines(receipt));
     }
 
     if let Some(evidence) = &a.evidence {
@@ -502,6 +516,15 @@ pub fn fields(a: &Assessment) -> String {
         write_field(&mut out, "payload_hash", hex(&receipt.payload.hash));
         write_field(&mut out, "sources_offered", receipt.claim.sources_offered);
         write_field(&mut out, "sources_kept", receipt.claim.sources_kept);
+        // What version 1 added, each a whole number, a path, or `none` on a version 0 receipt,
+        // which could not say.
+        for (name, value) in receipt.what_version_1_states() {
+            match value {
+                timewitness_receipt::Value::Int(n) => write_field(&mut out, name, n),
+                timewitness_receipt::Value::Text(t) => write_field(&mut out, name, t),
+                _ => write_field(&mut out, name, "none"),
+            }
+        }
         // The two counts a script needs to tell nine names at one company from nine at nine, and
         // the kinds behind them. Without these a caller reading this output has only the flattering
         // number, which is how several addresses at one company pass for several independent
@@ -547,6 +570,16 @@ pub fn fields(a: &Assessment) -> String {
         );
         write_field(&mut out, "attestations_carried", evidence.entries.len());
         write_field(&mut out, "attestations_checked", evidence.checked());
+        // The witness over the signature itself, which is the only one that places the signing.
+        write_field(
+            &mut out,
+            "signature_witness",
+            match &evidence.signature_witness {
+                None => "none",
+                Some(w) if w.outcome.is_checked() => "checked",
+                Some(_) => "not-checked",
+            },
+        );
         write_field(&mut out, "basis_granted", evidence.basis_granted);
     }
     out
@@ -638,6 +671,41 @@ fn operators_line(receipt: &Receipt) -> String {
 /// a source that could sign and a signature in the file are different facts, and reading the first
 /// as the second is the central dishonesty available to a product in this field.
 ///
+/// The path the reading came by and the terms that set the width, as a person reads them.
+///
+/// Both arrived in receipt format version 1. A version 0 receipt could state neither, and the line
+/// for it says so rather than leaving a reader to wonder whether the terms were left out.
+fn terms_lines(receipt: &Receipt) -> String {
+    let c = &receipt.claim;
+    let (Some(taken_by), Some(floor), Some(slew), Some(span)) = (
+        c.taken_by,
+        c.policy.source_interval_floor,
+        c.policy.frequency_slew_ppb_per_s,
+        c.policy.frequency_span_ppb,
+    ) else {
+        return "\n  This receipt is format version 0, which does not state the terms that set its\n  \
+                width or which path its reading came by.\n"
+            .to_string();
+    };
+    let path = match taken_by {
+        TakenBy::OneShot => {
+            "The reading was taken by the process that signed it, from sources it chose."
+        }
+        TakenBy::ResidentAgent => {
+            "The reading was read from a resident agent on the signing machine, so it rests\n  \
+             on whatever answered that agent's endpoint."
+        }
+    };
+    format!(
+        "\nThe terms that set the width, as the agent stated them\n  {path}\n  \
+         No source's answer counted as narrower than {} either side.\n  \
+         The oscillator's rate was assumed to move by at most {slew} parts per billion a second,\n  \
+         inside a band {span} parts per billion wide. Assumptions, stated so they can be\n  \
+         checked, and not measured by this reader.\n",
+        width_in_words(floor)
+    )
+}
+
 /// A kind this code has never heard of is counted and reported as one whose worth this reader
 /// cannot judge, rather than being folded into the ones it knows. Reading an unknown kind as plain
 /// NTP would be a guess that happens to be conservative today and stops being conservative the
@@ -936,6 +1004,7 @@ mod tests {
                 oscillator_holdover: 0,
                 model_residual: 0,
                 safety_margin: 0,
+                unclaimed_rate: None,
             },
             since_last_sync: 0,
             frequency_ppb: 0,
@@ -947,7 +1016,11 @@ mod tests {
                 min_sources: 1,
                 min_operators: None,
                 max_holdover: None,
+                source_interval_floor: None,
+                frequency_slew_ppb_per_s: None,
+                frequency_span_ppb: None,
             },
+            taken_by: None,
         }
     }
 

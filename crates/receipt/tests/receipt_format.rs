@@ -10,6 +10,7 @@ use timewitness_core::{
 };
 use timewitness_receipt::schema::{Payload, Role};
 use timewitness_receipt::value::Value;
+use timewitness_receipt::TakenBy;
 use timewitness_receipt::{
     cbor, chain_link, open, validate, AgentKey, Evidence, PolicyRecord, Receipt, ReceiptError,
     Scheme,
@@ -56,6 +57,7 @@ fn stamp() -> Stamp {
                 widest_source_network_half: 12 * MS,
                 scheduling: 10_000,
                 oscillator_holdover: 500_000,
+                unclaimed_rate: 0,
                 model_residual: 240_000,
                 safety_margin: 250_000,
             },
@@ -88,7 +90,11 @@ fn receipt() -> Receipt {
             min_sources: 3,
             min_operators: Some(3),
             max_holdover: Some(3_600 * MS * 1_000),
+            source_interval_floor: Some(100_000),
+            frequency_slew_ppb_per_s: Some(1_000),
+            frequency_span_ppb: Some(100_000),
         },
+        TakenBy::OneShot,
     )
 }
 
@@ -203,7 +209,8 @@ fn the_format_carries_its_own_version_number() {
     let envelope = cbor::decode(&signed).unwrap();
     let payload = envelope.as_array().unwrap()[2].as_bytes().unwrap();
     let body = cbor::decode(payload).unwrap();
-    assert_eq!(body.get("v").and_then(Value::as_int), Some(0));
+    // Version 1 from 2026-09-21. Version 0 still reads, and `tests/version_1.rs` holds both.
+    assert_eq!(body.get("v").and_then(Value::as_int), Some(1));
 }
 
 #[test]
@@ -545,13 +552,16 @@ fn a_later_version_is_refused_rather_than_read_as_this_one() {
     };
     for (k, v) in pairs.iter_mut() {
         if k.as_text() == Some("v") {
-            *v = Value::Int(1);
+            *v = Value::Int(2);
         }
     }
+    // Until 2026-09-21 this was version 1, refused by a reader of version 0, which is what the
+    // released `v0.1` still does with every receipt this code now writes. The version after the
+    // newest this code reads is the one to refuse now.
     let signed = key().sign_value(&value);
     assert!(matches!(
         open(&signed),
-        Err(ReceiptError::UnknownVersion(1))
+        Err(ReceiptError::UnknownVersion(2))
     ));
 }
 

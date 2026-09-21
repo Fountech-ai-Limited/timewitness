@@ -282,6 +282,8 @@ fn as_json(a: &timewitness_verify::Assessment) -> String {
                 ),
                 ("sources", receipt.claim.sources_as_value()),
                 ("sequence", Value::Int(i128::from(receipt.sequence))),
+                // The same list the command line prints, from the same function.
+                ("version_1", Value::map(receipt.what_version_1_states())),
                 (
                     "breakdown",
                     Value::Array(
@@ -356,6 +358,15 @@ fn as_json(a: &timewitness_verify::Assessment) -> String {
             ),
         ));
         top.push(("basis_granted", Value::Bool(evidence.basis_granted)));
+        // The witness over the signature itself: checked, not checked, or none carried.
+        top.push((
+            "signature_witness",
+            Value::text(match &evidence.signature_witness {
+                None => "none",
+                Some(w) if w.outcome.is_checked() => "checked",
+                Some(_) => "not-checked",
+            }),
+        ));
         top.push(("basis_reason", Value::text(evidence.basis_reason.clone())));
     }
 

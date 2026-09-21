@@ -52,7 +52,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use timewitness_agent::crossing::{ask, WhatTheCallerKnows, WILDNESS};
 use timewitness_agent::resident::note_interruptions;
-use timewitness_agent::wire::{carrier, Endpoint};
+use timewitness_agent::wire::{carrier, policy_record, Endpoint};
 use timewitness_clock::monotonic::SystemMonotonic;
 use timewitness_clock::{
     Applied, ClockModel, Discipline, MonotonicClock, Policy, ShadowDiscipline,
@@ -61,8 +61,10 @@ use timewitness_core::evidence::roughtime::MIN_RADIUS_SECONDS;
 use timewitness_core::time::{Nanos, NANOS_PER_SEC};
 use timewitness_core::{Attestation, UnixNanos};
 use timewitness_platform::EnvironmentWatch;
-use timewitness_receipt::schema::{Evidence, PolicyRecord, Receipt, Role, Scheme};
-use timewitness_receipt::{chain_link, sha256_payload, AgentKey};
+use timewitness_receipt::schema::{Evidence, Receipt, Role, Scheme, TakenBy};
+use timewitness_receipt::{
+    chain_link, sha256_payload, signature_of, with_signature_witness, AgentKey,
+};
 use timewitness_sources::drand::DrandClient;
 use timewitness_sources::ntp::{NtpClient, NtpServer};
 use timewitness_sources::nts::{NtsClient, NtsServer};
@@ -389,6 +391,15 @@ pub fn run(args: &Args) -> Outcome {
         Ok(bytes) => bytes,
         Err(e) => return fail(&format!("the receipt would not sign: {e}")),
     };
+    // After signing, because it is about the signature. Every attestation gathered above is about
+    // the subject, so it places the thing stamped and not the signing; this one places the signing.
+    let signed = if args.flag("--no-evidence") {
+        signed
+    } else {
+        let (witnessed, said) = witness_the_signature(signed, deadline);
+        notes.push(said);
+        witnessed
+    };
     if let Err(e) = fs::write(out_path, &signed) {
         return fail(&format!("{out_path} could not be written: {e}"));
     }
@@ -488,7 +499,12 @@ fn from_the_agent(args: &Args, endpoint_path: &str) -> Result<Reading, String> {
     };
 
     let clock = SystemMonotonic::new();
-    let crossed = ask(&endpoint, &clock, knows).map_err(|e| format!("{e}"))?;
+    let mut crossed = ask(&endpoint, &clock, knows).map_err(|e| format!("{e}"))?;
+
+    // An agent from an older build answering in an older format is refused inside `ask`, by
+    // `decode_reply`, with what to run instead. Which path the reading came by is this end's to say
+    // and never the answer's.
+    crossed.carrier.claim.taken_by = Some(TakenBy::ResidentAgent);
 
     let age = crossed.carrier.claim.since_last_sync;
     let apart = crossed.carrier.utc_estimate.as_nanos() - knows.local_wall.as_nanos();
@@ -683,15 +699,7 @@ fn from_a_model_of_our_own(args: &Args, deadline: Deadline) -> Result<Reading, S
     }
 
     Ok(Reading {
-        carrier: carrier(
-            &stamp,
-            PolicyRecord {
-                max_bound_width: policy.max_bound_width,
-                min_sources: policy.min_sources as u32,
-                min_operators: Some(policy.min_operators as u32),
-                max_holdover: Some(policy.max_holdover),
-            },
-        ),
+        carrier: carrier(&stamp, policy_record(&policy), TakenBy::OneShot),
         notes,
     })
 }
@@ -806,6 +814,54 @@ fn gather(
     }
 
     (evidence, notes)
+}
+
+/// A timestamp over the receipt's own signature, put outside the signed body where version 1 allows
+/// it, from the first published authority that answers.
+///
+/// Optional, as every attestation is: a receipt whose signature nobody witnessed is signed all the
+/// same and says so, and the verifier reports it as a receipt that places its subject and not its
+/// signing. What comes back is the receipt to write and the line the run prints about it.
+fn witness_the_signature(signed: Vec<u8>, deadline: Deadline) -> (Vec<u8>, String) {
+    let signature = match signature_of(&signed) {
+        Ok(signature) => signature,
+        Err(e) => return (signed, format!("no witness over the signature: {e}")),
+    };
+    let digest = sha256_payload(&signature).hash;
+    let mut refusals = Vec::new();
+    for authority in published_authorities() {
+        if deadline.left().is_none() {
+            refusals.push(format!(
+                "this run passed its {} s deadline first",
+                deadline.whole.as_secs()
+            ));
+            break;
+        }
+        let name = authority.name.clone();
+        match TimestampClient::new(authority).witness(&digest) {
+            Ok(attestation) => match with_signature_witness(&signed, &attestation.blob) {
+                Ok(witnessed) => {
+                    return (
+                        witnessed,
+                        format!(
+                            "the signature itself was witnessed by {name}, so a reader can place \
+                             the signing and not only the subject"
+                        ),
+                    )
+                }
+                Err(e) => refusals.push(format!("{name}: {e}")),
+            },
+            Err(e) => refusals.push(format!("{name}: {e}")),
+        }
+    }
+    (
+        signed,
+        format!(
+            "no witness over the signature, so nothing outside this receipt says when it was \
+             signed, only when its subject existed ({})",
+            refusals.join("; ")
+        ),
+    )
 }
 
 fn entry(role: Role, scheme: &str, attestation: &Attestation, detail: String) -> Evidence {

@@ -85,6 +85,14 @@ pub struct BoundBreakdown {
     pub scheduling: Nanos,
     /// Growth since the last synchronisation, from the frequency uncertainty times elapsed time.
     pub oscillator_holdover: Nanos,
+    /// The part of `oscillator_holdover` that covers a rate the model is not correcting for.
+    ///
+    /// Before any fit that is half the band a crystal may occupy, and where the model refused a fit
+    /// it is the larger of that and the magnitude the fit found. Reported and not part of the sum,
+    /// for the same reason as the network figure: it is already inside the holdover term. Without it
+    /// a reader sees the whole holdover and cannot tell the oscillator's own uncertainty from a rate
+    /// the agent measured and declined to stand behind.
+    pub unclaimed_rate: Nanos,
     /// The regression's own standard errors, carried through as width.
     pub model_residual: Nanos,
     /// A fixed allowance for what the model does not attempt to describe.
@@ -217,6 +225,7 @@ mod tests {
             widest_source_network_half: 3 * NANOS_PER_MILLI,
             scheduling: 50_000,
             oscillator_holdover: NANOS_PER_MILLI,
+            unclaimed_rate: 0,
             model_residual: 200_000,
             safety_margin: 250_000,
         }

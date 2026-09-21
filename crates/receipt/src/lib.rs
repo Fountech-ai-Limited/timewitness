@@ -1,4 +1,4 @@
-//! Receipt format v0.
+//! The receipt format, which this code writes at version 1 and reads at versions 0 and 1.
 //!
 //! A receipt is a long-lived artefact. Once one is issued it has to keep meaning the same thing
 //! years later, to a verifier that never spoke to us, so the format is frozen and versioned from
@@ -14,7 +14,8 @@
 //!
 //! This crate never learns how a bound is computed. It carries one.
 //!
-//! The specification is `docs/receipt-format-v0.md` beside the code.
+//! The specification is `docs/receipt-format-v0.md` beside the code, and `docs/receipt-format-v1.md`
+//! for what version 1 adds to it.
 
 #![forbid(unsafe_code)]
 
@@ -29,12 +30,15 @@ pub mod validate;
 pub mod value;
 
 pub use anchors::{RoughtimeServerKey, TrustAnchors};
-pub use cose::{check_signature, envelope_parts, open, open_with, AgentKey, Envelope};
+pub use cose::{
+    check_signature, envelope_parts, open, open_with, signature_of, with_signature_witness,
+    AgentKey, Envelope, SIGNATURE_WITNESS,
+};
 pub use error::ReceiptError;
 pub use report::{Bracket, EntryReport, Outcome, Verified};
 pub use schema::{
-    AgentClaim, BreakdownRecord, Evidence, Operators, Payload, PolicyRecord, Receipt, Role, Scheme,
-    SourceRecord, CLAIM_KIND, FORMAT_VERSION,
+    ppm_as_ppb, AgentClaim, BreakdownRecord, Evidence, Operators, Payload, PolicyRecord, Receipt,
+    Role, Scheme, SourceRecord, TakenBy, CLAIM_KIND, FORMAT_VERSION, READS,
 };
 pub use validate::{validate, validate_shape, validate_with};
 pub use value::Value;

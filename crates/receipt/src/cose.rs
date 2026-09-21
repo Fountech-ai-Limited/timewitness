@@ -60,6 +60,37 @@ impl AgentKey {
                 "the receipt names a different public key from the one signing it".into(),
             ));
         }
+        // A receipt is signed in a version this code reads and in the shape that version has, so a
+        // version 1 receipt with a field missing is refused here rather than signed and then refused
+        // by every reader afterwards. The stamp command only ever builds version 1; version 0 is
+        // signed here only so the tests can go on proving that version 0 still reads.
+        if !crate::schema::READS.contains(&receipt.version) {
+            return Err(ReceiptError::UnknownVersion(receipt.version));
+        }
+        let c = &receipt.claim;
+        let version_1_fields = [
+            c.taken_by.is_some(),
+            c.breakdown.unclaimed_rate.is_some(),
+            c.policy.source_interval_floor.is_some(),
+            c.policy.frequency_slew_ppb_per_s.is_some(),
+            c.policy.frequency_span_ppb.is_some(),
+        ];
+        let whole = if receipt.version >= 1 {
+            version_1_fields.iter().all(|held| *held)
+                && c.policy.max_holdover.is_some()
+                && c.policy.min_operators.is_some()
+        } else {
+            version_1_fields.iter().all(|held| !*held)
+        };
+        if !whole {
+            return Err(ReceiptError::Signature(format!(
+                "this receipt says it is version {} and does not have that version's fields. \
+                 Version 1 states its width terms, the unclaimed part of its holdover, its two \
+                 limits and the path its reading came by, and version 0 states no width term, no \
+                 unclaimed part and no path",
+                receipt.version
+            )));
+        }
 
         Ok(self.sign_value(&receipt.to_value()))
     }
@@ -236,12 +267,73 @@ pub fn open_with(
     bytes: &[u8],
     anchors: &crate::anchors::TrustAnchors,
 ) -> Result<(Receipt, crate::report::Verified), ReceiptError> {
-    let receipt = read_and_check_signature(bytes)?;
-    let report = validate::validate_with(&receipt, anchors)?;
+    let (receipt, witness) = read_and_check_signature(bytes)?;
+    let mut report = validate::validate_with(&receipt, anchors)?;
+    if let Some((blob, signature)) = witness {
+        report.signature_witness = Some(validate::examine_signature_witness(
+            &blob, &signature, anchors, &report,
+        )?);
+    }
     Ok((receipt, report))
 }
 
-fn read_and_check_signature(bytes: &[u8]) -> Result<Receipt, ReceiptError> {
+/// The unprotected header's label for the witness over a receipt's own signature.
+///
+/// Text rather than a number, because a number in that header belongs to the COSE registry and this
+/// is not a registered parameter. Receipt format version 1 allows this entry beside the key
+/// identifier and nothing else, and version 0 allows only the key identifier.
+pub const SIGNATURE_WITNESS: &str = "signature_witness";
+
+/// The 64 signature bytes of a signed receipt, which is what a witness over the signature is about.
+pub fn signature_of(signed: &[u8]) -> Result<Vec<u8>, ReceiptError> {
+    let (_, _, signature, _) = envelope_parts(signed)?;
+    Ok(signature)
+}
+
+/// A signed receipt with a witness over its signature put into the unprotected header.
+///
+/// Nothing signed changes, so the signature still checks. `blob` is an `rfc3161` container over the
+/// SHA-256 of [`signature_of`], and a reader refuses any other. A receipt that already carries a
+/// witness is refused rather than given a second, because the header holds one.
+pub fn with_signature_witness(signed: &[u8], blob: &[u8]) -> Result<Vec<u8>, ReceiptError> {
+    let envelope = cbor::decode(signed)?;
+    let Some(parts) = envelope.as_array() else {
+        return Err(ReceiptError::Signature(
+            "a signed value is a list of four things".into(),
+        ));
+    };
+    if parts.len() != 4 {
+        return Err(ReceiptError::Signature(format!(
+            "a signed value has four parts and this one has {}",
+            parts.len()
+        )));
+    }
+    let Value::Map(header) = &parts[1] else {
+        return Err(ReceiptError::Signature(
+            "the unprotected header is not a map".into(),
+        ));
+    };
+    if header
+        .iter()
+        .any(|(k, _)| k.as_text() == Some(SIGNATURE_WITNESS))
+    {
+        return Err(ReceiptError::Signature(
+            "this receipt already carries a witness over its signature".into(),
+        ));
+    }
+    let mut header = header.clone();
+    header.push((Value::text(SIGNATURE_WITNESS), Value::Bytes(blob.to_vec())));
+    header.sort_by_cached_key(|(k, _)| cbor::encode(k));
+    let mut parts = parts.to_vec();
+    parts[1] = Value::Map(header);
+    Ok(cbor::encode(&Value::Array(parts)))
+}
+
+/// A receipt whose signature checks, and the witness over that signature where it carries one, as
+/// the witness's blob beside the signature bytes it has to be about.
+type Opened = (Receipt, Option<(Vec<u8>, Vec<u8>)>);
+
+fn read_and_check_signature(bytes: &[u8]) -> Result<Opened, ReceiptError> {
     if bytes.len() > crate::MAX_ENCODED_BYTES {
         return Err(ReceiptError::Signature(format!(
             "this file is {} bytes and a receipt is no more than {} bytes",
@@ -265,9 +357,10 @@ fn read_and_check_signature(bytes: &[u8]) -> Result<Receipt, ReceiptError> {
         "receipt",
     )?;
 
-    check_unprotected_header(&unprotected, &receipt)?;
+    let witness =
+        check_unprotected_header(&unprotected, &receipt)?.map(|blob| (blob, signature.clone()));
 
-    Ok(receipt)
+    Ok((receipt, witness))
 }
 
 /// The unprotected header holds one entry, the key identifier, and it names the key inside the
@@ -288,7 +381,19 @@ fn read_and_check_signature(bytes: &[u8]) -> Result<Receipt, ReceiptError> {
 /// A disagreement here was previously a warning about the file rather than about the receipt,
 /// because the signed copy of the key is the one that counts. That reading is correct about what the
 /// receipt means and it is the wrong rule for a format that chains by hashing bytes.
-fn check_unprotected_header(header: &Value, receipt: &Receipt) -> Result<(), ReceiptError> {
+///
+/// **Version 1 allows one entry more, the witness over the signature, and gives up exactly one
+/// thing for it.** A holder can drop the witness, or swap in a later genuine token over the same
+/// signature, without the agent's key. Each is a different file with a different chain link, and each
+/// verifies to a different report, so none is a second spelling of the same receipt: the one without
+/// is a receipt with no witness, and the later one is a receipt witnessed later. Neither can move the
+/// signing earlier, because a token cannot be dated before the signature it is over existed. The next
+/// receipt's link, the hash of the whole file its signer wrote, pins which one that was. The blob is
+/// returned for the caller to check, since checking it needs the reader's anchors.
+fn check_unprotected_header(
+    header: &Value,
+    receipt: &Receipt,
+) -> Result<Option<Vec<u8>>, ReceiptError> {
     let pairs = match header {
         Value::Map(pairs) => pairs,
         _ => {
@@ -297,11 +402,27 @@ fn check_unprotected_header(header: &Value, receipt: &Receipt) -> Result<(), Rec
             ))
         }
     };
-    if pairs.len() != 1 {
+    let witness = pairs
+        .iter()
+        .find(|(k, _)| k.as_text() == Some(SIGNATURE_WITNESS))
+        .map(|(_, v)| v);
+    let allowed = if receipt.version >= 1 && witness.is_some() {
+        2
+    } else {
+        1
+    };
+    if pairs.len() != allowed {
         return Err(ReceiptError::Signature(format!(
-            "the unprotected header holds {} entries and a receipt carries one, the key identifier. \
-             Nothing there is signed, so anything else in it is a second spelling of this receipt",
-            pairs.len()
+            "the unprotected header holds {} entries and a version {} receipt carries the key \
+             identifier{}. Nothing there is signed, so anything else in it is a second spelling of \
+             this receipt",
+            pairs.len(),
+            receipt.version,
+            if receipt.version >= 1 {
+                " and at most a witness over its signature"
+            } else {
+                " and nothing else"
+            }
         )));
     }
 
@@ -310,7 +431,7 @@ fn check_unprotected_header(header: &Value, receipt: &Receipt) -> Result<(), Rec
         .and_then(Value::as_bytes)
         .ok_or_else(|| {
             ReceiptError::Signature(
-                "the unprotected header holds one entry and it is not the key identifier".into(),
+                "the unprotected header does not hold the key identifier".into(),
             )
         })?;
     if kid != receipt.agent_public_key.as_slice() {
@@ -318,7 +439,13 @@ fn check_unprotected_header(header: &Value, receipt: &Receipt) -> Result<(), Rec
             "the key named outside the signature is not the key named inside it".into(),
         ));
     }
-    Ok(())
+    match witness {
+        None => Ok(None),
+        Some(Value::Bytes(blob)) if !blob.is_empty() => Ok(Some(blob.clone())),
+        Some(_) => Err(ReceiptError::Signature(
+            "the witness over the signature is not a token held as bytes".into(),
+        )),
+    }
 }
 
 trait MapGet {

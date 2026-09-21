@@ -101,6 +101,8 @@ fn value(a: &Assessment) -> Value {
                 ),
                 ("sources", receipt.claim.sources_as_value()),
                 ("sequence", Value::Int(i128::from(receipt.sequence))),
+                // What version 1 added, by wire name, and null on a version 0 receipt.
+                ("version_1", Value::map(receipt.what_version_1_states())),
             ]),
         ));
     }
@@ -130,6 +132,15 @@ fn value(a: &Assessment) -> Value {
             ),
         ));
         top.push(("basis_granted", Value::Bool(evidence.basis_granted)));
+        // The witness over the signature itself: checked, not checked, or none carried.
+        top.push((
+            "signature_witness",
+            Value::text(match &evidence.signature_witness {
+                None => "none",
+                Some(w) if w.outcome.is_checked() => "checked",
+                Some(_) => "not-checked",
+            }),
+        ));
         top.push(("basis_reason", Value::text(evidence.basis_reason.clone())));
     }
 
