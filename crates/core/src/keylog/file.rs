@@ -705,7 +705,7 @@ mod tests {
         assert_eq!(
             log.head_is_signed_by_the_key_it_names(),
             Some(false),
-            "a head signed by a key of small order has more than one valid signature and is not              signed in any sense worth the word"
+            "a head signed by a key of small order has more than one valid signature and is not signed in any sense worth the word"
         );
     }
 

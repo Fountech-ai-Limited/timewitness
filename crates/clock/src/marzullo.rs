@@ -1080,7 +1080,7 @@ mod tests {
             assert!(
                 after.found.could_not_disagree.contains(&3)
                     && after.found.could_not_disagree.contains(&4),
-                "a source swallowing the whole round was counted as one that could have                  disagreed, on {round:?}"
+                "a source swallowing the whole round was counted as one that could have disagreed, on {round:?}"
             );
             if after.found.informative() != before.found.informative() {
                 return;
@@ -1094,7 +1094,7 @@ mod tests {
                 .collect();
             assert_eq!(
                 still_out, before.discarded,
-                "two sources that could not have disagreed changed who was in the minority on                  {round:?}"
+                "two sources that could not have disagreed changed who was in the minority on {round:?}"
             );
         });
 

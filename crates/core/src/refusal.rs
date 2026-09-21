@@ -183,7 +183,7 @@ impl fmt::Display for Refusal {
             ),
             Validity::CounterBeforeStart { by } => write!(
                 f,
-                "the monotonic counter reads {} ms before the moment this model started, which a                  counter that only goes forward cannot do, so nothing here describes this moment",
+                "the monotonic counter reads {} ms before the moment this model started, which a counter that only goes forward cannot do, so nothing here describes this moment",
                 crate::time::nanos_as_millis_f64(*by)
             ),
             Validity::HoldoverExceeded { elapsed, ceiling } => write!(

@@ -303,7 +303,7 @@ mod floor_tests {
 
         assert!(
             combined.offset < mean / 2,
-            "the point is {} and an unweighted mean would be {mean}, so the weighting is not doing              anything",
+            "the point is {} and an unweighted mean would be {mean}, so the weighting is not doing anything",
             combined.offset
         );
         assert!(
@@ -342,7 +342,7 @@ mod floor_tests {
         let p = Policy::default();
         assert_ne!(
             p.weight_floor, p.scheduling_floor,
-            "the cost of a local read and the width below which a source may not claim authority              are unrelated quantities, and holding them as one value is what produced the mean"
+            "the cost of a local read and the width below which a source may not claim authority are unrelated quantities, and holding them as one value is what produced the mean"
         );
     }
 }
