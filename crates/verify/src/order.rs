@@ -162,6 +162,20 @@ impl Link {
         }
     }
 
+    /// Whether the chain says the agent that signed both receipts is broken.
+    ///
+    /// A fork at one sequence number is what a restored or rolled-back agent leaves behind, and a
+    /// link against the agent's own sequence numbers is the agent contradicting itself. Either way
+    /// both intervals are claims of an agent whose own record does not hold together, so an order
+    /// between them is not one to rely on, however far apart they are.
+    #[must_use]
+    pub const fn is_a_fault(self) -> bool {
+        matches!(
+            self,
+            Self::TwoAtOneSequence | Self::NamesAgainstItsOwnSequence { .. }
+        )
+    }
+
     /// Whether the chain's answer rests on a hash rather than on the agent's word alone.
     #[must_use]
     pub const fn rests_on_a_hash(self) -> bool {
@@ -277,13 +291,15 @@ pub struct PairReading {
 }
 
 impl PairReading {
-    /// Whether an order was established over two receipts that both held.
+    /// Whether an order was established over two receipts that both held, in a chain that holds.
     ///
     /// An order argument over a receipt that was refused is not an argument, so this is false there
-    /// however clear the gap was.
+    /// however clear the gap was. The same goes for two receipts the chain names as the work of a
+    /// broken agent, [`Link::is_a_fault`]: the verdict is still the intervals' own, and it is still
+    /// printed, but it does not stand.
     #[must_use]
     pub const fn stands(&self) -> bool {
-        self.verdict.is_decided() && self.first_held && self.second_held
+        self.verdict.is_decided() && self.first_held && self.second_held && !self.link.is_a_fault()
     }
 }
 

@@ -63,10 +63,15 @@ pub fn run(args: &Args) -> Outcome {
     // refused, a receipt it could not read, or two claims of one agent that cannot both be true.
     // Those are refusals and they print as refusals.
     //
+    // A chain the reader names as broken, a fork at one sequence number or a link against the
+    // agent's own sequence, is two claims of one agent that cannot both be true as well, so it
+    // exits 1 however far apart the two intervals are.
+    //
     // A script that needs to know whether it may rely on an order reads `stands` under `--fields`,
     // because zero here means the question was answered rather than that the answer was yes.
     let answered = reading.first_held
         && reading.second_held
+        && !reading.link.is_a_fault()
         && !matches!(
             reading.verdict,
             Verdict::Contradicted { .. } | Verdict::NotSayable
@@ -199,8 +204,28 @@ fn describe(reading: &PairReading, checked: &[Assessment], paths: [&String; 2]) 
     }
 
     out.push_str("Which moment came first.\n\n");
-    out.push_str(&format!("  {}\n\n", reading.verdict));
-    out.push_str(what_the_verdict_means(reading.verdict));
+    if reading.link == Link::OneReceiptTwice {
+        // One receipt has one moment. The two intervals are the same interval, so the arithmetic
+        // gives undecided, and the words for undecided are about two moments that exist.
+        out.push_str(&paragraph(
+            "  ",
+            "Neither. This is one receipt given twice, so there is one moment and nothing to \
+             put before or after it.",
+        ));
+    } else {
+        out.push_str(&format!("  {}\n\n", reading.verdict));
+        out.push_str(what_the_verdict_means(reading.verdict));
+    }
+
+    if reading.link.is_a_fault() {
+        out.push('\n');
+        out.push_str(&paragraph(
+            "  ",
+            "And the chain these two sit in is broken, as the opening says. Both intervals are \
+             claims of an agent whose own record does not hold together, so whatever they say \
+             about each other there is no order here to rely on.",
+        ));
+    }
 
     if !(reading.first_held && reading.second_held) {
         out.push('\n');
