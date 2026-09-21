@@ -107,7 +107,7 @@ pub fn run(args: &Args) -> Outcome {
         ),
         (log, None) => verify_with_key_log(&receipt_bytes, subject, &anchors, &floor, log.as_ref()),
     };
-    let code = i32::from(!assessment.accepted());
+    let code = i32::from(!assessment.holds());
 
     let text = if args.flag("--fields") {
         render::fields(&assessment)

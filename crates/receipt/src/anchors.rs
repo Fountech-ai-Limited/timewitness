@@ -53,6 +53,12 @@ pub struct TrustAnchors {
     pub timestamp_authorities: Vec<Authority>,
     /// Keys a key log's head may be signed by for the log to count as ours.
     pub key_log_signers: Vec<KeyLogSigner>,
+    /// When certification by the app began, where this reader holds that it has.
+    ///
+    /// Ours, like the key log signer, and it supports no evidence role. Where it is set the verifier
+    /// grades whether a receipt is a certificate; where it is not, certification has not begun as
+    /// far as this reader knows, and every receipt is graded as version 0 grades it.
+    pub certification_began: Option<timewitness_core::UnixNanos>,
 }
 
 impl TrustAnchors {

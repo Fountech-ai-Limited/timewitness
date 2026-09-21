@@ -26,7 +26,13 @@
 //! drand     <name> <32 bytes of hex, the chain hash> <96 bytes of hex, the group key> <period seconds> <genesis unix second>
 //! rfc3161   <name> <32 bytes of hex, a certificate digest> [more certificate digests] [allow=<ns>]
 //! keylog    <name> <32 bytes of hex, the key that signs the head of our key log>
+//! certification <nanoseconds since the Unix epoch, when certification by the app began>
 //! ```
+//!
+//! `certification` is ours, like `keylog`, and it supports no evidence. It says from when the
+//! verifier grades whether a receipt is a TimeWitness certificate, and a key log stating any other
+//! moment is refused. What ships leaves it unset until the release that fixes it, so today every
+//! receipt is graded as version 0 grades it.
 //!
 //! ## `allow=` on a timestamp authority
 //!
@@ -50,6 +56,7 @@ use timewitness_core::evidence::drand::Chain;
 use timewitness_core::evidence::rfc3161::{self, Authority};
 use timewitness_core::evidence::roughtime;
 use timewitness_core::time::Nanos;
+use timewitness_core::UnixNanos;
 use timewitness_receipt::anchors::TrustAnchors;
 
 /// The key that signs the head of our key log, as of 2026-09-15.
@@ -64,6 +71,14 @@ pub const KEY_LOG_SIGNER: [u8; 32] = [
 
 /// The name the shipped key log signer is reported under.
 pub const KEY_LOG_SIGNER_NAME: &str = "our key log";
+
+/// When certification by the app began, as this code ships it.
+///
+/// Unset. It is fixed once, by the release that serves the key log entry stating it under a head
+/// carrying a beacon round and a timestamp token, and it never moves after that. Until then every
+/// receipt is graded as version 0 grades it, and the certificate grade is reached only by a reader
+/// who names a moment in their own trust material.
+pub const CERTIFICATION_BEGAN: Option<i128> = None;
 
 /// The anchors that ship with this code.
 ///
@@ -80,7 +95,9 @@ pub fn published() -> TrustAnchors {
     for authority in rfc3161::published_authorities() {
         anchors = anchors.with_authority(authority);
     }
-    anchors.with_key_log_signer(KEY_LOG_SIGNER_NAME, KEY_LOG_SIGNER)
+    let mut anchors = anchors.with_key_log_signer(KEY_LOG_SIGNER_NAME, KEY_LOG_SIGNER);
+    anchors.certification_began = CERTIFICATION_BEGAN.map(UnixNanos);
+    anchors
 }
 
 /// Why a trust material file could not be read.
@@ -212,10 +229,26 @@ pub fn parse(text: &str) -> Result<TrustAnchors, AnchorError> {
                 let key = fixed::<32>(fields[2]).map_err(&fail)?;
                 anchors = anchors.with_key_log_signer(fields[1].to_string(), key);
             }
+            "certification" => {
+                if fields.len() != 2 {
+                    return Err(fail(
+                        "a certification line is the word and one moment in nanoseconds".into(),
+                    ));
+                }
+                if anchors.certification_began.is_some() {
+                    return Err(fail(
+                        "certification is stated twice, and it began once".into(),
+                    ));
+                }
+                let at: i128 = fields[1]
+                    .parse()
+                    .map_err(|_| fail("certification is a whole number of nanoseconds".into()))?;
+                anchors.certification_began = Some(UnixNanos(at));
+            }
             other => {
                 return Err(fail(format!(
-                    "{other:?} is not a kind of anchor. This reads roughtime, drand, rfc3161 and \
-                     keylog"
+                    "{other:?} is not a kind of anchor. This reads roughtime, drand, rfc3161, \
+                     keylog and certification"
                 )))
             }
         }
