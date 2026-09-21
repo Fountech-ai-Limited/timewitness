@@ -263,3 +263,70 @@ fn the_help_says_what_the_command_does_and_that_nobody_can_say_is_an_answer() {
         text(&out.stderr)
     );
 }
+
+/// Two receipts on disk under one agent key, written as a case needs them.
+fn two_on_disk(name: &str, first: &[u8], second: &[u8]) -> (PathBuf, PathBuf) {
+    let dir = std::env::temp_dir().join(format!("tw-order-{}-{name}", std::process::id()));
+    fs::create_dir_all(&dir).expect("a directory to write the pair into");
+    let first_path = dir.join("first.cbor");
+    let second_path = dir.join("second.cbor");
+    fs::write(&first_path, first).expect("the first receipt is written");
+    fs::write(&second_path, second).expect("the second receipt is written");
+    (first_path, second_path)
+}
+
+#[test]
+fn a_chain_the_reader_names_as_broken_does_not_stand_and_does_not_exit_zero() {
+    // Found 2026-09-21: a fork at one sequence number, and a link against its own sequence
+    // numbers, each gave stands=true and exit 0 with the intervals a second apart. The words named
+    // the fault and the field a script reads said the order could be relied on.
+    let agent = key(0x11);
+    let first = a_receipt(&agent, 4, None, NOON);
+    let forked = a_receipt(&agent, 4, None, NOON + NANOS_PER_SEC);
+    let early = a_receipt(&agent, 9, None, NOON);
+    let against = a_receipt(&agent, 2, Some(chain_link(&early)), NOON + NANOS_PER_SEC);
+
+    for (name, a, b, chain) in [
+        ("fork", &first, &forked, "two-at-one-sequence"),
+        (
+            "against",
+            &early,
+            &against,
+            "names-against-its-own-sequence",
+        ),
+    ] {
+        let (p1, p2) = two_on_disk(name, a, b);
+        let fields = run(&["order", &as_str(&p1), &as_str(&p2), "--fields"]);
+        let said = format!("{}{}", text(&fields.stdout), text(&fields.stderr));
+        assert!(said.contains(&format!("chain={chain}\n")), "{said}");
+        assert!(said.contains("stands=false\n"), "{name}: {said}");
+        assert_eq!(fields.status.code(), Some(1), "{name}: {said}");
+
+        let words = run(&["order", &as_str(&p1), &as_str(&p2)]);
+        let said = format!("{}{}", text(&words.stdout), text(&words.stderr));
+        assert_eq!(words.status.code(), Some(1), "{name}: {said}");
+        assert!(said.contains("no order here to rely on"), "{name}: {said}");
+    }
+
+    // The control: the same agent, one place apart, a second apart, nothing wrong. It stands.
+    let next = a_receipt(&agent, 5, None, NOON + NANOS_PER_SEC);
+    let (p1, p2) = two_on_disk("sound", &first, &next);
+    let fields = run(&["order", &as_str(&p1), &as_str(&p2), "--fields"]);
+    assert_eq!(fields.status.code(), Some(0));
+    assert!(text(&fields.stdout).contains("stands=true\n"));
+}
+
+#[test]
+fn one_receipt_given_twice_is_one_moment_and_is_never_told_one_came_first() {
+    // Found 2026-09-21: the opening said there is one moment here, and the verdict paragraph then
+    // said one of the two moments did come first.
+    let agent = key(0x11);
+    let one = a_receipt(&agent, 4, None, NOON);
+    let (p1, _) = two_on_disk("twice", &one, &one);
+    let out = run(&["order", &as_str(&p1), &as_str(&p1)]);
+    let said = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{said}{}", text(&out.stderr));
+    assert!(said.contains("one receipt"), "{said}");
+    assert!(!said.contains("did come first"), "{said}");
+    assert!(!said.contains("two moments"), "{said}");
+}

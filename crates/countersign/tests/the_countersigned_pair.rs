@@ -313,12 +313,32 @@ fn two_intervals_that_overlap_still_read_as_a_pair() {
     assert_eq!(pair.response().exchange.interval, overlapping);
 }
 
+/// A response signed straight over the receiver's key, without the receiver's own check.
+///
+/// This is how a pair the receiver here would refuse to make still reaches a reader: somebody else
+/// signed it. The reader has to say what it establishes rather than pretend it cannot exist.
+fn signed_by_somebody_else(request: &Signed, received: Interval) -> Countersigned {
+    let response = Exchange {
+        role: Role::Response,
+        payload: digest(2),
+        sequence: 1,
+        interval: received,
+        receipt: digest(150),
+        key: receiver().public_key_bytes(),
+        answers: Some(request.envelope_hash()),
+    };
+    let response = Signed::new(&response, &receiver()).expect("the response signs");
+    Countersigned::read_bytes(request.to_bytes(), response.to_bytes())
+        .expect("a signed pair that names its request reads as a pair")
+}
+
 #[test]
 fn a_response_wholly_earlier_than_its_request_still_reads_as_a_pair() {
     // The same rule from the other side, and it reads oddly on purpose. A receive interval entirely
     // before the send interval is either two clocks disagreeing by more than their own bounds or
     // somebody lying, and both of those are the ordering slice's to say rather than the reader's to
-    // hide by refusing.
+    // hide by refusing. Our own receiver will not sign one, which is the test below; a pair made by
+    // somebody else's still has to be read and called what it is.
     let request = signed_request();
     let earlier = Interval {
         earliest_ns: a_request().interval.earliest_ns - 10_000_000_000,
@@ -326,16 +346,45 @@ fn a_response_wholly_earlier_than_its_request_still_reads_as_a_pair() {
         latest_ns: a_request().interval.latest_ns - 10_000_000_000,
     };
 
-    let pair = Countersigned::answer(
+    let pair = signed_by_somebody_else(&request, earlier);
+    assert_eq!(pair.response().exchange.interval, earlier);
+    assert_eq!(pair.ordering().word(), "contradicted");
+}
+
+#[test]
+fn the_receiver_will_not_sign_an_answer_wholly_before_the_request() {
+    // A response names its request by the hash of bytes that had to exist before it, so a receive
+    // interval wholly before the send interval cannot be true. Signing it anyway would put this
+    // party's key under a claim its own reader calls contradicted. The request may still be
+    // answered by a receipt taken later; this one is simply not the receipt to answer it with.
+    let request = signed_request();
+    let width = sender_interval().latest_ns - sender_interval().earliest_ns;
+
+    let refused = Countersigned::answer(
         request.to_bytes(),
         digest(2),
         1,
-        earlier,
+        shifted(-(width + 1)),
+        digest(150),
+        &receiver(),
+    );
+    assert!(
+        matches!(refused, Err(Refusal::Incoherent { detail }) if detail.contains("before the request")),
+        "one nanosecond wholly before is signed: {refused:?}"
+    );
+
+    // Touching from the other side is undecided rather than contradicted, and undecided is an
+    // answer this product gives out loud, so it signs.
+    let touching = Countersigned::answer(
+        request.to_bytes(),
+        digest(2),
+        1,
+        shifted(-width),
         digest(150),
         &receiver(),
     )
-    .expect("an impossible looking pair is still a pair");
-    assert_eq!(pair.response().exchange.interval, earlier);
+    .expect("a touching pair is undecided and is signed");
+    assert_eq!(touching.ordering(), Ordering::Undecided { overlap_ns: 0 });
 }
 
 #[test]
@@ -380,16 +429,11 @@ fn nothing_is_signed_that_our_own_reader_would_refuse() {
 // answer.
 
 /// A pair whose receive interval is put wherever a case needs it.
+///
+/// Signed straight over the receiver's key, because the contradicted case is one our own receiver
+/// refuses to make and the reader still has to be able to say it.
 fn pair_with(received: Interval) -> Countersigned {
-    Countersigned::answer(
-        signed_request().to_bytes(),
-        digest(2),
-        1,
-        received,
-        digest(150),
-        &receiver(),
-    )
-    .expect("the pair is a pair whatever the clocks say")
+    signed_by_somebody_else(&signed_request(), received)
 }
 
 fn shifted(by_ns: i128) -> Interval {

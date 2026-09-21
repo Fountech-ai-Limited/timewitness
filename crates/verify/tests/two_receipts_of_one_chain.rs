@@ -268,11 +268,21 @@ fn a_sequence_number_that_disagrees_with_the_hash_is_reported_and_the_hash_is_be
         HALF,
     );
 
+    let reading = reading(&first, &second);
     assert_eq!(
-        reading(&first, &second).link,
+        reading.link,
         Link::NamesAgainstItsOwnSequence {
             earlier: Which::First
         }
+    );
+    // The intervals are a second apart and both receipts held, so the moments alone would stand.
+    // They do not, because the agent that signed both has contradicted itself inside its own chain,
+    // and an order resting on two claims of a broken agent is not one to rely on.
+    assert!(reading.verdict.is_decided());
+    assert!(reading.first_held && reading.second_held);
+    assert!(
+        !reading.stands(),
+        "an order stands over a chain the reader names as faulty"
     );
 }
 
@@ -287,6 +297,24 @@ fn two_receipts_at_one_sequence_number_are_a_fork() {
     assert_eq!(reading.link.signed_first(), None);
     // A fork says nothing about order, so the intervals are left to answer on their own.
     assert!(reading.verdict.is_decided());
+    // And what they answer does not stand. A fork at one sequence number is what a restored or
+    // rolled-back agent leaves behind, so both intervals come from an agent whose own record is
+    // broken. Found 2026-09-21: this said stands=true.
+    assert!(reading.first_held && reading.second_held);
+    assert!(!reading.stands(), "an order stands over a forked chain");
+}
+
+#[test]
+fn a_sound_chain_with_the_same_gap_still_stands() {
+    // The control for the two above: the same second apart, one agent, one place apart, and
+    // neither naming the other. Nothing is wrong with this chain, so the order stands.
+    let key = common::key();
+    let first = a_receipt(&key, 4, None, NOON, HALF);
+    let second = a_receipt(&key, 5, None, NOON + NANOS_PER_SEC, HALF);
+
+    let reading = reading(&first, &second);
+    assert!(matches!(reading.link, Link::SameAgentApart { .. }));
+    assert!(reading.stands());
 }
 
 #[test]

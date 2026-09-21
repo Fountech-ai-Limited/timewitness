@@ -212,6 +212,11 @@ fn gather(args: &Args) -> Result<Vec<String>, Outcome> {
     }
 }
 
+/// Read a pair and say what it establishes.
+///
+/// The exit follows the verdict the way `order`'s does. A contradicted pair is read and described,
+/// because saying it is what the reader is for, and it still exits 1, because a script that reads
+/// only the exit code must not take a pair its own reader calls impossible as a good one.
 fn read_pair(request: &str, response: &str, as_fields: bool) -> Outcome {
     match Countersigned::read(request, response) {
         Ok(pair) => Outcome {
@@ -220,7 +225,10 @@ fn read_pair(request: &str, response: &str, as_fields: bool) -> Outcome {
             } else {
                 describe_pair(&pair, request, response)
             },
-            code: 0,
+            code: match pair.ordering() {
+                Ordering::Established { .. } | Ordering::Undecided { .. } => 0,
+                Ordering::Contradicted { .. } | Ordering::NotSayable => 1,
+            },
         },
         Err(why) => unreadable(&format!("these two are not one exchange: {why}")),
     }

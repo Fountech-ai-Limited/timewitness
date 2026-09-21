@@ -57,15 +57,20 @@ fn digest(seed: u8) -> [u8; 32] {
 
 /// A request from somebody else, signed by a key that is not this machine's.
 fn a_request() -> String {
+    a_request_made_at(ARRIVED - NANOS_PER_SEC)
+}
+
+/// The same request, made at a moment a case chooses.
+fn a_request_made_at(earliest_ns: Nanos) -> String {
     let sender = AgentKey::from_seed(&SENDER_SEED);
     let request = Exchange {
         role: Role::Request,
         payload: digest(1),
         sequence: 9,
         interval: Interval {
-            earliest_ns: ARRIVED - NANOS_PER_SEC,
-            reading_ns: ARRIVED - NANOS_PER_SEC + 10,
-            latest_ns: ARRIVED - NANOS_PER_SEC + 20,
+            earliest_ns,
+            reading_ns: earliest_ns + 10,
+            latest_ns: earliest_ns + 20,
         },
         receipt: digest(200),
         key: sender.public_key_bytes(),
@@ -375,5 +380,63 @@ fn a_receipt_that_is_not_a_receipt_is_said_rather_than_guessed_at() {
         text(&out.stderr).contains("is not a receipt this can read"),
         "{}",
         text(&out.stderr)
+    );
+}
+
+#[test]
+fn a_receipt_older_than_the_request_is_not_answered_and_nothing_is_signed() {
+    // The receiver's receipt says its clock read a moment wholly before the request was made. A
+    // response names its request by bytes that had to exist first, so a pair built from these two
+    // is one our own reader calls contradicted. Found 2026-09-21: this signed it and exited 0.
+    let (key, receipt) = the_receivers_machine("older");
+    let later = ARRIVED + HALF + 1;
+    let out = run(&[
+        "countersign",
+        &a_request_made_at(later),
+        "--answer",
+        "--receipt",
+        &as_str(&receipt),
+        "--key",
+        &as_str(&key),
+    ]);
+    let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
+    assert_eq!(out.status.code(), Some(1), "{said}");
+    assert!(said.contains("was not answered"), "{said}");
+    assert!(said.contains("before the request"), "{said}");
+    assert!(
+        !said.lines().any(|line| line.trim().starts_with("tw1.")),
+        "a response was printed for a request that was not answered: {said}"
+    );
+
+    // The same with --fields, which a script reads.
+    let fields = run(&[
+        "countersign",
+        &a_request_made_at(later),
+        "--answer",
+        "--receipt",
+        &as_str(&receipt),
+        "--key",
+        &as_str(&key),
+        "--fields",
+    ]);
+    assert_eq!(fields.status.code(), Some(1));
+    assert!(!text(&fields.stdout).contains("response="));
+
+    // And the control: a request made one nanosecond earlier touches the receipt's interval, which
+    // is undecided rather than contradicted, and is answered.
+    let answered = run(&[
+        "countersign",
+        &a_request_made_at(later - 1),
+        "--answer",
+        "--receipt",
+        &as_str(&receipt),
+        "--key",
+        &as_str(&key),
+    ]);
+    assert!(
+        answered.status.success(),
+        "{}{}",
+        text(&answered.stdout),
+        text(&answered.stderr)
     );
 }

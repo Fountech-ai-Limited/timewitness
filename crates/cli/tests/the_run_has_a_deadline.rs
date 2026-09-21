@@ -1,8 +1,8 @@
 //! `stamp` answers by refusing rather than by running long.
 //!
-//! Every call the command makes carries its own timeout, five seconds for NTP, NTS and Roughtime,
-//! eight for drand, fifteen for the timestamp authority and two for the agent socket, and there is
-//! no retry loop. What none of it bounded until 2026-09-20 was the command. Sixteen rounds by nine
+//! Every call the command makes carries its own timeout, five seconds for NTP and Roughtime and for
+//! each of NTS's two steps, eight for drand, fifteen for the timestamp authority and two for the
+//! agent socket, and there is no retry loop. What none of it bounded until 2026-09-20 was the command. Sixteen rounds by nine
 //! sources by five seconds is 720 seconds of polling before the evidence calls, on a network that
 //! drops the packets rather than refusing them, which is the ordinary shape of a locked-down build
 //! environment rather than an exotic one. The one line this product asks a stranger to put in a
