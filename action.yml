@@ -73,15 +73,17 @@ inputs:
   deadline:
     description: >-
       How long the whole stamping run may take, in seconds, before it answers by refusing. Every
-      call it makes carries its own timeout, five seconds for NTP, NTS and Roughtime, eight for
-      drand and fifteen for the timestamp authority, and until 2026-09-20 nothing bounded the
-      command itself. What that costs a runner in the worst case is arithmetic rather than a
-      measurement: sixteen rounds by nine sources by five seconds is 720 seconds of polling before
-      the evidence calls, on a network that drops the packets rather than refusing them, which is
-      the ordinary shape of a locked-down build environment. It sits above the arithmetic for a run
-      where a third of the sources blackhole, which is sixteen rounds by three sources by five
-      seconds, or 240 seconds of waiting, after which that run still answers correctly on the rest.
-      A healthy run takes seconds. Raise it if you also raise rounds or gap.
+      call it makes carries its own timeout, five seconds for NTP and Roughtime and for each of the
+      two steps of NTS, its key exchange as a whole and its time request, eight for drand and
+      fifteen for the timestamp authority, and until 2026-09-20 nothing bounded the command itself.
+      What that costs a runner in the worst case is arithmetic rather than a measurement: sixteen
+      rounds by nine sources by five seconds is 720 seconds of polling before the evidence calls, on
+      a network that drops the packets rather than refusing them, which is the ordinary shape of a
+      locked-down build environment. There an NTS key exchange never completes, so its time request
+      is never sent. It sits above the arithmetic for a run where a third of the sources blackhole,
+      which is sixteen rounds by three sources by five seconds, or 240 seconds of waiting, after
+      which that run still answers correctly on the rest. A healthy run takes seconds. Raise it if
+      you also raise rounds or gap.
     required: false
     default: "300"
   previous:

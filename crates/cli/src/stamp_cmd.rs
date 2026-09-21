@@ -182,8 +182,9 @@ fn a_gap_between_rounds(args: &Args) -> Result<u64, String> {
 
 /// How long the whole command may take before it answers by refusing, in seconds.
 ///
-/// Every call this command makes carries its own timeout, five seconds for NTP, NTS and Roughtime,
-/// eight for drand, fifteen for RFC 3161 and two for the agent socket, and there is no retry loop.
+/// Every call this command makes carries its own timeout, five seconds for NTP and Roughtime and for
+/// each of NTS's two steps, its key exchange as a whole and its time request, eight for drand,
+/// fifteen for RFC 3161 and two for the agent socket, and there is no retry loop.
 /// What none of that bounds is the command. Sixteen rounds by nine sources by five seconds is 720 s
 /// of polling before the evidence calls are made, on a network that drops the packets rather than
 /// refusing them, and a blackholing network is the ordinary shape of a locked-down build
