@@ -185,9 +185,33 @@ if [ "$mode" = "self-test" ]; then
     # Refused: one parent, so it is an ordinary commit wearing the merge button's identities.
     seed_a_merge one-parent "$nik_on_github" "$github" \
       "Merge pull request #104 from Fountech-ai-Limited/a-seeded-branch" one || exit 2
+    # Refused: a name carrying the separators of the line this rule used to read, laid out so the
+    # fields after it say the merge button wrote a commit that somebody else wrote.
+    seed_a_merge bar-dressed-as-the-button \
+      "nikkai1007|76212305+nikkai1007@users.noreply.github.com|GitHub|noreply@github.com|Merge pull request #106 from Fountech-ai-Limited/a-seeded-branch <somebody@example.com>" \
+      "Somebody Else <somebody@example.com>" "A merge by somebody else" two || exit 2
     # Allowed: what the button itself writes, and the only thing this rule lets past.
     seed_a_merge the-button "$nik_on_github" "$github" \
       "Merge pull request #105 from Fountech-ai-Limited/a-seeded-branch" two || exit 2
+
+    # Refused: a name that holds a bar. Git refuses only `<`, `>` and a newline in a name, and until
+    # 2026-09-21 rule 1 split every commit's line on bars, so each of these three set both addresses
+    # the rule compares to the one this repository requires. Each is written out by sha.
+    seed_an_identity() {
+      local name="$1"
+      printf 'seed\n' >"docs/a-seed-from-$name.md"
+      git add -A
+      GIT_AUTHOR_NAME="$2" GIT_AUTHOR_EMAIL="$3" GIT_COMMITTER_NAME="$4" GIT_COMMITTER_EMAIL="$5" \
+        git commit --quiet -m "A seeded commit for $name" || return 1
+      git rev-parse HEAD >"$work/sha-$name" || return 1
+    }
+    seed_an_identity bar-in-the-author-name \
+      "Somebody Else|nik@fountech.ai|Somebody Else|nik@fountech.ai" "somebody@example.com" \
+      "Somebody Else" "somebody@example.com" || exit 2
+    seed_an_identity bar-in-the-committer-name "Nik Kairinos" "nik@fountech.ai" \
+      "Somebody|nik@fountech.ai|" "somebody@example.com" || exit 2
+    seed_an_identity an-address-for-a-name "Somebody|nik@fountech.ai" "somebody@example.com" \
+      "nik@fountech.ai" "somebody@example.com" || exit 2
   ) || stop "the seeds could not be planted"
 
   said="$(bash "$here/repo-hygiene.sh" --repo "$work/clone" 2>&1)"
@@ -214,9 +238,11 @@ if [ "$mode" = "self-test" ]; then
         ;;
     esac
   done
-  # The four near misses of the merge button, named by sha rather than by identity, because two of
-  # them carry the identities the allowed one carries and the sentence would not tell them apart.
-  for seed in robot-author foreign-committer hand-written outside-the-org one-parent; do
+  # The near misses of the merge button and the three names that hold a bar, named by sha rather
+  # than by identity, because several carry the identities an allowed commit carries and the
+  # sentence would not tell them apart.
+  for seed in robot-author foreign-committer hand-written outside-the-org one-parent \
+    bar-dressed-as-the-button bar-in-the-author-name bar-in-the-committer-name an-address-for-a-name; do
     seeded_sha="$(cat "$work/sha-$seed" 2>/dev/null)"
     if [ -z "$seeded_sha" ]; then
       echo "repo hygiene: the $seed seed was never planted, so nothing was watched refusing it" >&2
@@ -226,7 +252,7 @@ if [ "$mode" = "self-test" ]; then
     case "$said" in
       *"$seeded_sha is authored by"*) ;;
       *)
-        echo "repo hygiene: the seeded clone was not refused for the $seed merge, $seeded_sha" >&2
+        echo "repo hygiene: the seeded clone was not refused for the $seed seed, $seeded_sha" >&2
         missed=1
         ;;
     esac
@@ -271,10 +297,31 @@ fi
 
 # The populations every rule below reads, read once and counted. A rule that reads an empty list
 # passes, so each list is held to what git says is there before any rule runs over it.
-commits="$(git log --all --format='%H|%P|%an|%ae|%cn|%ce|%s')" || stop "git log could not list the commits"
+#
+# The commits are read as seven fields each, and every field is ended by a NUL. Git writes no NUL
+# inside a name, an address or a subject, so no value can move another. Until 2026-09-21 this was
+# one line per commit joined by bars, and git accepts a bar in a name: a name laid out as
+# `Somebody|nik@fountech.ai|Somebody|nik@fountech.ai` set both addresses rule 1 compares, and a
+# commit by anybody went through. The fields are then held three ways, so a value that did move
+# another stops the check rather than passing it: seven fields for every commit git counts, a full
+# commit id in every first field, and nothing but commit ids in every second.
 commit_count="$(git rev-list --all --count)" || stop "git rev-list could not count the commits"
 [ "$commit_count" -ge 1 ] || stop "this repository has no commits"
-[ "$(printf '%s\n' "$commits" | grep -c .)" -eq "$commit_count" ] || stop "git log listed a different number of commits from git rev-list"
+fields_per_commit=7
+commit_file="$(mktemp)" || stop "no scratch file could be made for the commit list"
+trap 'rm -f "$commit_file"' EXIT
+git log --all -z --format='%H%x00%P%x00%an%x00%ae%x00%cn%x00%ce%x00%s' >"$commit_file" || stop "git log could not list the commits"
+commit_fields=()
+while IFS= read -r -d '' field; do
+  commit_fields+=("$field")
+done <"$commit_file"
+[ "${#commit_fields[@]}" -eq $((commit_count * fields_per_commit)) ] || stop "git log gave ${#commit_fields[@]} fields for $commit_count commits, where $fields_per_commit each were asked for, so one commit's fields cannot be told from the next"
+commit_ids=()
+for ((i = 0; i < ${#commit_fields[@]}; i += fields_per_commit)); do
+  [[ "${commit_fields[i]}" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || stop "field $i of the commit list should be a commit id and is '${commit_fields[i]}'"
+  [[ "${commit_fields[i + 1]}" =~ ^(([0-9a-f]{40}|[0-9a-f]{64})( |$))*$ ]] || stop "the parents of ${commit_fields[i]} read '${commit_fields[i + 1]}', which is not a list of commit ids"
+  commit_ids+=("${commit_fields[i]}")
+done
 
 tracked="$(git -c core.quotePath=false ls-files)" || stop "git ls-files could not list the tree"
 tracked_count="$(printf '%s\n' "$tracked" | grep -c .)"
@@ -330,14 +377,15 @@ is_the_merge_button() {
   [ "$MATCH_COUNT" -eq 1 ]
 }
 
-# The subject is read last, so a field with a bar in it shifts the identities rather than the
-# subject and the commit is refused. Every way of getting this wrong fails towards refusing.
-while IFS='|' read -r sha parents an ae cn ce subject; do
-  [ -n "$sha" ] || continue
+# Each field is compared whole, as git wrote it, so an address matches only when it is the address.
+for ((i = 0; i < ${#commit_fields[@]}; i += fields_per_commit)); do
+  sha="${commit_fields[i]}" parents="${commit_fields[i + 1]}"
+  an="${commit_fields[i + 2]}" ae="${commit_fields[i + 3]}"
+  cn="${commit_fields[i + 4]}" ce="${commit_fields[i + 5]}" subject="${commit_fields[i + 6]}"
   [ "$ae" = "nik@fountech.ai" ] && [ "$ce" = "nik@fountech.ai" ] && continue
   is_the_merge_button "$parents" "$an" "$ae" "$cn" "$ce" "$subject" && continue
   report "$sha is authored by '$an <$ae>' and committed by '$cn <$ce>'"
-done <<<"$commits"
+done
 
 # 2. No trailers.
 #
@@ -351,13 +399,12 @@ done <<<"$commits"
 # it meant amending and force-pushing. A trailer lives in the last paragraph, git knows where that
 # is, and `%(trailers)` is that knowledge. The subject is exempt either way, because a subject may
 # legitimately be prefixed.
-while IFS='|' read -r sha rest; do
-  [ -n "$sha" ] || continue
+for sha in "${commit_ids[@]}"; do
   trailers="$(git log -1 --format='%(trailers:only=true)' "$sha")" || stop "git log could not read $sha"
   if [ -n "$trailers" ]; then
     report "the commit message of $sha carries a footer, and messages here are prose"
   fi
-done <<<"$commits"
+done
 
 # 3. Plain ASCII, everywhere, and one line ending.
 #
