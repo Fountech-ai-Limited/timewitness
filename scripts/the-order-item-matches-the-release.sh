@@ -178,22 +178,35 @@ self_test() {
   # And the whole path, against real bytes rather than against two words. The working tree today is
   # the world this guard exists to refuse: the code is here and the list still says nothing
   # compares two receipts. A temporary tag makes that world a release for as long as the test runs.
+  #
+  # The tag goes into a scratch clone and never into this repository. Planted here, a run killed
+  # before its trap left the tag behind, and a run beside it read the planted tag as the newest
+  # release, which is the one thing this guard reads. Found 2026-09-21.
   local planted="tw-order-item-self-test-$$"
-  git tag -f "$planted" HEAD >/dev/null 2>&1
+  local scratch
+  scratch="$(mktemp -d)"
   # shellcheck disable=SC2064
-  trap "git tag -d '$planted' >/dev/null 2>&1 || true" EXIT
-  if check_tag "$planted" >/dev/null 2>&1; then
-    if tree_compares_two_receipts "$planted" && list_says_nothing_does "$planted"; then
-      echo "the order item: a planted release carrying both the command and the old sentence was allowed" >&2
-      failures=$((failures + 1))
-    else
-      echo "the order item: the head carries only one of the two today, so the planted release is not the world this refuses. Read the two facts printed above rather than trusting this line"
-      check_tag "$planted" || true
-    fi
+  trap "rm -rf '$scratch'" EXIT
+  if ! git clone --quiet --shared --no-checkout "$root" "$scratch/repo" 2>/dev/null; then
+    echo "the order item: no scratch clone could be made to plant a release in" >&2
+    failures=$((failures + 1))
   else
-    echo "the order item: a planted release carrying both was refused, on real bytes"
+    (
+      cd "$scratch/repo" || exit 1
+      git tag -f "$planted" HEAD >/dev/null 2>&1
+      if check_tag "$planted" >/dev/null 2>&1; then
+        if tree_compares_two_receipts "$planted" && list_says_nothing_does "$planted"; then
+          echo "the order item: a planted release carrying both the command and the old sentence was allowed" >&2
+          exit 1
+        fi
+        echo "the order item: the head carries only one of the two today, so the planted release is not the world this refuses. Read the two facts printed above rather than trusting this line"
+        check_tag "$planted" || true
+      else
+        echo "the order item: a planted release carrying both was refused, on real bytes"
+      fi
+    ) || failures=$((failures + 1))
   fi
-  git tag -d "$planted" >/dev/null 2>&1 || true
+  rm -rf "$scratch"
   trap - EXIT
 
   if [ "$failures" -ne 0 ]; then
