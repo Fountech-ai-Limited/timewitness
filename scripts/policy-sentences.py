@@ -3185,16 +3185,35 @@ def every_figure_is_read(policy):
     longer carry is reported rather than left standing.
     """
     faults = []
+
+    def refused_for(sentence, figure, surface='a made-up surface', excused=None):
+        """The refusals of one sentence, and whether one of them names the figure the probe is for.
+
+        A probe that asks only whether a sentence was refused passes on any figure in it, so a
+        sentence carrying two is green while the one it was written for goes through. That held a
+        walk green for a day on 2026-09-18, and this function carried the same shape on its first
+        probe, whose sentence carries ninety-nine percent beside the 12 milliseconds it is for.
+        """
+        refused = unclaimed([(surface, sentence)], policy, None, [] if excused is None else excused)[0]
+        return refused, any(f' {figure} ' in line.splitlines()[0] for line in refused)
+
     probes = [
-        'Ninety-nine percent of receipts come in under 12 milliseconds.',
-        'TimeWitness bounds every stamp at 153.875 ms.',
-        'Every stamp carries an error bound of 128.7 ms.',
-        'Measured on 2026-09-09 on an ordinary desktop, every stamp is 128.7 ms wide.',
+        ('Ninety-nine percent of receipts come in under 12 milliseconds.', '12 milliseconds'),
+        ('TimeWitness bounds every stamp at 153.875 ms.', '153.875 ms'),
+        ('Every stamp carries an error bound of 128.7 ms.', '128.7 ms'),
+        ('Measured on 2026-09-09 on an ordinary desktop, every stamp is 128.7 ms wide.', '128.7 ms'),
     ]
-    for probe in probes:
-        refused, _ = unclaimed([('a made-up surface', probe)], policy, None, [])
-        if not refused:
-            faults.append(f'a figure nothing has a rule for passed: {probe}')
+    for probe, figure in probes:
+        refused, named = refused_for(probe, figure)
+        if not named:
+            faults.append(f'a figure nothing has a rule for passed, or the sentence was refused for another figure than {figure}: {probe}')
+    # And the check above can tell the difference: with the figure a probe is for excused, the
+    # sentence is still refused, for the other figure in it, and the probe no longer counts it.
+    only = [{'figures': {'12 milliseconds'}, 'surfaces': {'a made-up surface'},
+             'sentence': probes[0][0], 'reason': 'for the self-test', 'used': 0}]
+    refused, named = refused_for(probes[0][0], '12 milliseconds', excused=only)
+    if not refused or named:
+        faults.append('with its figure excused, the first probe must be refused for the other figure and not counted, and was not')
     # An honest sentence of the same shape has to pass, or this is refusing figures rather than
     # unread ones.
     for honest in ('Measured 2026-09-09 at 21:41 on an ordinary desktop at sixteen rounds: 153.875 ms wide.',
@@ -3209,18 +3228,18 @@ def every_figure_is_read(policy):
                    'On a GitHub runner,', 'Over sixteen polling rounds,', 'At thirty-six minutes of uptime,',
                    'Measured,', 'On a desktop,'):
         probe = f'{prefix} receipts come in under 12 ms.'
-        if not unclaimed([('a made-up surface', probe)], policy, None, [])[0]:
-            faults.append(f'an invented figure passed on its conditions word: {probe}')
+        if not refused_for(probe, '12 ms')[1]:
+            faults.append(f'an invented figure passed on its conditions word, or was refused for another: {probe}')
     # Somebody else's figure written as ours, refused by what its entry says rather than by the word.
     public = 'Between 5 and 50 ms over the public internet, measured by us.'
     refused = unclaimed([('a made-up surface', public)], policy, None, [])[0]
     if not refused or 'public research' not in refused[0]:
         faults.append(f'a public research figure written as ours was not refused by name: {public}')
     # The width of a receipt since replaced, and a round count given a width nobody read.
-    for stale in ('Our bound was 149.8 ms on the receipt we ship as a fixture.',
-                  'Sixteen polling rounds gets you under a hundred milliseconds of error.'):
-        if not unclaimed([('a made-up surface', stale)], policy, None, [])[0]:
-            faults.append(f'a figure no register holds as said passed: {stale}')
+    for stale, figure in (('Our bound was 149.8 ms on the receipt we ship as a fixture.', '149.8 ms'),
+                          ('Sixteen polling rounds gets you under a hundred milliseconds of error.', 'hundred milliseconds')):
+        if not refused_for(stale, figure)[1]:
+            faults.append(f'a figure no register holds as said passed, or was refused for another than {figure}: {stale}')
     # The honest sentences of a cold set written from the product's rules alone and frozen at sha256
     # e4c2a62 before the figure walk was opened, all twelve, named, through both halves of this file.
     cold = {
@@ -3473,15 +3492,16 @@ def every_figure_is_read(policy):
         faults.append('two hundred milliseconds was not read as one figure')
     # The excuse itself, watched covering the sentence it names and nothing beside it.
     entry = [{'figures': {'12 milliseconds', 'ninety-nine percent'}, 'surfaces': {'a made-up surface'},
-              'sentence': probes[0], 'reason': 'for the self-test', 'used': 0}]
-    if unclaimed([('a made-up surface', probes[0])], policy, None, entry)[0]:
+              'sentence': probes[0][0], 'reason': 'for the self-test', 'used': 0}]
+    if unclaimed([('a made-up surface', probes[0][0])], policy, None, entry)[0]:
         faults.append('an excused figure was refused in the sentence its entry quotes')
-    if not unclaimed([('another surface', probes[0])], policy, None, entry)[0]:
-        faults.append('an excuse covered a surface it does not name')
+    if not all(refused_for(probes[0][0], figure, 'another surface', entry)[1]
+               for figure in ('12 milliseconds', 'ninety-nine percent')):
+        faults.append('an excuse covered a surface it does not name, for one of its two figures')
     entry[0]['used'] = 0
-    if not unclaimed([('a made-up surface', 'Ninety-nine percent of receipts come in under 12 milliseconds today.')],
-                     policy, None, entry)[0]:
-        faults.append('an excuse covered a sentence it does not quote')
+    if not all(refused_for('Ninety-nine percent of receipts come in under 12 milliseconds today.', figure,
+                           excused=entry)[1] for figure in ('12 milliseconds', 'ninety-nine percent')):
+        faults.append('an excuse covered a sentence it does not quote, for one of its two figures')
     if not stale_excuses(entry, {'a made-up surface'}):
         faults.append('an entry that matched nothing on a surface it names was not reported')
     if stale_excuses(entry, {'another surface'}):
