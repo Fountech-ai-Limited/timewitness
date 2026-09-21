@@ -1,0 +1,61 @@
+name: Live
+
+# The tests that talk to real time sources, run against them once a day.
+#
+# Every test that proves this product can reach a real Roughtime, NTP, NTS, drand or RFC 3161 server
+# and that the answer verifies is marked ignored, because the ordinary build should not go red when
+# somebody else's server does. Until 2026-09-21 nothing ran them, so a retired server, an expired
+# certificate or a changed protocol would have reached a user before it reached a test.
+#
+# Once a day rather than on every push: a server's health is a question about the world rather than
+# about a commit, and the surfaces workflow beside this one already runs on a clock for the same
+# reason. The run takes about a minute. It also runs on a pull request that changes this file, so a
+# change to it is watched working before it merges rather than after.
+#
+# What it does not run: the three command-line tests that need a Roughtime server of ours, because
+# none is deployed, and the printer in the clock crate that asserts nothing. Both are named in the
+# README beside the badge this workflow drives.
+#
+# A failure is visible without a log: the badge in the README turns red, and the run's summary is a
+# table naming each test and whether it answered.
+
+on:
+  schedule:
+    - cron: '37 5 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/live.yml'
+      - 'scripts/live-summary.sh'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: the live integrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: The summary still names a failure
+        run: bash scripts/live-summary.sh --self-test
+
+      - name: Every source client against the real servers
+        run: |
+          set -o pipefail
+          cargo test --locked -p timewitness-sources --tests -- --ignored --test-threads 1 2>&1 | tee "$RUNNER_TEMP/live.txt"
+          status=$?
+          bash scripts/live-summary.sh <"$RUNNER_TEMP/live.txt" >>"$GITHUB_STEP_SUMMARY"
+          summary=$?
+          [ "$status" -eq 0 ] && [ "$summary" -eq 0 ]

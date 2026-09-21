@@ -271,6 +271,17 @@ agent and `stamp` reach, what each one is for, and what a blocked one costs. Two
 HTTP on port 80 rather than HTTPS on 443, which is the one people get wrong. Checking a receipt
 reaches nothing on that list.
 
+## Whether it still reaches the servers
+
+[![Live](https://github.com/Fountech-ai-Limited/timewitness/actions/workflows/live.yml/badge.svg)](https://github.com/Fountech-ai-Limited/timewitness/actions/workflows/live.yml)
+
+The badge reads the last run of `.github/workflows/live.yml`, once a day, which asks the published
+Roughtime, NTP, NTS, drand and timestamp servers and checks each answer the way the agent does. Its
+summary names every test and whether it answered, and the date of the run is the last time the live
+integrations were seen working. The ordinary build does not ask them, because somebody else's server
+being down is not a fault in a commit. Three tests that need a Roughtime server of ours are not run,
+because none is deployed.
+
 ## Layout
 
 Every module and what it may import from is in `docs/repo-layout.md`, and
