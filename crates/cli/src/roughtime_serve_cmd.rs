@@ -341,6 +341,7 @@ mod tests {
                 widest_source_network_half: 0,
                 scheduling: 0,
                 oscillator_holdover: 0,
+                unclaimed_rate: 0,
                 model_residual: 0,
                 safety_margin: 0,
             },

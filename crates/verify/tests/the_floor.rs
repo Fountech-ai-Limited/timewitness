@@ -42,6 +42,7 @@ fn of_width(width: Nanos) -> Vec<u8> {
         oscillator_holdover: 0,
         model_residual: 0,
         safety_margin: 0,
+        unclaimed_rate: None,
     };
     // Its own ceiling allows it, so nothing inside the receipt objects.
     receipt.claim.policy.max_bound_width = width.max(1) * 2;

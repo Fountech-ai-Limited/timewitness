@@ -21,6 +21,7 @@ use timewitness_core::{
     Bound, BoundBreakdown, EpsilonBasis, FusionRule, Generations, LeapIndicator, MonotonicNanos,
     Operator, Reading, SmearPolicy, SourceId, SourceKind, SourceState, Stamp, Timescale, UnixNanos,
 };
+use timewitness_receipt::TakenBy;
 use timewitness_receipt::{
     cbor, chain_link, open, sha256_payload, AgentKey, PolicyRecord, Receipt, ReceiptError, Value,
     MAX_ENCODED_BYTES,
@@ -66,6 +67,7 @@ fn receipt() -> Receipt {
                 widest_source_network_half: 12 * MS,
                 scheduling: 10_000,
                 oscillator_holdover: 500_000,
+                unclaimed_rate: 0,
                 model_residual: 240_000,
                 safety_margin: 250_000,
             },
@@ -86,7 +88,11 @@ fn receipt() -> Receipt {
             min_sources: 3,
             min_operators: Some(3),
             max_holdover: Some(3_600 * MS * 1_000),
+            source_interval_floor: Some(100_000),
+            frequency_slew_ppb_per_s: Some(1_000),
+            frequency_span_ppb: Some(100_000),
         },
+        TakenBy::OneShot,
     )
 }
 

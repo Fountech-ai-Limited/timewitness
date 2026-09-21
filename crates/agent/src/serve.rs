@@ -34,6 +34,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use timewitness_clock::{BandReading, MonotonicClock};
+use timewitness_receipt::schema::TakenBy;
 use timewitness_sources::{Exchange, TimeSource};
 
 use crate::resident::Resident;
@@ -408,7 +409,7 @@ pub fn answer(
         Ok(mut resident) => {
             let policy = resident.policy_record();
             match resident.read() {
-                Ok(stamp) => encode_reading(&carrier(&stamp, policy)),
+                Ok(stamp) => encode_reading(&carrier(&stamp, policy, TakenBy::ResidentAgent)),
                 // The refusal working rather than a fault. A wider interval says something true and
                 // a narrow wrong one does not, and the last good reading is never offered.
                 Err(refusal) => encode_refusal(&format!("{refusal}")),

@@ -161,6 +161,7 @@ pub fn receipt() -> Receipt {
         oscillator_holdover: 20 * NANOS_PER_MILLI,
         model_residual: 20 * NANOS_PER_MILLI,
         safety_margin: 10 * NANOS_PER_MILLI,
+        unclaimed_rate: None,
     };
     assert_eq!(breakdown.half_width(), HALF);
 
@@ -203,7 +204,11 @@ pub fn receipt() -> Receipt {
                 min_sources: 3,
                 min_operators: Some(3),
                 max_holdover: Some(3_600 * NANOS_PER_SEC),
+                source_interval_floor: None,
+                frequency_slew_ppb_per_s: None,
+                frequency_span_ppb: None,
             },
+            taken_by: None,
         },
         evidence: vec![corridor(), beacon(), witness()],
         agent_public_key: key().public_key_bytes(),
@@ -256,6 +261,7 @@ pub fn receipt_narrower_than_its_bracket() -> Receipt {
         oscillator_holdover: 5 * NANOS_PER_MILLI,
         model_residual: 5 * NANOS_PER_MILLI,
         safety_margin: 5 * NANOS_PER_MILLI,
+        unclaimed_rate: None,
     };
     assert_eq!(receipt.claim.breakdown.half_width(), half);
     receipt

@@ -13,6 +13,7 @@
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
+use timewitness_receipt::TakenBy;
 
 use timewitness_agent::crossing::{ask, CrossingError, WhatTheCallerKnows, WILDNESS};
 use timewitness_agent::resident::{Resident, Surroundings};
@@ -225,7 +226,7 @@ fn a_reading_crosses_the_boundary_whole() {
         let mut r = resident;
         let stamp = r.read().expect("a synchronised model answers");
         let policy = r.policy_record();
-        let carrier = timewitness_agent::wire::carrier(&stamp, policy);
+        let carrier = timewitness_agent::wire::carrier(&stamp, policy, TakenBy::ResidentAgent);
         (r, carrier)
     };
     let (resident, before) = expected;
@@ -713,7 +714,8 @@ fn a_source_reporting_itself_unsynchronised_leaves_a_receipt_this_product_accept
     }
 
     let stamp = resident.read().expect("a synchronised model answers");
-    let carrier = timewitness_agent::wire::carrier(&stamp, resident.policy_record());
+    let carrier =
+        timewitness_agent::wire::carrier(&stamp, resident.policy_record(), TakenBy::ResidentAgent);
 
     assert_eq!(
         carrier.claim.sources.len(),

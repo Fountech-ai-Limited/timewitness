@@ -19,6 +19,7 @@ use timewitness_core::{
     Operator, Reading, SmearPolicy, SourceId, SourceKind, SourceState, Stamp, Timescale, UnixNanos,
 };
 use timewitness_receipt::schema::{Role, SourceRecord};
+use timewitness_receipt::TakenBy;
 use timewitness_receipt::{
     open, sha256_payload, AgentKey, Evidence, PolicyRecord, Receipt, ReceiptError, Scheme,
 };
@@ -97,6 +98,7 @@ fn stamp() -> Stamp {
                 widest_source_network_half: 12 * MS,
                 scheduling: 10_000,
                 oscillator_holdover: 500_000,
+                unclaimed_rate: 0,
                 model_residual: 240_000,
                 safety_margin: 250_000,
             },
@@ -127,8 +129,27 @@ fn receipt() -> Receipt {
             min_sources: 3,
             min_operators: Some(3),
             max_holdover: Some(3_600 * MS * 1_000),
+            source_interval_floor: Some(100_000),
+            frequency_slew_ppb_per_s: Some(1_000),
+            frequency_span_ppb: Some(100_000),
         },
+        TakenBy::OneShot,
     )
+}
+
+/// The same receipt written in version 0, which is what every receipt issued before version 1 is.
+///
+/// Version 0 carries none of the fields version 1 added, and a limit it left out is a limit it did
+/// not state. The two tests that use this are about receipts written before a version 0 field
+/// existed, and those are version 0 receipts.
+fn as_version_0(mut r: Receipt) -> Receipt {
+    r.version = 0;
+    r.claim.taken_by = None;
+    r.claim.breakdown.unclaimed_rate = None;
+    r.claim.policy.source_interval_floor = None;
+    r.claim.policy.frequency_slew_ppb_per_s = None;
+    r.claim.policy.frequency_span_ppb = None;
+    r
 }
 
 /// Sign a receipt and read it back the way a stranger would.
@@ -371,7 +392,7 @@ fn a_receipt_that_states_an_operator_floor_and_names_nobody_is_refused() {
 /// The receipt the carve-out was written for, which never needed it.
 #[test]
 fn a_receipt_from_before_the_labels_existed_passes_on_its_own_merits() {
-    let mut r = receipt();
+    let mut r = as_version_0(receipt());
     r.claim.sources = vec![
         unlabelled("a-1", true),
         unlabelled("a-2", true),
@@ -642,7 +663,7 @@ fn a_receipt_that_states_no_holdover_ceiling_is_read_as_stating_none() {
     // One receipt in this repository predates the field and three real third parties signed it, so
     // it is not re-taken. A reader has to be able to open it and has to be told that there is no
     // ceiling here to hold the agent to, rather than being handed a nought that reads as a promise.
-    let mut r = receipt();
+    let mut r = as_version_0(receipt());
     r.claim.policy.max_holdover = None;
     r.claim.since_last_sync = 10 * 3_600 * MS * 1_000;
 

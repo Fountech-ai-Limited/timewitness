@@ -936,6 +936,7 @@ mod tests {
                 oscillator_holdover: 0,
                 model_residual: 0,
                 safety_margin: 0,
+                unclaimed_rate: None,
             },
             since_last_sync: 0,
             frequency_ppb: 0,
@@ -947,7 +948,11 @@ mod tests {
                 min_sources: 1,
                 min_operators: None,
                 max_holdover: None,
+                source_interval_floor: None,
+                frequency_slew_ppb_per_s: None,
+                frequency_span_ppb: None,
             },
+            taken_by: None,
         }
     }
 

@@ -90,6 +90,7 @@ fn a_receipt(key: &AgentKey, payload: [u8; 32]) -> Vec<u8> {
         oscillator_holdover: 1,
         model_residual: 1,
         safety_margin: 0,
+        unclaimed_rate: None,
     };
     let receipt = Receipt {
         version: 0,
@@ -130,7 +131,11 @@ fn a_receipt(key: &AgentKey, payload: [u8; 32]) -> Vec<u8> {
                 min_sources: 3,
                 min_operators: Some(3),
                 max_holdover: Some(3_600 * NANOS_PER_SEC),
+                source_interval_floor: None,
+                frequency_slew_ppb_per_s: None,
+                frequency_span_ppb: None,
             },
+            taken_by: None,
         },
         evidence: Vec::new(),
         agent_public_key: key.public_key_bytes(),

@@ -60,6 +60,37 @@ impl AgentKey {
                 "the receipt names a different public key from the one signing it".into(),
             ));
         }
+        // A receipt is signed in a version this code reads and in the shape that version has, so a
+        // version 1 receipt with a field missing is refused here rather than signed and then refused
+        // by every reader afterwards. The stamp command only ever builds version 1; version 0 is
+        // signed here only so the tests can go on proving that version 0 still reads.
+        if !crate::schema::READS.contains(&receipt.version) {
+            return Err(ReceiptError::UnknownVersion(receipt.version));
+        }
+        let c = &receipt.claim;
+        let version_1_fields = [
+            c.taken_by.is_some(),
+            c.breakdown.unclaimed_rate.is_some(),
+            c.policy.source_interval_floor.is_some(),
+            c.policy.frequency_slew_ppb_per_s.is_some(),
+            c.policy.frequency_span_ppb.is_some(),
+        ];
+        let whole = if receipt.version >= 1 {
+            version_1_fields.iter().all(|held| *held)
+                && c.policy.max_holdover.is_some()
+                && c.policy.min_operators.is_some()
+        } else {
+            version_1_fields.iter().all(|held| !*held)
+        };
+        if !whole {
+            return Err(ReceiptError::Signature(format!(
+                "this receipt says it is version {} and does not have that version's fields. \
+                 Version 1 states its width terms, the unclaimed part of its holdover, its two \
+                 limits and the path its reading came by, and version 0 states no width term, no \
+                 unclaimed part and no path",
+                receipt.version
+            )));
+        }
 
         Ok(self.sign_value(&receipt.to_value()))
     }

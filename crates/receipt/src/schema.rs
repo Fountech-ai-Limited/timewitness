@@ -1,8 +1,10 @@
-//! Receipt format v0: the fields, and what each one is allowed to say.
+//! The receipt format, versions 0 and 1: the fields, and what each one is allowed to say.
 //!
 //! A receipt is a long-lived thing. It has to keep meaning what it meant to a verifier that never
-//! spoke to us, years after it was issued, so the format is frozen and carries its own version
-//! number from the first release.
+//! spoke to us, years after it was issued, so each version is frozen once released and every receipt
+//! carries its own version number. This code writes version 1 and reads 0 and 1. A version 0 receipt
+//! reads back exactly as it did before version 1 existed, and the fields version 1 added are `None`
+//! on it rather than nought, because absent and nought are different facts.
 //!
 //! The shape of it is the point, more than the field list. There are two separate places a
 //! statement about time can sit, and they are not interchangeable:
@@ -27,8 +29,49 @@ use timewitness_core::{
 use crate::error::ReceiptError;
 use crate::value::Value;
 
-/// The version this code writes and reads.
-pub const FORMAT_VERSION: i128 = 0;
+/// The version this code writes.
+///
+/// Version 0 was released on 2026-09-14 and never moves. Version 1 adds the fields a stranger needs
+/// to check the width of what they are holding, and `docs/receipt-format-v1.md` lists them.
+pub const FORMAT_VERSION: i128 = 1;
+
+/// Every version this code reads. Anything else is refused and named, rather than half read.
+pub const READS: [i128; 2] = [0, 1];
+
+/// Which of the two ways a stamp can come by its reading produced this one.
+///
+/// The two rest on different trust. A one-shot reading was taken by the process that signed, from
+/// servers it chose, moments before it signed. A resident agent's reading was taken on the word of
+/// whatever answered the agent's endpoint, which is whoever could write the file naming it. A reader
+/// who cannot tell them apart cannot apply the caution the second one needs. Added in version 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TakenBy {
+    /// This process polled the sources itself and read its own model.
+    OneShot,
+    /// This process read the answer of a resident agent on the same machine.
+    ResidentAgent,
+}
+
+impl TakenBy {
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            TakenBy::OneShot => "one-shot",
+            TakenBy::ResidentAgent => "resident-agent",
+        }
+    }
+
+    /// A path from its wire spelling, and nothing for a spelling this format does not know.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "one-shot" => Some(TakenBy::OneShot),
+            "resident-agent" => Some(TakenBy::ResidentAgent),
+            _ => None,
+        }
+    }
+}
 
 /// The fixed discriminant on the agent's own claim.
 pub const CLAIM_KIND: &str = "agent-bound";
@@ -257,6 +300,10 @@ pub struct AgentClaim {
     pub sources: Vec<SourceRecord>,
     /// The parts of the agent's own policy a stranger can hold it to.
     pub policy: PolicyRecord,
+    /// Which path produced the reading. `None` on a version 0 receipt, which could not say.
+    ///
+    /// Added in version 1.
+    pub taken_by: Option<TakenBy>,
 }
 
 /// Every leap value this format knows how to read.
@@ -578,6 +625,40 @@ pub struct PolicyRecord {
     /// Added 2026-09-08. Without it a reader can see `since_last_sync` and has no way to know
     /// whether the agent thought that was inside its own ceiling.
     pub max_holdover: Option<Nanos>,
+    /// The narrowest interval the agent would let any one source claim, in nanoseconds.
+    ///
+    /// This and the two rates below are the terms that set the width of a bound, and version 0 did
+    /// not carry them, so a reader could check the limits the agent kept to and not the terms that
+    /// decided what they were looking at. `None` on a version 0 receipt. Added in version 1.
+    pub source_interval_floor: Option<Nanos>,
+    /// How fast the agent assumes the oscillator's rate can move, in parts per billion per second.
+    ///
+    /// The agent holds it in parts per million; the receipt carries it in parts per billion, to the
+    /// nearest, because the format has no floating point. Added in version 1.
+    pub frequency_slew_ppb_per_s: Option<i64>,
+    /// The band the agent assumes the oscillator's rate stays inside, end to end, in parts per
+    /// billion. Half of it is the largest rate the agent allows for before it has fitted one. Added in
+    /// version 1.
+    pub frequency_span_ppb: Option<i64>,
+}
+
+impl PolicyRecord {
+    /// Whether every width term version 1 requires is stated.
+    #[must_use]
+    pub const fn states_the_width_terms(&self) -> bool {
+        self.source_interval_floor.is_some()
+            && self.frequency_slew_ppb_per_s.is_some()
+            && self.frequency_span_ppb.is_some()
+    }
+}
+
+/// A rate in parts per million as whole parts per billion, to the nearest.
+///
+/// For the two policy rates a receipt carries. The policy refuses a rate that is not a finite
+/// number before any receipt is made, and a cast of one saturates rather than inventing a value.
+#[must_use]
+pub fn ppm_as_ppb(ppm: f64) -> i64 {
+    (ppm * 1_000.0).round() as i64
 }
 
 /// The parts of the width, as the receipt carries them.
@@ -595,6 +676,11 @@ pub struct BreakdownRecord {
     pub model_residual: Nanos,
     /// A fixed allowance for what the model does not describe.
     pub safety_margin: Nanos,
+    /// The part of `oscillator_holdover` covering a rate the agent is not correcting for.
+    ///
+    /// Reported, and not part of the sum, because it is already inside the holdover term. `None` on a
+    /// version 0 receipt, which folded it into the holdover without saying. Added in version 1.
+    pub unclaimed_rate: Option<Nanos>,
 }
 
 impl BreakdownRecord {
@@ -606,6 +692,7 @@ impl BreakdownRecord {
             oscillator_holdover: b.oscillator_holdover,
             model_residual: b.model_residual,
             safety_margin: b.safety_margin,
+            unclaimed_rate: Some(b.unclaimed_rate),
         }
     }
 
@@ -670,6 +757,9 @@ impl Receipt {
     ///
     /// No evidence is attached here. The evidence clients fetch their own and add it, which keeps
     /// the two apart in the code as well as in the format.
+    ///
+    /// `taken_by` is an argument rather than something set afterwards, so that no caller can build a
+    /// receipt without deciding which path its reading came by.
     #[must_use]
     pub fn from_stamp(
         stamp: &Stamp,
@@ -678,6 +768,7 @@ impl Receipt {
         payload: Payload,
         agent_public_key: Vec<u8>,
         policy: PolicyRecord,
+        taken_by: TakenBy,
     ) -> Self {
         let (offered, kept) = match stamp.bound.breakdown.fusion {
             FusionRule::MarzulloThenInverseSquare { offered, kept } => {
@@ -712,6 +803,7 @@ impl Receipt {
                 resume_generation: stamp.generations.resume,
                 sources: stamp.sources.iter().map(SourceRecord::from_state).collect(),
                 policy,
+                taken_by: Some(taken_by),
             },
             evidence: Vec::new(),
             agent_public_key,
@@ -741,6 +833,9 @@ impl Receipt {
                     widest_source_network_half: self.claim.breakdown.network_half,
                     scheduling: self.claim.breakdown.scheduling,
                     oscillator_holdover: self.claim.breakdown.oscillator_holdover,
+                    // Nought on a version 0 receipt, which did not separate it out. It is a part
+                    // reported beside the sum and never in it, so nought here moves no width.
+                    unclaimed_rate: self.claim.breakdown.unclaimed_rate.unwrap_or(0),
                     model_residual: self.claim.breakdown.model_residual,
                     safety_margin: self.claim.breakdown.safety_margin,
                 },
@@ -870,7 +965,27 @@ impl Receipt {
 
     fn claim_value(&self) -> Value {
         let c = &self.claim;
-        Value::map([
+        // The fields version 1 added are written where they are held and left out where they are
+        // not, which is every version 0 receipt read back. That is what keeps a version 0 receipt
+        // re-encoding to exactly the bytes it was signed as.
+        let mut breakdown = vec![
+            (
+                "intersection_half_ns",
+                Value::Int(c.breakdown.intersection_half),
+            ),
+            ("network_half_ns", Value::Int(c.breakdown.network_half)),
+            ("scheduling_ns", Value::Int(c.breakdown.scheduling)),
+            (
+                "oscillator_holdover_ns",
+                Value::Int(c.breakdown.oscillator_holdover),
+            ),
+            ("model_residual_ns", Value::Int(c.breakdown.model_residual)),
+            ("safety_margin_ns", Value::Int(c.breakdown.safety_margin)),
+        ];
+        if let Some(unclaimed) = c.breakdown.unclaimed_rate {
+            breakdown.push(("unclaimed_rate_ns", Value::Int(unclaimed)));
+        }
+        let mut claim = vec![
             // The discriminant. A reader that finds this knows it is looking at our own model's
             // output and not at anybody else's signature.
             ("kind", Value::text(CLAIM_KIND)),
@@ -886,23 +1001,7 @@ impl Receipt {
             ("fusion", Value::text(c.fusion.clone())),
             ("sources_offered", Value::Int(i128::from(c.sources_offered))),
             ("sources_kept", Value::Int(i128::from(c.sources_kept))),
-            (
-                "breakdown",
-                Value::map([
-                    (
-                        "intersection_half_ns",
-                        Value::Int(c.breakdown.intersection_half),
-                    ),
-                    ("network_half_ns", Value::Int(c.breakdown.network_half)),
-                    ("scheduling_ns", Value::Int(c.breakdown.scheduling)),
-                    (
-                        "oscillator_holdover_ns",
-                        Value::Int(c.breakdown.oscillator_holdover),
-                    ),
-                    ("model_residual_ns", Value::Int(c.breakdown.model_residual)),
-                    ("safety_margin_ns", Value::Int(c.breakdown.safety_margin)),
-                ]),
-            ),
+            ("breakdown", Value::map(breakdown)),
             ("since_last_sync_ns", Value::Int(c.since_last_sync)),
             ("frequency_ppb", Value::Int(i128::from(c.frequency_ppb))),
             ("boot_generation", Value::Int(i128::from(c.boot_generation))),
@@ -940,13 +1039,37 @@ impl Receipt {
                 ),
             ),
             ("policy", policy_to_value(&c.policy)),
-        ])
+        ];
+        if let Some(taken_by) = c.taken_by {
+            claim.push(("taken_by", Value::text(taken_by.as_str())));
+        }
+        Value::map(claim)
     }
 
     /// Read a receipt back out of a value tree.
+    ///
+    /// A version this code does not read is refused before any field is looked at. A version 1
+    /// receipt has to carry every field version 1 requires, and nothing the format does not define:
+    /// what was read, written back out, has to be what was there. Version 0 is read exactly as it was
+    /// read before version 1 existed, extra keys and all, because version 0 never moves.
     pub fn from_value(value: &Value) -> Result<Self, ReceiptError> {
+        let receipt = Self::read_fields(value)?;
+        if receipt.version >= 1
+            && crate::cbor::encode(&receipt.to_value()) != crate::cbor::encode(value)
+        {
+            return Err(ReceiptError::Field(format!(
+                "this version {} receipt carries something the format does not define, or spells a \
+                 field in a way it does not, and a reader that skipped it would be half reading \
+                 evidence",
+                receipt.version
+            )));
+        }
+        Ok(receipt)
+    }
+
+    fn read_fields(value: &Value) -> Result<Self, ReceiptError> {
         let version = int(value, "v")?;
-        if version != FORMAT_VERSION {
+        if !READS.contains(&version) {
             return Err(ReceiptError::UnknownVersion(version));
         }
 
@@ -976,7 +1099,7 @@ impl Receipt {
         let utc_estimate = UnixNanos(int(reading, "utc_ns")?);
 
         let claim_map = field(value, "claim")?;
-        let claim = claim_from_value(claim_map)?;
+        let claim = claim_from_value(claim_map, version)?;
 
         let evidence_list = field(value, "evidence")?
             .as_array()
@@ -1056,7 +1179,22 @@ fn evidence_from_value(value: &Value) -> Result<Evidence, ReceiptError> {
     })
 }
 
-fn claim_from_value(value: &Value) -> Result<AgentClaim, ReceiptError> {
+/// A field version 1 requires, read only where the receipt is version 1 or later.
+///
+/// On a version 0 receipt the field is not looked at, whatever the map holds, so version 0 reads
+/// exactly as it did before version 1 existed.
+fn from_version_1<T>(
+    version: i128,
+    read: impl FnOnce() -> Result<T, ReceiptError>,
+) -> Result<Option<T>, ReceiptError> {
+    if version >= 1 {
+        read().map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+fn claim_from_value(value: &Value, version: i128) -> Result<AgentClaim, ReceiptError> {
     let kind = text(value, "kind")?;
     if kind != CLAIM_KIND {
         return Err(ReceiptError::Field(format!(
@@ -1072,6 +1210,7 @@ fn claim_from_value(value: &Value) -> Result<AgentClaim, ReceiptError> {
         oscillator_holdover: int(breakdown_map, "oscillator_holdover_ns")?,
         model_residual: int(breakdown_map, "model_residual_ns")?,
         safety_margin: int(breakdown_map, "safety_margin_ns")?,
+        unclaimed_rate: from_version_1(version, || int(breakdown_map, "unclaimed_rate_ns"))?,
     };
 
     let basis = match text(value, "basis")? {
@@ -1120,6 +1259,39 @@ fn claim_from_value(value: &Value) -> Result<AgentClaim, ReceiptError> {
 
     let policy = field(value, "policy")?;
 
+    let taken_by = from_version_1(version, || {
+        let stated = text(value, "taken_by")?;
+        TakenBy::parse(stated).ok_or_else(|| {
+            ReceiptError::Field(format!(
+                "the reading says it was taken by {stated:?}, and this format knows one-shot and \
+                 resident-agent"
+            ))
+        })
+    })?;
+
+    // On version 1 the two limits that were optional in version 0 are required: the only receipts
+    // that lacked them were written before they existed, and none of those is version 1.
+    let max_holdover = if version >= 1 {
+        Some(int(policy, "max_holdover_ns")?)
+    } else {
+        match policy.get("max_holdover_ns") {
+            None => None,
+            Some(_) => Some(int(policy, "max_holdover_ns")?),
+        }
+    };
+    let min_operators = if version >= 1 {
+        Some(small(int(policy, "min_operators")?, "min_operators")?)
+    } else {
+        match policy.get("min_operators") {
+            None => None,
+            Some(_) => Some(small(int(policy, "min_operators")?, "min_operators")?),
+        }
+    };
+    let rate = |key: &str| -> Result<i64, ReceiptError> {
+        i64::try_from(int(policy, key)?)
+            .map_err(|_| ReceiptError::Field(format!("{key} is out of range")))
+    };
+
     Ok(AgentClaim {
         earliest: UnixNanos(int(value, "earliest_ns")?),
         latest: UnixNanos(int(value, "latest_ns")?),
@@ -1139,18 +1311,18 @@ fn claim_from_value(value: &Value) -> Result<AgentClaim, ReceiptError> {
         policy: PolicyRecord {
             max_bound_width: int(policy, "max_bound_width_ns")?,
             min_sources: small(int(policy, "min_sources")?, "min_sources")?,
-            // Absent on a receipt written before the field existed, which is one receipt in this
-            // repository and none outside it. Read as absent rather than as nought, so the
+            // Absent on a version 0 receipt written before the field existed, which is one receipt
+            // in this repository and none outside it. Read as absent rather than as nought, so the
             // validator can tell a limit nobody stated from a limit of nothing.
-            max_holdover: match policy.get("max_holdover_ns") {
-                None => None,
-                Some(_) => Some(int(policy, "max_holdover_ns")?),
-            },
-            min_operators: match policy.get("min_operators") {
-                None => None,
-                Some(_) => Some(small(int(policy, "min_operators")?, "min_operators")?),
-            },
+            max_holdover,
+            min_operators,
+            source_interval_floor: from_version_1(version, || {
+                int(policy, "source_interval_floor_ns")
+            })?,
+            frequency_slew_ppb_per_s: from_version_1(version, || rate("frequency_slew_ppb_per_s"))?,
+            frequency_span_ppb: from_version_1(version, || rate("frequency_span_ppb"))?,
         },
+        taken_by,
     })
 }
 
@@ -1169,6 +1341,15 @@ fn policy_to_value(p: &PolicyRecord) -> Value {
     }
     if let Some(operators) = p.min_operators {
         pairs.push(("min_operators", Value::Int(i128::from(operators))));
+    }
+    if let Some(floor) = p.source_interval_floor {
+        pairs.push(("source_interval_floor_ns", Value::Int(floor)));
+    }
+    if let Some(slew) = p.frequency_slew_ppb_per_s {
+        pairs.push(("frequency_slew_ppb_per_s", Value::Int(i128::from(slew))));
+    }
+    if let Some(span) = p.frequency_span_ppb {
+        pairs.push(("frequency_span_ppb", Value::Int(i128::from(span))));
     }
     Value::map(pairs)
 }

@@ -52,7 +52,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use timewitness_agent::crossing::{ask, WhatTheCallerKnows, WILDNESS};
 use timewitness_agent::resident::note_interruptions;
-use timewitness_agent::wire::{carrier, Endpoint};
+use timewitness_agent::wire::{carrier, policy_record, Endpoint};
 use timewitness_clock::monotonic::SystemMonotonic;
 use timewitness_clock::{
     Applied, ClockModel, Discipline, MonotonicClock, Policy, ShadowDiscipline,
@@ -61,7 +61,7 @@ use timewitness_core::evidence::roughtime::MIN_RADIUS_SECONDS;
 use timewitness_core::time::{Nanos, NANOS_PER_SEC};
 use timewitness_core::{Attestation, UnixNanos};
 use timewitness_platform::EnvironmentWatch;
-use timewitness_receipt::schema::{Evidence, PolicyRecord, Receipt, Role, Scheme};
+use timewitness_receipt::schema::{Evidence, Receipt, Role, Scheme, TakenBy, FORMAT_VERSION};
 use timewitness_receipt::{chain_link, sha256_payload, AgentKey};
 use timewitness_sources::drand::DrandClient;
 use timewitness_sources::ntp::{NtpClient, NtpServer};
@@ -488,7 +488,22 @@ fn from_the_agent(args: &Args, endpoint_path: &str) -> Result<Reading, String> {
     };
 
     let clock = SystemMonotonic::new();
-    let crossed = ask(&endpoint, &clock, knows).map_err(|e| format!("{e}"))?;
+    let mut crossed = ask(&endpoint, &clock, knows).map_err(|e| format!("{e}"))?;
+
+    // The version is part of what crosses. An agent from an older build answers in the format it
+    // writes, and the width terms a version 1 receipt states are the agent's to state, because the
+    // policy that governed the bound is the policy of the process that held the model. This end
+    // cannot supply them, so it refuses and says what would fix it.
+    if crossed.carrier.version != FORMAT_VERSION {
+        return Err(format!(
+            "the agent at {} answered in receipt format v{} and this build writes v{}. The terms \
+             that set the width are the agent's to state and it did not state them. Run the agent \
+             from the same release as this command",
+            endpoint.address, crossed.carrier.version, FORMAT_VERSION
+        ));
+    }
+    // Which path the reading came by is this end's to say and never the answer's.
+    crossed.carrier.claim.taken_by = Some(TakenBy::ResidentAgent);
 
     let age = crossed.carrier.claim.since_last_sync;
     let apart = crossed.carrier.utc_estimate.as_nanos() - knows.local_wall.as_nanos();
@@ -683,15 +698,7 @@ fn from_a_model_of_our_own(args: &Args, deadline: Deadline) -> Result<Reading, S
     }
 
     Ok(Reading {
-        carrier: carrier(
-            &stamp,
-            PolicyRecord {
-                max_bound_width: policy.max_bound_width,
-                min_sources: policy.min_sources as u32,
-                min_operators: Some(policy.min_operators as u32),
-                max_holdover: Some(policy.max_holdover),
-            },
-        ),
+        carrier: carrier(&stamp, policy_record(&policy), TakenBy::OneShot),
         notes,
     })
 }

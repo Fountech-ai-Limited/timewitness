@@ -62,8 +62,9 @@
 use std::fs;
 use std::path::Path;
 
+use timewitness_clock::Policy;
 use timewitness_core::Stamp;
-use timewitness_receipt::schema::{PolicyRecord, Receipt};
+use timewitness_receipt::schema::{ppm_as_ppb, PolicyRecord, Receipt, TakenBy};
 use timewitness_receipt::{cbor, sha256_payload, MAX_ENCODED_BYTES};
 
 /// How many bytes of token a caller presents.
@@ -227,8 +228,12 @@ pub fn tokens_match(a: &[u8], b: &[u8]) -> bool {
 /// The payload is the hash of nothing rather than a hash of something, because the agent is not told
 /// what is being stamped and does not want to be. The caller replaces it with the real one. The
 /// public key is empty for the same kind of reason: the agent does not sign.
+///
+/// `taken_by` says which path the reading came by, and it is the caller's to say rather than the
+/// answer's: a stamp reading a resident agent's answer writes `ResidentAgent` over whatever the
+/// answer claimed, because the answer is whoever wrote the endpoint file.
 #[must_use]
-pub fn carrier(stamp: &Stamp, policy: PolicyRecord) -> Receipt {
+pub fn carrier(stamp: &Stamp, policy: PolicyRecord, taken_by: TakenBy) -> Receipt {
     Receipt::from_stamp(
         stamp,
         CARRIER_SEQUENCE,
@@ -236,7 +241,26 @@ pub fn carrier(stamp: &Stamp, policy: PolicyRecord) -> Receipt {
         sha256_payload(&[]),
         Vec::new(),
         policy,
+        taken_by,
     )
+}
+
+/// The parts of a policy a receipt carries, from the policy itself.
+///
+/// One function for both paths, so the resident agent and the one-shot stamp cannot come to state
+/// different things about the same policy. Every limit and every width term is stated: the two
+/// limits version 0 left out on its oldest receipts, and the three terms version 1 added.
+#[must_use]
+pub fn policy_record(policy: &Policy) -> PolicyRecord {
+    PolicyRecord {
+        max_bound_width: policy.max_bound_width,
+        min_sources: policy.min_sources as u32,
+        min_operators: Some(policy.min_operators as u32),
+        max_holdover: Some(policy.max_holdover),
+        source_interval_floor: Some(policy.source_interval_floor),
+        frequency_slew_ppb_per_s: Some(ppm_as_ppb(policy.frequency_slew_ppm_per_second)),
+        frequency_span_ppb: Some(ppm_as_ppb(policy.frequency_span_ppm)),
+    }
 }
 
 /// A reading, ready to send.

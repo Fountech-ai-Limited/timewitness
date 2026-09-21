@@ -346,6 +346,7 @@ mod tests {
                     widest_source_network_half: 1,
                     scheduling: 1,
                     oscillator_holdover: 1,
+                    unclaimed_rate: 0,
                     model_residual: 1,
                     safety_margin: 0,
                 },
@@ -365,7 +366,11 @@ mod tests {
                 min_sources: 3,
                 min_operators: Some(4),
                 max_holdover: Some(3_600 * NANOS_PER_SEC),
+                source_interval_floor: Some(100_000),
+                frequency_slew_ppb_per_s: Some(1_000),
+                frequency_span_ppb: Some(100_000),
             },
+            timewitness_receipt::schema::TakenBy::ResidentAgent,
         )
     }
 

@@ -673,6 +673,7 @@ impl ClockModel {
         // carries can be asserted on the arithmetic with no world in the test. Its documentation
         // says what the terms are and what the allowance assumes.
         let oscillator_holdover = oscillator_holdover(&self.policy, &sync.rate, elapsed);
+        let unclaimed_rate = unclaimed_rate(&sync.rate, elapsed, oscillator_holdover);
         let model_residual = scaled(sync.offset_stderr, self.policy.coverage_factor);
         let scheduling = self.scheduling_allowance;
         let safety_margin = self.policy.safety_margin;
@@ -700,6 +701,7 @@ impl ClockModel {
             widest_source_network_half: sync.widest_network_half,
             scheduling,
             oscillator_holdover,
+            unclaimed_rate,
             model_residual,
             safety_margin,
         };
@@ -1480,6 +1482,17 @@ pub fn oscillator_holdover(policy: &Policy, rate: &RateKnowledge, elapsed: Nanos
         0
     };
     ppm_over(ppm, elapsed).saturating_add(fixed).min(WIDEST)
+}
+
+/// The part of an oscillator allowance that covers a rate the model is not correcting for.
+///
+/// The same term [`oscillator_holdover`] adds, over the same span, and never more than the allowance
+/// it is a part of. A receipt carries it beside the allowance rather than inside the sum, so a reader
+/// can see how much of the holdover is a rate the agent measured and declined to stand behind, or had
+/// not measured yet, rather than the oscillator's own uncertainty.
+#[must_use]
+pub fn unclaimed_rate(rate: &RateKnowledge, elapsed: Nanos, holdover: Nanos) -> Nanos {
+    ppm_over(readable(rate.unclaimed_frequency_ppm), elapsed).min(holdover)
 }
 
 /// Whether a fit has actually measured this machine's oscillator, or only its own noise.

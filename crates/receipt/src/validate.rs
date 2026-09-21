@@ -25,12 +25,12 @@ use crate::anchors::{RoughtimeServerKey, TrustAnchors};
 use crate::error::ReceiptError;
 use crate::report::{Bracket, EntryReport, Outcome, Verified};
 use crate::schema::{
-    reads_timescale, AgentClaim, Evidence, Payload, Receipt, Role, FORMAT_VERSION, LEAP_VALUES,
+    reads_timescale, AgentClaim, Evidence, Payload, Receipt, Role, LEAP_VALUES, READS,
 };
 use crate::value::Value;
 use timewitness_core::evidence::{drand, rfc3161, roughtime, Checked};
 use timewitness_core::time::{Nanos, UnixNanos, NANOS_PER_SEC};
-use timewitness_core::{EpsilonBasis, Timescale};
+use timewitness_core::{EpsilonBasis, SourceKind, Timescale};
 
 /// The widest a third-party sandwich may be before it stops supporting anything.
 ///
@@ -67,6 +67,7 @@ pub fn validate_with(receipt: &Receipt, anchors: &TrustAnchors) -> Result<Verifi
     check_interval(receipt)?;
     check_breakdown(receipt)?;
     check_sources(receipt)?;
+    check_what_version_1_states(receipt)?;
     check_against_its_own_policy(receipt)?;
     for entry in &receipt.evidence {
         check_evidence_entry(entry)?;
@@ -197,8 +198,113 @@ pub fn validate_shape(value: &Value) -> Result<(), ReceiptError> {
 }
 
 fn check_version(receipt: &Receipt) -> Result<(), ReceiptError> {
-    if receipt.version != FORMAT_VERSION {
+    if !READS.contains(&receipt.version) {
         return Err(ReceiptError::UnknownVersion(receipt.version));
+    }
+    Ok(())
+}
+
+/// The fields version 1 added, held to what they say and to each other.
+///
+/// A version 0 receipt carries none of them and nothing here is asked of it. A version 1 receipt has
+/// to carry all of them, which the decoder already requires of a receipt read from bytes; this says
+/// it again for a receipt built in memory, which is what a signer hands the validator.
+fn check_what_version_1_states(receipt: &Receipt) -> Result<(), ReceiptError> {
+    let c = &receipt.claim;
+    if receipt.version < 1 {
+        return Ok(());
+    }
+    let Some(unclaimed) = c.breakdown.unclaimed_rate else {
+        return Err(ReceiptError::Field(
+            "a version 1 receipt says how much of the holdover is a rate its agent is not \
+             correcting for, and this one does not"
+                .into(),
+        ));
+    };
+    if !c.policy.states_the_width_terms() {
+        return Err(ReceiptError::Field(
+            "a version 1 receipt states the three terms that set its width, the floor under one \
+             source's interval and the two oscillator rates, and this one does not"
+                .into(),
+        ));
+    }
+    if c.taken_by.is_none() {
+        return Err(ReceiptError::Field(
+            "a version 1 receipt says whether its reading was taken by the process that signed it \
+             or read from a resident agent, and this one does not"
+                .into(),
+        ));
+    }
+    if c.policy.max_holdover.is_none() || c.policy.min_operators.is_none() {
+        return Err(ReceiptError::Field(
+            "a version 1 receipt states its holdover ceiling and its floor on operators, and this \
+             one leaves one out"
+                .into(),
+        ));
+    }
+
+    // The part and the whole. A part of the holdover larger than the holdover is a receipt whose
+    // own numbers do not describe each other, and a rate the agent claims beside a rate it says it
+    // is not claiming is the same receipt saying two things.
+    if unclaimed < 0 {
+        return Err(ReceiptError::Inconsistent(
+            "unclaimed_rate_ns is negative, and no part of a width can be".into(),
+        ));
+    }
+    if unclaimed > c.breakdown.oscillator_holdover {
+        return Err(ReceiptError::Inconsistent(format!(
+            "the receipt says {unclaimed} ns of its holdover is a rate it is not correcting for, \
+             and the whole holdover is {} ns",
+            c.breakdown.oscillator_holdover
+        )));
+    }
+    if unclaimed > 0 && c.frequency_ppb != 0 {
+        return Err(ReceiptError::Inconsistent(
+            "the receipt claims a rate and also says part of its holdover covers a rate it is not \
+             correcting for, and a model does one or the other"
+                .into(),
+        ));
+    }
+
+    // The width terms. None of them can be negative, and a band of nought is refused as unset for
+    // the reason a ceiling of nought is: it is what the field holds when nobody filled it in.
+    if let Some(floor) = c.policy.source_interval_floor {
+        if floor < 0 {
+            return Err(ReceiptError::Inconsistent(
+                "the floor under a source's interval is negative".into(),
+            ));
+        }
+    }
+    if let Some(slew) = c.policy.frequency_slew_ppb_per_s {
+        if slew < 0 {
+            return Err(ReceiptError::Inconsistent(
+                "the rate the agent assumes an oscillator can move at is negative".into(),
+            ));
+        }
+    }
+    if let Some(span) = c.policy.frequency_span_ppb {
+        if span <= 0 {
+            return Err(ReceiptError::Inconsistent(
+                "the band the agent assumes an oscillator stays inside is nought or less, which \
+                 is what the field holds when nobody set it"
+                    .into(),
+            ));
+        }
+    }
+
+    // A source of a kind this format does not know. Version 0 reads one as plain NTP, which is the
+    // safe direction only while no kind this format lacks carries a signature; the day one does, an
+    // older reader would downgrade it without saying so. Version 1 refuses instead, and names it.
+    if let Some(s) = c
+        .sources
+        .iter()
+        .find(|s| SourceKind::from_wire(&s.kind).is_none())
+    {
+        return Err(ReceiptError::Field(format!(
+            "source {} is of kind {:?} and this format knows ntp, nts, roughtime and \
+             local-hardware, so nothing here can say what an answer of that kind proves",
+            s.id, s.kind
+        )));
     }
     Ok(())
 }
