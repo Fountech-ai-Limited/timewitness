@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 
 use timewitness_core::SourceKind;
-use timewitness_receipt::schema::Receipt;
+use timewitness_receipt::schema::{Receipt, SourceRecord};
 use timewitness_verify::{
     cannot_prove, width_in_words, Assessment, State, Subject, KEPT_LOG_QUESTION, KEY_LOG_QUESTION,
 };
@@ -509,19 +509,30 @@ pub fn fields(a: &Assessment) -> String {
         let operators = receipt.claim.operators();
         write_field(&mut out, "operators_offered", operators.offered);
         write_field(&mut out, "operators_kept", operators.kept);
-        let mut kinds: BTreeMap<&str, usize> = BTreeMap::new();
-        for source in &receipt.claim.sources {
-            *kinds.entry(source.kind.as_str()).or_default() += 1;
+        // The kinds, and what each source said it was speaking, counted the same way. The
+        // validator refuses a receipt on the timescale and the smear, so a script has to be able to
+        // see both rather than take the verdict on trust.
+        type Spoken = fn(&SourceRecord) -> &str;
+        let spoken: [(&str, Spoken); 3] = [
+            ("source_kinds", |s| s.kind.as_str()),
+            ("source_timescales", |s| s.timescale.as_str()),
+            ("source_smears", |s| s.smear.as_str()),
+        ];
+        for (name, of) in spoken {
+            let mut counted: BTreeMap<&str, usize> = BTreeMap::new();
+            for source in &receipt.claim.sources {
+                *counted.entry(of(source)).or_default() += 1;
+            }
+            write_field(
+                &mut out,
+                name,
+                counted
+                    .iter()
+                    .map(|(spelling, count)| format!("{spelling}:{count}"))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
         }
-        write_field(
-            &mut out,
-            "source_kinds",
-            kinds
-                .iter()
-                .map(|(kind, count)| format!("{kind}:{count}"))
-                .collect::<Vec<_>>()
-                .join(","),
-        );
     }
     if let Some(evidence) = &a.evidence {
         // The span the checked outside evidence brackets the moment to, or `none` where nothing

@@ -24,11 +24,13 @@
 use crate::anchors::{RoughtimeServerKey, TrustAnchors};
 use crate::error::ReceiptError;
 use crate::report::{Bracket, EntryReport, Outcome, Verified};
-use crate::schema::{AgentClaim, Evidence, Payload, Receipt, Role, FORMAT_VERSION, LEAP_VALUES};
+use crate::schema::{
+    reads_timescale, AgentClaim, Evidence, Payload, Receipt, Role, FORMAT_VERSION, LEAP_VALUES,
+};
 use crate::value::Value;
 use timewitness_core::evidence::{drand, rfc3161, roughtime, Checked};
 use timewitness_core::time::{Nanos, UnixNanos, NANOS_PER_SEC};
-use timewitness_core::EpsilonBasis;
+use timewitness_core::{EpsilonBasis, Timescale};
 
 /// The widest a third-party sandwich may be before it stops supporting anything.
 ///
@@ -345,12 +347,26 @@ fn check_sources(receipt: &Receipt) -> Result<(), ReceiptError> {
     // anything else is the agent's and no reader can check it. On TAI that is thirty-seven seconds
     // between what the receipt claims and what its sources said. Every shipped source client speaks
     // UTC, so this refuses nothing this product writes.
+    //
+    // A source that named no timescale is refused on the same ground and in different words. The
+    // agent converts nothing for it, so saying the bound rests on a conversion would be untrue; what
+    // it rests on is a source that never said its answers were UTC at all.
     if let Some(s) = c.kept_off_utc() {
-        return Err(ReceiptError::Inconsistent(format!(
-            "source {} answered on {:?} rather than UTC and the receipt marks it as kept, so the \
-             bound rests on a conversion the agent made and nobody else can check",
-            s.id, s.timescale
-        )));
+        return Err(ReceiptError::Inconsistent(
+            if reads_timescale(&s.timescale) == Some(Timescale::Unknown) {
+                format!(
+                    "source {} named no timescale and the receipt marks it as kept, so the bound \
+                     rests on answers nothing shows were UTC",
+                    s.id
+                )
+            } else {
+                format!(
+                    "source {} answered on {:?} rather than UTC and the receipt marks it as kept, \
+                     so the bound rests on a conversion the agent made and nobody else can check",
+                    s.id, s.timescale
+                )
+            },
+        ));
     }
     // A source cannot be kept and also have told the agent its own clock was wrong. The agent drops
     // such a source before the intersection is taken, so a receipt marking one as kept describes a

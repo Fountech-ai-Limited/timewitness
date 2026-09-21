@@ -812,6 +812,11 @@ fn what_the_sources_spoke(receipt: &Receipt) -> Step {
                 "spreads a leap second over {window_seconds} seconds rather than stepping"
             ));
         }
+        match source.leap.as_str() {
+            "add-second" => about.push("announced a leap second being added".to_string()),
+            "delete-second" => about.push("announced a leap second being removed".to_string()),
+            _ => {}
+        }
         said.push(format!(
             "{} {}{}",
             source.id,
@@ -828,8 +833,8 @@ fn what_the_sources_spoke(receipt: &Receipt) -> Step {
         return Step::held(
             question,
             format!(
-                "all {} of them answered on UTC, and none said it spreads a leap second out, so \
-                 nothing was converted on the way into this receipt",
+                "all {} of them answered on UTC, and none said it spreads a leap second out or \
+                 announced one, so nothing was converted on the way into this receipt",
                 sources.len()
             ),
         );
@@ -838,11 +843,12 @@ fn what_the_sources_spoke(receipt: &Receipt) -> Step {
     Step::held(
         question,
         format!(
-            "{} of {} said something other than plain UTC: {}. A source on another timescale was \
+            "{} of {} said something beyond plain UTC: {}. A source on another timescale was \
              converted by the agent using the offset that source itself stated, which is the \
              agent's arithmetic rather than anything this reader can check, and no source this \
              bound rests on is one of them. A source spreading a leap second out may be up to a \
-             second from UTC inside its own window",
+             second from UTC inside its own window, and around an announced leap second two \
+             sources can differ by the second itself",
             said.len(),
             sources.len(),
             said.join("; ")
@@ -852,9 +858,11 @@ fn what_the_sources_spoke(receipt: &Receipt) -> Step {
 
 /// Whether what this source said about its own timescale is worth putting in front of a reader.
 ///
-/// Two things are: a timescale that is not UTC, including one the source would not name, and a
-/// source that says it spreads a leap second out rather than stepping. Both move a source's answers
-/// away from the UTC the receipt claims.
+/// Three things are: a timescale that is not UTC, including one the source would not name, a
+/// source that says it spreads a leap second out rather than stepping, and a source announcing a
+/// leap second. The first two move a source's answers away from the UTC the receipt claims, and the
+/// third says the second itself is about to be one two sources can disagree by. The third was left
+/// out until 2026-09-21, so a kept source announcing a leap was reported as nothing to say.
 ///
 /// A smear of `unknown` is not one of them, and that matters because it is the ordinary case: every
 /// shipped source client sets it, since NTP, NTS and Roughtime have no field in which a server says
@@ -863,6 +871,7 @@ fn what_the_sources_spoke(receipt: &Receipt) -> Step {
 fn worth_saying(source: &SourceRecord) -> bool {
     !matches!(reads_timescale(&source.timescale), Some(Timescale::Utc))
         || matches!(reads_smear(&source.smear), Some(SmearPolicy::Linear { .. }))
+        || matches!(source.leap.as_str(), "add-second" | "delete-second")
 }
 
 fn check_floor(receipt: &Receipt, floor: &Floor) -> Step {

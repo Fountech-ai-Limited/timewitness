@@ -398,3 +398,36 @@ fn the_fields_carry_the_bracket_as_a_number_or_none() {
         );
     }
 }
+
+#[test]
+fn the_fields_say_what_each_source_was_speaking() {
+    // The validator reads each source's timescale and smear, and a receipt is refused on them, but
+    // until 2026-09-21 a script reading the fields could not see either. Counted the way the kinds
+    // are, so nine sources on UTC with no smear read as one entry each.
+    let run = Command::new(env!("CARGO_BIN_EXE_timewitness"))
+        .arg("verify")
+        .arg(real())
+        .arg("--fields")
+        .output()
+        .expect("the binary runs");
+    let fields = String::from_utf8_lossy(&run.stdout).into_owned();
+    let read = |name: &str| -> String {
+        fields
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{name}=")))
+            .unwrap_or_else(|| panic!("no {name} in {fields}"))
+            .to_string()
+    };
+    assert_eq!(read("source_timescales"), "utc:9");
+    let smears = read("source_smears");
+    let counted: usize = smears
+        .split(',')
+        .map(|entry| {
+            entry
+                .rsplit_once(':')
+                .and_then(|(_, n)| n.parse::<usize>().ok())
+                .unwrap_or_else(|| panic!("{entry} is not a spelling and a count"))
+        })
+        .sum();
+    assert_eq!(counted, 9, "{smears}");
+}

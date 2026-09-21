@@ -271,7 +271,7 @@ impl core::fmt::Display for Refusal {
             Refusal::NotSigned => write!(f, "it is not a signed exchange"),
             Refusal::SignatureDoesNotMatch => write!(
                 f,
-                "the signature does not match the exchange, so either it was altered after it \n                 was signed or it was signed by a different key"
+                "the signature does not match the exchange, so either it was altered after it was signed or it was signed by a different key"
             ),
             Refusal::DoesNotAnswerThisRequest => write!(
                 f,
@@ -279,7 +279,7 @@ impl core::fmt::Display for Refusal {
             ),
             Refusal::OneKeySignedBothHalves => write!(
                 f,
-                "one key signed both halves, so there is no second party and nothing here is \n                 a countersignature"
+                "one key signed both halves, so there is no second party and nothing here is a countersignature"
             ),
             Refusal::Incoherent { detail } => write!(f, "{detail}"),
         }

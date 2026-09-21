@@ -378,7 +378,7 @@ mod tests {
         let (t1, t4) = local_ends(&e);
         assert!(
             Sample::from_exchange(&e, t1, t4) == Err(RejectedExchange::ImpossibleReply),
-            "clamping this to zero hands the source the narrowest interval there is on the              strength of the one thing it said that is provably wrong"
+            "clamping this to zero hands the source the narrowest interval there is on the strength of the one thing it said that is provably wrong"
         );
     }
 

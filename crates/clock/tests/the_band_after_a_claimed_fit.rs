@@ -22,7 +22,7 @@
 //!
 //! No reachable path produces a wrong bound from this. A fit is made by regression through the
 //! sources' own answers, so it measures the rate it is fitting, and the shortfall where the
-//! assumption fails is bounded at 306 us on `Policy::default` against a bound of about 154 ms. What
+//! assumption fails is bounded at 306 us on `Policy::default` against its 250 ms ceiling. What
 //! this file protects is the sentence, because the sentence is what a later run reads when it is
 //! deciding whether the floor can come out.
 

@@ -595,7 +595,7 @@ fn from_a_model_of_our_own(args: &Args, deadline: Deadline) -> Result<Reading, S
         }
         if deadline.left().is_none() {
             return Err(deadline.refusal(&format!(
-                "waiting to start polling round {} of {rounds}, with {answered} of {} polls                  answered so far",
+                "waiting to start polling round {} of {rounds}, with {answered} of {} polls answered so far",
                 round + 1,
                 round * polls_per_round
             )));
@@ -720,7 +720,7 @@ fn gather(
             return false;
         }
         notes.push(format!(
-            "no {what}: this run passed its {} s deadline before asking for one, so the receipt              carries what was gathered before that and nothing else",
+            "no {what}: this run passed its {} s deadline before asking for one, so the receipt carries what was gathered before that and nothing else",
             deadline.whole.as_secs()
         ));
         true
