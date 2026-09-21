@@ -192,7 +192,13 @@ def the_test_is_still_there(root):
     path = pathlib.Path(root) / TEST_FILE
     if not path.exists():
         return False, "%s is gone" % TEST_FILE
-    body = path.read_text(encoding="utf-8")
+    return the_test_holds(path.read_text(encoding="utf-8"))
+
+
+def the_test_holds(body):
+    """Every check on the counted test, over the text of its file wherever that text came from."""
+    if body is None:
+        return False, "%s is not there" % TEST_FILE
     if not re.search(r"^fn %s\(" % re.escape(TEST_FN), body, re.M):
         return False, "%s no longer holds %s" % (TEST_FILE, TEST_FN)
     if re.search(r"#\[ignore", body):
@@ -218,11 +224,31 @@ def the_test_is_still_there(root):
                   % (TEST_FILE, TEST_FN, BODY_SHA256[:16]))
 
 
-def count(runs, need, out=sys.stdout):
+def file_at(root, sha):
+    """The counted test's file as it stood at a commit, or None where it was not there."""
+    out = subprocess.run(["git", "-C", str(root), "show", "%s:%s" % (sha, TEST_FILE)],
+                         capture_output=True)
+    if out.returncode != 0:
+        return None
+    return out.stdout.decode("utf-8", errors="replace")
+
+
+def count(runs, need, out=sys.stdout, text_at=None):
+    """The streak over the runs, oldest first.
+
+    `text_at` gives the counted test's file as it stood at a commit, or None where it was not
+    there. A pass counts only where the test held at the commit the run was on, because checking
+    today's tree alone reads a commit that gutted the test, and a later one that put it back, as
+    twenty passes of a test that was not running for some of them.
+    """
     streak = 0
     for run in runs:
         verdict = step_verdict(run)
         orphan = run.get("orphaned")
+        if verdict == "success" and not orphan and text_at is not None:
+            held, why = the_test_holds(text_at(run["sha"]))
+            if not held:
+                verdict = "the test did not hold at this commit: %s" % why
         print("run %-12s %s  %s: %s%s"
               % (run["id"], run["sha"][:7], STEP, verdict,
                  "  (on a commit main no longer has)" if orphan else ""), file=out)
@@ -284,11 +310,26 @@ def self_test(root):
          19, False),
         ("a failing run whose Tests step passed still counts",
          [run("f" * 40, passed, conclusion="failure") for _ in range(20)], 20, True),
+        # The body is read at each counted commit, not only in today's tree. A commit that gutted
+        # the test and a later one that put it back leave today's tree clean, and the passes in
+        # between say nothing about the test. Found 2026-09-21.
+        ("a pass at a commit where the test was gutted resets the streak",
+         [run("a" * 40, passed) for _ in range(10)] + [run("h" * 40, passed)]
+         + [run("a" * 40, passed) for _ in range(10)],
+         10, False),
+        ("and a pass at a commit where the file was not there resets it too",
+         [run("a" * 40, passed) for _ in range(19)] + [run("i" * 40, passed)], 0, False),
     ]
+    today = (pathlib.Path(root) / TEST_FILE).read_text(encoding="utf-8", newline="")
+    gutted = today.replace(the_body(today), GUTTED)
+
+    def text_at(sha):
+        return {"h" * 40: gutted, "i" * 40: None}.get(sha, today)
+
     bad = 0
     for name, runs, want_streak, want_ok in cases:
         buf = io.StringIO()
-        got = count(runs, NEED, out=buf)
+        got = count(runs, NEED, out=buf, text_at=text_at)
         ok = got >= NEED
         right = got == want_streak and ok == want_ok
         if not right:
@@ -385,7 +426,7 @@ def main():
     if not runs:
         print("No completed CI run on %s at or after %s." % (BRANCH, SINCE[:7]))
         return 1
-    streak = count(runs, args.need)
+    streak = count(runs, args.need, text_at=lambda sha: file_at(root, sha))
     return 0 if streak >= args.need else 1
 
 

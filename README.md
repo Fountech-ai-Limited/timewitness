@@ -262,7 +262,9 @@ One line in a workflow file:
 
 There is no configuration file and no secret to set. The receipt lands beside the artefact, goes into
 the SLSA provenance and container image labels where those are named, and the workflow summary carries
-what the receipt does and does not establish. `action.yml` has every input.
+what the receipt does and does not establish. The inputs are the ones in `action.yml` at the tag you
+pin, so read that file at `v0.1` rather than here: `deadline` is on `main` and in no release yet, and
+a workflow pinned to `@v0.1` that sets it gets a warning from GitHub and no deadline.
 
 On a host behind a firewall, `docs/destinations-and-ports.md` is every host, protocol and port the
 agent and `stamp` reach, what each one is for, and what a blocked one costs. Two of them are plain
