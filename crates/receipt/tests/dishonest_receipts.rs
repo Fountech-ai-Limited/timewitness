@@ -983,6 +983,11 @@ fn a_timescale_or_a_smear_this_format_cannot_read_is_refused() {
         "tai+thirty-seven",
         "tai+37.5",
         "tai+-99999999999999999999",
+        // Each of these parses as a number, and none is a spelling the writer produces. Found
+        // 2026-09-21: all four were read, so one value had several spellings that hash differently.
+        "tai++37",
+        "tai+037",
+        "tai+-0",
         "TAI+37",
         "UTC",
         "utc ",
@@ -1018,6 +1023,10 @@ fn a_timescale_or_a_smear_this_format_cannot_read_is_refused() {
         "linear",
         "linear/",
         "linear/a-day",
+        "linear/+86400",
+        "linear/086400",
+        // A smear spread over no time at all is a step, which is what `none` says.
+        "linear/0",
         "Linear/86400",
         "NONE",
         "none ",
@@ -1058,7 +1067,7 @@ fn a_timescale_or_a_smear_this_format_cannot_read_is_refused() {
 #[test]
 fn the_timescales_and_smears_this_format_knows_are_read() {
     for timescale in ["utc", "unknown", "tai+37", "tai+0", "tai+-1"] {
-        for smear in ["none", "unknown", "linear/86400", "linear/0"] {
+        for smear in ["none", "unknown", "linear/86400", "linear/1"] {
             let mut r = receipt();
             r.claim.sources = vec![
                 SourceRecord {
@@ -1088,7 +1097,13 @@ fn the_timescales_and_smears_this_format_knows_are_read() {
 /// nothing this product writes.
 #[test]
 fn a_source_the_bound_rests_on_had_to_have_answered_on_utc() {
-    for timescale in ["tai+37", "tai+0", "unknown"] {
+    for (timescale, said) in [
+        ("tai+37", "a conversion the agent made"),
+        ("tai+0", "a conversion the agent made"),
+        // The agent converts nothing for a source that named no timescale, so the refusal must
+        // not say it did. Found 2026-09-21: it said the bound rested on a conversion.
+        ("unknown", "named no timescale"),
+    ] {
         let mut r = receipt();
         r.claim.sources = vec![
             SourceRecord {
@@ -1108,7 +1123,7 @@ fn a_source_the_bound_rests_on_had_to_have_answered_on_utc() {
             "on {timescale:?} got {refusal}"
         );
         assert!(
-            refusal.to_string().contains("rather than UTC"),
+            refusal.to_string().contains(said),
             "on {timescale:?} got {refusal}"
         );
     }
