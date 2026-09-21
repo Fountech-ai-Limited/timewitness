@@ -357,9 +357,11 @@ eol="$(git -c core.quotePath=false ls-files --eol)" || stop "git ls-files --eol 
 # every other commit here carries, the commit has two parents or more, and the subject is the
 # sentence GitHub writes when it merges a pull request of this organisation's own. Anything
 # missing one of them is refused, which includes a commit that copies
-# the two identities on to work somebody wrote by hand.
+# the two identities on to work somebody wrote by hand. An identity is a string anybody with push
+# rights can write, so what this refuses is a mistake or a stranger's commit, not somebody forging
+# all four on purpose.
 
-# GitHub's own merge commit, and nothing that resembles one. Returns 0 only when all four hold.
+# GitHub's own merge commit on the four conditions above. Returns 0 only when all four hold.
 is_the_merge_button() {
   local parents="$1" an="$2" ae="$3" cn="$4" ce="$5" subject="$6" parent_count=0 parent
   [ "$cn <$ce>" = "GitHub <noreply@github.com>" ] || return 1
