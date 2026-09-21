@@ -625,7 +625,7 @@ pub struct PolicyRecord {
     /// Added 2026-09-08. Without it a reader can see `since_last_sync` and has no way to know
     /// whether the agent thought that was inside its own ceiling.
     pub max_holdover: Option<Nanos>,
-    /// The narrowest interval the agent would let any one source claim, in nanoseconds.
+    /// The narrowest half width the agent lets any one source's answer support, in nanoseconds.
     ///
     /// This and the two rates below are the terms that set the width of a bound, and version 0 did
     /// not carry them, so a reader could check the limits the agent kept to and not the terms that
@@ -871,6 +871,38 @@ impl Receipt {
             frequency_ppm: (self.claim.frequency_ppb != 0)
                 .then(|| self.claim.frequency_ppb as f64 / 1_000.0),
         }
+    }
+
+    /// What version 1 added to a receipt, each by its wire name, for a report to print.
+    ///
+    /// One list, so the command line, its JSON and the page cannot come to show different things.
+    /// A version 0 receipt could not state any of these, and each is `Null` on it rather than a
+    /// nought, because a report that printed nought would be saying the agent stated nought.
+    #[must_use]
+    pub fn what_version_1_states(&self) -> Vec<(&'static str, Value)> {
+        let c = &self.claim;
+        let int = |held: Option<i128>| held.map_or(Value::Null, Value::Int);
+        vec![
+            ("format_version", Value::Int(self.version)),
+            (
+                "taken_by",
+                c.taken_by
+                    .map_or(Value::Null, |path| Value::text(path.as_str())),
+            ),
+            ("unclaimed_rate_ns", int(c.breakdown.unclaimed_rate)),
+            (
+                "source_interval_floor_ns",
+                int(c.policy.source_interval_floor),
+            ),
+            (
+                "frequency_slew_ppb_per_s",
+                int(c.policy.frequency_slew_ppb_per_s.map(i128::from)),
+            ),
+            (
+                "frequency_span_ppb",
+                int(c.policy.frequency_span_ppb.map(i128::from)),
+            ),
+        ]
     }
 
     /// The width of the claimed interval.

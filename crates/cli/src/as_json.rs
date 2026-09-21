@@ -101,6 +101,8 @@ fn value(a: &Assessment) -> Value {
                 ),
                 ("sources", receipt.claim.sources_as_value()),
                 ("sequence", Value::Int(i128::from(receipt.sequence))),
+                // What version 1 added, by wire name, and null on a version 0 receipt.
+                ("version_1", Value::map(receipt.what_version_1_states())),
             ]),
         ));
     }

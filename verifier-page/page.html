@@ -284,6 +284,23 @@ function renderResult(result) {
       table.append(row);
     }
     claim.append(element("h3", null, "Where the width comes from"), table);
+    const v1 = c.version_1 || {};
+    if (v1.format_version >= 1) {
+      claim.append(element("p", "detail",
+        (v1.taken_by === "resident-agent"
+          ? "The reading was read from a resident agent on the signing machine, so it rests on " +
+            "whatever answered that agent's endpoint. "
+          : "The reading was taken by the process that signed it, from sources it chose. ") +
+        v1.unclaimed_rate_ns + " ns of the oscillator's share covers a rate the agent is not " +
+        "correcting for. The agent let no source's answer count as narrower than " +
+        v1.source_interval_floor_ns + " ns either side, and assumed its oscillator's rate moves by " +
+        "at most " + v1.frequency_slew_ppb_per_s + " parts per billion a second inside a band " +
+        v1.frequency_span_ppb + " parts per billion wide. Those are the agent's assumptions, " +
+        "stated so they can be checked, and nothing on this page measured them."));
+    } else {
+      claim.append(element("p", "detail",
+        "This receipt is format version 0, which does not state the terms that set its width."));
+    }
     claim.append(element("p", "detail mono", "This receipt is " + result.receipt_bytes +
       " bytes and hashes to " + result.receipt_sha256 + "."));
   }

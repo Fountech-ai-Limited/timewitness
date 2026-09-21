@@ -61,7 +61,7 @@ use timewitness_core::evidence::roughtime::MIN_RADIUS_SECONDS;
 use timewitness_core::time::{Nanos, NANOS_PER_SEC};
 use timewitness_core::{Attestation, UnixNanos};
 use timewitness_platform::EnvironmentWatch;
-use timewitness_receipt::schema::{Evidence, Receipt, Role, Scheme, TakenBy, FORMAT_VERSION};
+use timewitness_receipt::schema::{Evidence, Receipt, Role, Scheme, TakenBy};
 use timewitness_receipt::{chain_link, sha256_payload, AgentKey};
 use timewitness_sources::drand::DrandClient;
 use timewitness_sources::ntp::{NtpClient, NtpServer};
@@ -490,19 +490,9 @@ fn from_the_agent(args: &Args, endpoint_path: &str) -> Result<Reading, String> {
     let clock = SystemMonotonic::new();
     let mut crossed = ask(&endpoint, &clock, knows).map_err(|e| format!("{e}"))?;
 
-    // The version is part of what crosses. An agent from an older build answers in the format it
-    // writes, and the width terms a version 1 receipt states are the agent's to state, because the
-    // policy that governed the bound is the policy of the process that held the model. This end
-    // cannot supply them, so it refuses and says what would fix it.
-    if crossed.carrier.version != FORMAT_VERSION {
-        return Err(format!(
-            "the agent at {} answered in receipt format v{} and this build writes v{}. The terms \
-             that set the width are the agent's to state and it did not state them. Run the agent \
-             from the same release as this command",
-            endpoint.address, crossed.carrier.version, FORMAT_VERSION
-        ));
-    }
-    // Which path the reading came by is this end's to say and never the answer's.
+    // An agent from an older build answering in an older format is refused inside `ask`, by
+    // `decode_reply`, with what to run instead. Which path the reading came by is this end's to say
+    // and never the answer's.
     crossed.carrier.claim.taken_by = Some(TakenBy::ResidentAgent);
 
     let age = crossed.carrier.claim.since_last_sync;

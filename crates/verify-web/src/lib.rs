@@ -282,6 +282,8 @@ fn as_json(a: &timewitness_verify::Assessment) -> String {
                 ),
                 ("sources", receipt.claim.sources_as_value()),
                 ("sequence", Value::Int(i128::from(receipt.sequence))),
+                // The same list the command line prints, from the same function.
+                ("version_1", Value::map(receipt.what_version_1_states())),
                 (
                     "breakdown",
                     Value::Array(

@@ -64,7 +64,7 @@ use std::path::Path;
 
 use timewitness_clock::Policy;
 use timewitness_core::Stamp;
-use timewitness_receipt::schema::{ppm_as_ppb, PolicyRecord, Receipt, TakenBy};
+use timewitness_receipt::schema::{ppm_as_ppb, PolicyRecord, Receipt, TakenBy, FORMAT_VERSION};
 use timewitness_receipt::{cbor, sha256_payload, MAX_ENCODED_BYTES};
 
 /// How many bytes of token a caller presents.
@@ -286,6 +286,12 @@ pub fn encode_refusal(why: &str) -> Vec<u8> {
 /// A refusal comes back as an error rather than as a value, because a caller that has to remember to
 /// check a field is a caller that one day does not. There is no third case: either a reading was
 /// given or a reason was.
+///
+/// The receipt format version crosses with the reading, and it is the whole of the negotiation: a
+/// reading in any version other than the one this end writes is refused and named. The terms that set
+/// the width are the answering agent's to state, because the policy that governed the bound is the
+/// policy of the process that held the model, so an agent from an older build cannot have its reading
+/// finished here. It is told to run from the same release rather than half read.
 pub fn decode_reply(bytes: &[u8]) -> Result<Receipt, WireError> {
     if bytes.len() > MAX_REPLY_BYTES {
         return Err(WireError::Malformed(format!(
@@ -300,7 +306,17 @@ pub fn decode_reply(bytes: &[u8]) -> Result<Receipt, WireError> {
         )),
         Some((&A_READING, rest)) => {
             let value = cbor::decode(rest).map_err(|e| WireError::Malformed(format!("{e}")))?;
-            Receipt::from_value(&value).map_err(|e| WireError::Malformed(format!("{e}")))
+            let carrier =
+                Receipt::from_value(&value).map_err(|e| WireError::Malformed(format!("{e}")))?;
+            if carrier.version != FORMAT_VERSION {
+                return Err(WireError::Malformed(format!(
+                    "the agent answered in receipt format v{} and this end writes v{FORMAT_VERSION}. \
+                     The terms that set the width are the agent's to state, so run the agent from \
+                     the same release as this command",
+                    carrier.version
+                )));
+            }
+            Ok(carrier)
         }
         Some((other, _)) => Err(WireError::Malformed(format!(
             "a reply starts with {A_READING} or {A_REFUSAL} and this one starts with {other}"
@@ -356,6 +372,65 @@ mod tests {
             Err(WireError::Refused(why)) => assert_eq!(why, "the model has never synchronised"),
             other => panic!("a refusal should not decode to {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_reading_in_an_older_format_is_refused_and_says_what_to_run() {
+        // What an agent from the release before version 1 sends: a carrier in version 0, which states
+        // no width terms, no unclaimed part and no path.
+        let stamp = timewitness_core::Stamp {
+            reading: timewitness_core::Reading {
+                monotonic: timewitness_core::MonotonicNanos(1),
+                utc_estimate: timewitness_core::UnixNanos(1_788_800_000_000_000_000),
+            },
+            bound: timewitness_core::Bound {
+                earliest: timewitness_core::UnixNanos(1_788_800_000_000_000_000 - 1_000),
+                latest: timewitness_core::UnixNanos(1_788_800_000_000_000_000 + 1_000),
+                basis: timewitness_core::EpsilonBasis::LocalModelOnly,
+                breakdown: timewitness_core::BoundBreakdown {
+                    fusion: timewitness_core::FusionRule::MarzulloThenInverseSquare {
+                        offered: 0,
+                        kept: 0,
+                    },
+                    intersection_half: 1_000,
+                    widest_source_network_half: 0,
+                    scheduling: 0,
+                    oscillator_holdover: 0,
+                    unclaimed_rate: 0,
+                    model_residual: 0,
+                    safety_margin: 0,
+                },
+            },
+            sources: Vec::new(),
+            generations: timewitness_core::Generations { boot: 0, resume: 0 },
+            since_last_sync: 0,
+            frequency_ppm: None,
+        };
+        let mut older = carrier(
+            &stamp,
+            policy_record(&Policy::default()),
+            TakenBy::ResidentAgent,
+        );
+        older.version = 0;
+        older.claim.taken_by = None;
+        older.claim.breakdown.unclaimed_rate = None;
+        older.claim.policy.source_interval_floor = None;
+        older.claim.policy.frequency_slew_ppb_per_s = None;
+        older.claim.policy.frequency_span_ppb = None;
+        match decode_reply(&encode_reading(&older)) {
+            Err(WireError::Malformed(why)) => {
+                assert!(why.contains("receipt format v0"), "{why}");
+                assert!(why.contains("same release"), "{why}");
+            }
+            other => panic!("an older agent's reading should be refused, not {other:?}"),
+        }
+        // And the reading this end's own agent sends is taken.
+        let current = carrier(
+            &stamp,
+            policy_record(&Policy::default()),
+            TakenBy::ResidentAgent,
+        );
+        assert!(decode_reply(&encode_reading(&current)).is_ok());
     }
 
     #[test]
