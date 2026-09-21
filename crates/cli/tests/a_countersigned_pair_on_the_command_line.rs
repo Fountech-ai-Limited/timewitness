@@ -201,16 +201,25 @@ fn the_binary_refuses_more_than_two() {
 // The ordering answer, through the tool. The verdict a reader sees has to be the verdict the crate
 // gives, and the undecided case has to read as an answer rather than as the tool having failed.
 
+/// A pair whose receive interval is put wherever a case needs it, signed straight over the
+/// receiver's key.
+///
+/// Our own receiver refuses to answer with an interval wholly before the request, so the
+/// contradicted case can only reach a reader from somebody else's, and that is how it is built.
 fn pair_with(received: Interval) -> Countersigned {
-    Countersigned::answer(
-        a_signed_request().to_bytes(),
-        digest(2),
-        1,
-        received,
-        digest(150),
-        &receiver(),
-    )
-    .expect("the pair is a pair whatever the clocks say")
+    let request = a_signed_request();
+    let response = Exchange {
+        role: Role::Response,
+        payload: digest(2),
+        sequence: 1,
+        interval: received,
+        receipt: digest(150),
+        key: receiver().public_key_bytes(),
+        answers: Some(request.envelope_hash()),
+    };
+    let response = Signed::new(&response, &receiver()).expect("the response signs");
+    Countersigned::read(&request.to_wire(), &response.to_wire())
+        .expect("the pair is a pair whatever the clocks say")
 }
 
 fn sent() -> Interval {
@@ -226,6 +235,11 @@ fn shifted(by_ns: i128) -> Interval {
     }
 }
 
+/// What the binary says about a pair, and the exit it gives.
+///
+/// The exit follows the verdict the way `order`'s does: nought where the pair can be relied on,
+/// one where it is contradicted. A script reading the exit code alone must not take a pair its
+/// own reader calls impossible as a good one.
 fn said_about(pair: &Countersigned, extra: &[&str]) -> String {
     let mut args = vec![
         "countersign".to_string(),
@@ -235,8 +249,20 @@ fn said_about(pair: &Countersigned, extra: &[&str]) -> String {
     args.extend(extra.iter().map(ToString::to_string));
     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
     let out = run(&borrowed);
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    text(&out.stdout)
+    // A non-zero exit goes to standard error, the same as every other refusal the binary gives.
+    let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
+    let wanted = if pair.ordering().word() == "contradicted" {
+        1
+    } else {
+        0
+    };
+    assert_eq!(
+        out.status.code(),
+        Some(wanted),
+        "the exit does not follow the verdict {}: {said}",
+        pair.ordering().word()
+    );
+    said
 }
 
 #[test]

@@ -24,6 +24,11 @@
 //! perfectly ordinary pair whose intervals overlap reads here exactly as one whose intervals do not,
 //! and the answer about order comes from somewhere that can say "undecided" out loud.
 //!
+//! The one place the two intervals meet on the way in is the receiver's own signature. A receiver
+//! here will not answer with an interval wholly before the request's, because that pair is one the
+//! reader below calls contradicted, and a party should not sign what its own reader calls
+//! impossible. Reading is untouched: a pair like that from somebody else's receiver still reads.
+//!
 //! **It does not enforce anything.** A receiver that will not countersign records a refusal and the
 //! request is the request it would have been with no header at all.
 
@@ -59,7 +64,14 @@ impl Countersigned {
     ///
     /// Any [`Refusal`] the request itself earns, and every one of them means the same thing: no
     /// exchange happened and the receiver carries on. Beyond those, [`Refusal::WrongType`] where the
-    /// interval's edges are out of order, and the pairing refusals from [`Self::join`].
+    /// interval's edges are out of order, the pairing refusals from [`Self::join`], and
+    /// [`Refusal::Incoherent`] where the receiver's interval is wholly before the request's.
+    ///
+    /// **That last one is the writer's alone.** A reader still reads such a pair, because somebody
+    /// else's receiver may have signed one and the reader's job is to call it contradicted. What a
+    /// receiver here will not do is put its own key under a claim its own reader calls impossible:
+    /// the response names bytes that had to exist before it, so a receive moment wholly before the
+    /// send moment is a receipt taken too early for this request, and the answer is a later one.
     pub fn answer(
         request_bytes: &[u8],
         payload: Digest32,
@@ -69,6 +81,14 @@ impl Countersigned {
         key: &AgentKey,
     ) -> Result<Self, Refusal> {
         let request = Signed::from_bytes(request_bytes)?;
+        if let Order::After { .. } =
+            order_of(&moment(&request.exchange.interval), &moment(&interval))
+        {
+            return Err(Refusal::Incoherent {
+                detail: "the receiver's interval is wholly before the request's, so the response \
+                         would claim to be made before the request it answers",
+            });
+        }
         let response = Exchange {
             role: Role::Response,
             payload,
