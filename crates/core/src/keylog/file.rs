@@ -51,16 +51,38 @@
 //! The head is optional in the format and answers nothing when absent: a reader has entries nobody
 //! has put their name to, and the verifier says so and leaves its question unanswered. A log with a
 //! head whose root disagrees with its own entries is refused outright rather than read as either.
+//!
+//! # Version 2, for certificates
+//!
+//! ```text
+//! timewitness-key-log v2
+//! entry certificate <public key> <valid from> <valid until> <organisation> <method> <label>
+//! entry cutoff      <public key> <certification began, nanos> - <note>
+//! head <size> <root> <at> <signature> <signed by>
+//! beacon <a drand round, as the evidence blob a receipt carries, hex>
+//! witness <an rfc3161 token over the head and its signature, as a receipt carries one, hex>
+//! ```
+//!
+//! A `v2` file is a history rather than a snapshot: a head sits directly below the entries it
+//! covers, and every head the log ever served stays in the file. That is what lets a reader find
+//! the first head that carried an entry, and so the beacon round that entry cannot have been
+//! written before. A `beacon` line belongs to the head above it and is signed with it; a `witness`
+//! line belongs to the head above it and is about that head's bytes and signature together. The
+//! last head covers every entry. A `v1` reader refuses a `v2` file by its first line, which is the
+//! refusal it should give, and a `v1` file reads exactly as it always did.
 
 use core::fmt;
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
-use super::{root, KeyEntry, LogError, Role, Standing, TreeHead};
+use super::{root, Issued, KeyEntry, LogError, Role, Standing, TreeHead};
 use crate::time::UnixNanos;
 
 /// What the first line of a log says it is.
 pub const MAGIC: &str = "timewitness-key-log v1";
+
+/// What the first line of a log carrying certificates, or more than one head, says it is.
+pub const MAGIC_V2: &str = "timewitness-key-log v2";
 
 /// What the first line of a log written before the leaf carried a version and a role said.
 const RETIRED_MAGIC: &str = "timewitness-key-log v0";
@@ -79,6 +101,23 @@ pub struct SignedHead {
     /// the head in front of them is the one they think it is, which is the whole of what a head is
     /// for.
     pub signed_by: [u8; 32],
+    /// An RFC 3161 token over [`SignedHead::witness_digest`], stored as a receipt stores one.
+    ///
+    /// Not signed over by the head, because it is about the head. It is what puts the head no
+    /// later than a moment on somebody else's clock.
+    pub witness: Option<Vec<u8>>,
+}
+
+impl SignedHead {
+    /// The digest a witness over this head is a token about: the head's bytes and its signature.
+    #[must_use]
+    pub fn witness_digest(&self) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(self.head.canonical());
+        hasher.update(self.signature);
+        hasher.finalize().into()
+    }
 }
 
 /// A key log as it was read off a file.
@@ -86,8 +125,10 @@ pub struct SignedHead {
 pub struct KeyLog {
     /// The entries, in the order the log holds them. Order is part of the tree.
     pub entries: Vec<KeyEntry>,
-    /// The signed head, where the file carries one.
+    /// The signed head, where the file carries one. In a `v2` file, the newest.
     pub head: Option<SignedHead>,
+    /// Every earlier head, oldest first, each over the entries above it in the file.
+    pub checkpoints: Vec<SignedHead>,
 }
 
 impl KeyLog {
@@ -107,6 +148,48 @@ impl KeyLog {
     #[must_use]
     pub fn standing(&self, key: &[u8; 32], at: UnixNanos) -> Standing {
         super::standing(&self.entries, key, at)
+    }
+
+    /// Every head, oldest first.
+    pub fn heads(&self) -> impl Iterator<Item = &SignedHead> {
+        self.checkpoints.iter().chain(self.head.iter())
+    }
+
+    /// The first head that covered the entry at `index`, which is when the log first said it.
+    #[must_use]
+    pub fn first_head_covering(&self, index: usize) -> Option<&SignedHead> {
+        self.heads().find(|signed| signed.head.size > index)
+    }
+
+    /// Whether this log needs the `v2` format to be written down.
+    #[must_use]
+    pub fn needs_version_2(&self) -> bool {
+        !self.checkpoints.is_empty()
+            || self
+                .entries
+                .iter()
+                .any(|e| matches!(e.role, Role::Certificate | Role::Cutoff))
+            || self
+                .heads()
+                .any(|h| h.head.beacon.is_some() || h.witness.is_some())
+    }
+
+    /// Whether every earlier head is signed by a key the reader holds for us.
+    ///
+    /// The newest head is answered by [`KeyLog::check_head`]. An earlier one somebody else signed
+    /// would date an entry on their word, so it is reported rather than read past.
+    #[must_use]
+    pub fn checkpoints_are_ours(&self, held: &[[u8; 32]]) -> bool {
+        self.checkpoints.iter().all(|signed| {
+            held.contains(&signed.signed_by)
+                && VerifyingKey::from_bytes(&signed.signed_by).is_ok_and(|key| {
+                    key.verify_strict(
+                        &signed.head.canonical(),
+                        &Signature::from_bytes(&signed.signature),
+                    )
+                    .is_ok()
+                })
+        })
     }
 
     /// How many entries say an agent key was ours. A log with none has nothing to say about the
@@ -215,16 +298,32 @@ impl HeadCheck {
 /// us rather than a measurement: it carries no bound and claims none.
 #[must_use]
 pub fn sign_head(log: &KeyLog, secret: &[u8; 32], at: UnixNanos) -> SignedHead {
+    sign_head_after(log, secret, at, None)
+}
+
+/// Sign a head that carries a beacon round, so the head was made after that round was published.
+///
+/// `beacon` is a drand round stored as a receipt stores one. The witness is added afterwards, into
+/// [`SignedHead::witness`], because it is a token about the signed head.
+#[must_use]
+pub fn sign_head_after(
+    log: &KeyLog,
+    secret: &[u8; 32],
+    at: UnixNanos,
+    beacon: Option<Vec<u8>>,
+) -> SignedHead {
     let signing = SigningKey::from_bytes(secret);
     let head = TreeHead {
         size: log.entries.len(),
         root: log.root(),
         at,
+        beacon,
     };
     SignedHead {
         signature: signing.sign(&head.canonical()).to_bytes(),
         signed_by: signing.verifying_key().to_bytes(),
         head,
+        witness: None,
     }
 }
 
@@ -261,10 +360,11 @@ impl From<FormatError> for LogError {
 ///
 /// # Errors
 ///
-/// A file that does not begin with [`MAGIC`], a line that is not an entry or a head, a second head,
-/// and a head whose size or root disagrees with the entries in the same file. The last of those is
-/// checked here rather than left to the caller: a file that is internally inconsistent is not a log
-/// with a problem, it is two different logs in one file, and reading it as either would be a guess.
+/// A file that does not begin with [`MAGIC`] or [`MAGIC_V2`], a line that is not an entry or a
+/// head, a second head in a `v1` file, and a head whose size or root disagrees with the entries it
+/// covers. The last of those is checked here rather than left to the caller: a file that is
+/// internally inconsistent is not a log with a problem, it is two different logs in one file, and
+/// reading it as either would be a guess.
 pub fn parse(text: &str) -> Result<KeyLog, FormatError> {
     let mut lines = text.lines().enumerate();
 
@@ -277,14 +377,20 @@ pub fn parse(text: &str) -> Result<KeyLog, FormatError> {
              never served. Rewrite it as {MAGIC:?} with a role on each entry"
         )));
     }
-    if first.1.trim() != MAGIC {
-        return Err(FormatError::NotAKeyLog(format!(
-            "the first line reads {:?} and a key log begins {MAGIC:?}",
-            first.1.trim()
-        )));
-    }
+    let v2 = match first.1.trim() {
+        MAGIC => false,
+        MAGIC_V2 => true,
+        other => {
+            return Err(FormatError::NotAKeyLog(format!(
+                "the first line reads {other:?} and a key log begins {MAGIC:?} or {MAGIC_V2:?}"
+            )))
+        }
+    };
 
     let mut log = KeyLog::default();
+    // Whether the line above was a head or belonged to one, so a beacon or a witness can only sit
+    // directly under the head it is about.
+    let mut under_a_head = false;
     for (index, line) in lines {
         let number = index + 1;
         if is_skipped(line) {
@@ -292,16 +398,85 @@ pub fn parse(text: &str) -> Result<KeyLog, FormatError> {
         }
         let (kind, rest) = split_once(line.trim());
         match kind {
-            "entry" => log.entries.push(read_entry(number, rest)?),
-            "head" => {
-                if log.head.is_some() {
+            "entry" => {
+                let entry = read_entry(number, rest)?;
+                if !v2 && matches!(entry.role, Role::Certificate | Role::Cutoff) {
                     return Err(FormatError::BadLine(
                         number,
-                        "a second head, and a file with two of them states two different logs"
-                            .to_string(),
+                        format!(
+                            "a {} entry in a {MAGIC:?} file. It is written in {MAGIC_V2:?}",
+                            entry.role.word()
+                        ),
                     ));
                 }
-                log.head = Some(read_head(number, rest)?);
+                log.entries.push(entry);
+                under_a_head = false;
+            }
+            "head" => {
+                let signed = read_head(number, rest)?;
+                if let Some(previous) = log.head.take() {
+                    if !v2 {
+                        return Err(FormatError::BadLine(
+                            number,
+                            "a second head, and a file with two of them states two different logs"
+                                .to_string(),
+                        ));
+                    }
+                    if signed.head.size <= previous.head.size {
+                        return Err(FormatError::BadLine(
+                            number,
+                            format!(
+                                "a head over {} entries below one over {}. Each head covers more \
+                                 than the one above it",
+                                signed.head.size, previous.head.size
+                            ),
+                        ));
+                    }
+                    log.checkpoints.push(previous);
+                }
+                if v2 {
+                    // In a history each head sits under exactly the entries it covers, so where
+                    // it sits is part of what it says.
+                    if signed.head.size != log.entries.len() {
+                        return Err(FormatError::HeadDisagrees(format!(
+                            "the head on line {number} states {} entries and sits under {}",
+                            signed.head.size,
+                            log.entries.len()
+                        )));
+                    }
+                    if signed.head.root != root_of(&log.entries) {
+                        return Err(FormatError::HeadDisagrees(format!(
+                            "the entries above line {number} do not hash to the root its head \
+                             states"
+                        )));
+                    }
+                }
+                log.head = Some(signed);
+                under_a_head = true;
+            }
+            "beacon" | "witness" if v2 => {
+                let blob = read_blob(number, rest)?;
+                let signed = match (under_a_head, log.head.as_mut()) {
+                    (true, Some(signed)) => signed,
+                    _ => {
+                        return Err(FormatError::BadLine(
+                            number,
+                            format!("a {kind} line that does not sit under a head"),
+                        ))
+                    }
+                };
+                let slot = if kind == "beacon" {
+                    &mut signed.head.beacon
+                } else {
+                    &mut signed.witness
+                };
+                if slot.is_some() {
+                    return Err(FormatError::BadLine(
+                        number,
+                        format!("a second {kind} on one head"),
+                    ));
+                }
+                *slot = Some(blob);
             }
             other => {
                 return Err(FormatError::BadLine(
@@ -330,54 +505,139 @@ pub fn parse(text: &str) -> Result<KeyLog, FormatError> {
     Ok(log)
 }
 
+fn root_of(entries: &[KeyEntry]) -> [u8; 32] {
+    root(&entries.iter().map(KeyEntry::leaf_hash).collect::<Vec<_>>())
+}
+
 /// Write a key log.
+///
+/// A log that needs nothing `v2` carries is written as `v1`, byte for byte as it always was.
 ///
 /// # Errors
 ///
 /// A deployment name holding a newline, which would read back as a different file from the one that
 /// was written. Refused rather than escaped: a log is a thing people copy between machines and a
-/// format with an escaping rule is a format two implementations disagree about.
+/// format with an escaping rule is a format two implementations disagree about. Also an entry
+/// carrying fields its role does not allow, and heads that are not a history of these entries.
 pub fn write(log: &KeyLog) -> Result<String, FormatError> {
-    let mut out = String::from(MAGIC);
+    let v2 = log.needs_version_2();
+    let mut out = String::from(if v2 { MAGIC_V2 } else { MAGIC });
     out.push('\n');
-    for (index, entry) in log.entries.iter().enumerate() {
-        if entry.deployment.contains('\n') || entry.deployment.contains('\r') {
-            return Err(FormatError::BadLine(
-                index + 1,
-                "a deployment name with a line break in it".to_string(),
-            ));
+    let heads: Vec<&SignedHead> = log.heads().collect();
+    if v2 {
+        for (a, b) in heads.iter().zip(heads.iter().skip(1)) {
+            if b.head.size <= a.head.size {
+                return Err(FormatError::HeadDisagrees(
+                    "two heads that are not in the order the log grew".to_string(),
+                ));
+            }
         }
-        if entry.role == Role::Retired && entry.valid_until.is_some() {
-            return Err(FormatError::BadLine(
-                index + 1,
-                "a retirement with an end on it. A retirement is one moment and closes every \
-                 window from it on"
-                    .to_string(),
-            ));
+        if let Some(last) = heads.last() {
+            if last.head.size != log.entries.len() {
+                return Err(FormatError::HeadDisagrees(
+                    "the newest head does not cover every entry".to_string(),
+                ));
+            }
         }
-        out.push_str(&format!(
-            "entry {} {} {} {} {}\n",
-            entry.role.word(),
-            hex(&entry.public_key),
-            entry.valid_from.0,
-            match entry.valid_until {
-                Some(until) => until.0.to_string(),
-                None => "-".to_string(),
-            },
-            entry.deployment
-        ));
     }
-    if let Some(signed) = &log.head {
-        out.push_str(&format!(
-            "head {} {} {} {} {}\n",
-            signed.head.size,
-            hex(&signed.head.root),
-            signed.head.at.0,
-            hex(&signed.signature),
-            hex(&signed.signed_by)
-        ));
+    let mut next_head = heads.iter().peekable();
+    if v2 {
+        while let Some(signed) = next_head.next_if(|h| h.head.size == 0) {
+            write_head(&mut out, signed);
+        }
+    }
+    for (index, entry) in log.entries.iter().enumerate() {
+        out.push_str(&entry_line(index + 1, entry)?);
+        if v2 {
+            while let Some(signed) = next_head.next_if(|h| h.head.size == index + 1) {
+                write_head(&mut out, signed);
+            }
+        }
+    }
+    if !v2 {
+        if let Some(signed) = &log.head {
+            write_head(&mut out, signed);
+        }
     }
     Ok(out)
+}
+
+fn entry_line(number: usize, entry: &KeyEntry) -> Result<String, FormatError> {
+    if entry.deployment.contains('\n') || entry.deployment.contains('\r') {
+        return Err(FormatError::BadLine(
+            number,
+            "a deployment name with a line break in it".to_string(),
+        ));
+    }
+    check_role_fields(number, entry.role, entry.valid_until, entry.issued.as_ref())?;
+    let until = match entry.valid_until {
+        Some(until) => until.0.to_string(),
+        None => "-".to_string(),
+    };
+    let issued = match &entry.issued {
+        Some(issued) => format!("{} {} ", issued.organisation, issued.method),
+        None => String::new(),
+    };
+    Ok(format!(
+        "entry {} {} {} {until} {issued}{}\n",
+        entry.role.word(),
+        hex(&entry.public_key),
+        entry.valid_from.0,
+        entry.deployment
+    ))
+}
+
+fn write_head(out: &mut String, signed: &SignedHead) {
+    out.push_str(&format!(
+        "head {} {} {} {} {}\n",
+        signed.head.size,
+        hex(&signed.head.root),
+        signed.head.at.0,
+        hex(&signed.signature),
+        hex(&signed.signed_by)
+    ));
+    if let Some(beacon) = &signed.head.beacon {
+        out.push_str(&format!("beacon {}\n", hex(beacon)));
+    }
+    if let Some(witness) = &signed.witness {
+        out.push_str(&format!("witness {}\n", hex(witness)));
+    }
+}
+
+/// What each role may and must carry, checked the same way on the way in and on the way out.
+fn check_role_fields(
+    number: usize,
+    role: Role,
+    until: Option<UnixNanos>,
+    issued: Option<&Issued>,
+) -> Result<(), FormatError> {
+    let bad = |why: String| Err(FormatError::BadLine(number, why));
+    match role {
+        Role::Retired | Role::Cutoff if until.is_some() => bad(format!(
+            "a {} entry with an end on it. It is one moment and closes every window from it on",
+            role.word()
+        )),
+        Role::Certificate if until.is_none() => bad(
+            "a certificate with no end. A certificate is for a short window, and it ends"
+                .to_string(),
+        ),
+        Role::Certificate => match issued {
+            None => bad("a certificate that names no organisation and no method".to_string()),
+            Some(i)
+                if i.organisation.is_empty()
+                    || i.method.is_empty()
+                    || i.organisation.contains(char::is_whitespace)
+                    || i.method.contains(char::is_whitespace) =>
+            {
+                bad("a certificate's organisation and method are one word each".to_string())
+            }
+            Some(_) => Ok(()),
+        },
+        _ if issued.is_some() => {
+            bad("an organisation and a method on an entry that is not a certificate".to_string())
+        }
+        _ => Ok(()),
+    }
 }
 
 fn is_skipped(line: &str) -> bool {
@@ -394,19 +654,36 @@ fn split_once(line: &str) -> (&str, &str) {
 
 fn read_entry(number: usize, rest: &str) -> Result<KeyEntry, FormatError> {
     let mut parts = rest.splitn(5, char::is_whitespace);
-    let role = field(number, parts.next(), "a role: agent, server or retired")?;
+    let role = field(number, parts.next(), "a role")?;
     let key = field(number, parts.next(), "a public key")?;
     let from = field(number, parts.next(), "a valid-from in nanoseconds")?;
     let until = field(number, parts.next(), "a valid-until, or -")?;
     // The name takes the rest of the line, spaces and all, which is why it is last.
-    let deployment = parts.next().unwrap_or("").trim().to_string();
+    let mut deployment = parts.next().unwrap_or("").trim().to_string();
 
     let role = Role::from_word(role).ok_or_else(|| {
         FormatError::BadLine(
             number,
-            format!("{role:?} is not a role. An entry is agent, server or retired"),
+            format!(
+                "{role:?} is not a role. An entry is agent, server, retired, certificate or cutoff"
+            ),
         )
     })?;
+
+    // A certificate's organisation and method sit before the name, one word each.
+    let issued = if role == Role::Certificate {
+        let text = deployment.clone();
+        let mut words = text.splitn(3, char::is_whitespace);
+        let organisation = field(number, words.next(), "an organisation")?.to_string();
+        let method = field(number, words.next(), "a method")?.to_string();
+        deployment = words.next().unwrap_or("").trim().to_string();
+        Some(Issued {
+            organisation,
+            method,
+        })
+    } else {
+        None
+    };
 
     if deployment.is_empty() {
         return Err(FormatError::BadLine(
@@ -420,14 +697,7 @@ fn read_entry(number: usize, rest: &str) -> Result<KeyEntry, FormatError> {
         "-" => None,
         text => Some(UnixNanos(number_field(number, text)?)),
     };
-    if role == Role::Retired && valid_until.is_some() {
-        return Err(FormatError::BadLine(
-            number,
-            "a retirement with an end on it. A retirement is one moment and closes every window \
-             from it on"
-                .to_string(),
-        ));
-    }
+    check_role_fields(number, role, valid_until, issued.as_ref())?;
 
     Ok(KeyEntry {
         public_key: from_hex_32(key)
@@ -436,7 +706,19 @@ fn read_entry(number: usize, rest: &str) -> Result<KeyEntry, FormatError> {
         deployment,
         valid_from: UnixNanos(number_field(number, from)?),
         valid_until,
+        issued,
     })
+}
+
+fn read_blob(number: usize, rest: &str) -> Result<Vec<u8>, FormatError> {
+    let text = rest.trim();
+    let refused = || FormatError::BadLine(number, "a blob is one run of hexadecimal".to_string());
+    if text.is_empty() || text.len() % 2 != 0 || text.contains(char::is_whitespace) {
+        return Err(refused());
+    }
+    let mut out = vec![0u8; text.len() / 2];
+    read_hex(text, &mut out).ok_or_else(refused)?;
+    Ok(out)
 }
 
 fn read_head(number: usize, rest: &str) -> Result<SignedHead, FormatError> {
@@ -464,6 +746,7 @@ fn read_head(number: usize, rest: &str) -> Result<SignedHead, FormatError> {
                 FormatError::BadLine(number, format!("{root_hex:?} is not a 32-byte root"))
             })?,
             at: UnixNanos(number_field(number, at)?),
+            beacon: None,
         },
         signature: from_hex_64(signature).ok_or_else(|| {
             FormatError::BadLine(number, "the signature is not 64 bytes".to_string())
@@ -471,6 +754,7 @@ fn read_head(number: usize, rest: &str) -> Result<SignedHead, FormatError> {
         signed_by: from_hex_32(signed_by).ok_or_else(|| {
             FormatError::BadLine(number, "the signing key is not 32 bytes".to_string())
         })?,
+        witness: None,
     })
 }
 
@@ -520,6 +804,7 @@ mod tests {
 
     fn entry(key: u8, from: i128, until: Option<i128>, name: &str) -> KeyEntry {
         KeyEntry {
+            issued: None,
             public_key: [key; 32],
             role: Role::Agent,
             deployment: name.to_string(),
@@ -553,6 +838,7 @@ mod tests {
         assert_eq!(log.agent_entries(), 1);
 
         let with_an_end = KeyLog {
+            checkpoints: Vec::new(),
             entries: vec![KeyEntry {
                 role: Role::Retired,
                 ..entry(1, 300, Some(400), "retired")
@@ -612,6 +898,7 @@ mod tests {
         assert_eq!(moved.check_head(&held), HeadCheck::BadSignature);
 
         let headless = KeyLog {
+            checkpoints: Vec::new(),
             entries: by_us.entries.clone(),
             head: None,
         };
@@ -620,16 +907,19 @@ mod tests {
 
     fn signed(entries: Vec<KeyEntry>, signing: &SigningKey) -> KeyLog {
         let mut log = KeyLog {
+            checkpoints: Vec::new(),
             entries,
             head: None,
         };
         let head = TreeHead {
+            beacon: None,
             size: log.entries.len(),
             root: log.root(),
             at: UnixNanos(1_800_000_000_000_000_000),
         };
         let signature = signing.sign(&head.canonical()).to_bytes();
         log.head = Some(SignedHead {
+            witness: None,
             head,
             signature,
             signed_by: signing.verifying_key().to_bytes(),
@@ -718,6 +1008,7 @@ mod tests {
         let signing = SigningKey::from_bytes(&[7u8; 32]);
         let mut log = signed(vec![entry(1, 100, None, "one")], &signing);
         let elsewhere = TreeHead {
+            beacon: None,
             size: 1,
             root: [9u8; 32],
             at: UnixNanos(1_800_000_000_000_000_000),
@@ -827,8 +1118,196 @@ mod tests {
         // Written out, it would read back as an entry and then as a line that is not one, so the
         // file would either fail to parse or, worse, parse as something nobody wrote.
         let log = KeyLog {
+            checkpoints: Vec::new(),
             entries: vec![entry(1, 100, None, "one\nentry agent 00 1 - two")],
             head: None,
+        };
+        assert!(write(&log).is_err());
+    }
+
+    fn certificate(key: u8, from: i128, until: i128) -> KeyEntry {
+        KeyEntry {
+            public_key: [key; 32],
+            role: Role::Certificate,
+            deployment: "a runner with a space in its name".to_string(),
+            valid_from: UnixNanos(from),
+            valid_until: Some(UnixNanos(until)),
+            issued: Some(Issued {
+                organisation: "org-1".to_string(),
+                method: "github-oidc".to_string(),
+            }),
+        }
+    }
+
+    fn cutoff(at: i128) -> KeyEntry {
+        KeyEntry {
+            public_key: [7u8; 32],
+            role: Role::Cutoff,
+            deployment: "certification begins".to_string(),
+            valid_from: UnixNanos(at),
+            valid_until: None,
+            issued: None,
+        }
+    }
+
+    /// A history of three heads: one over the server key, one over the cutoff carrying a beacon and a
+    /// witness, and one over a certificate.
+    fn history() -> KeyLog {
+        let secret = [7u8; 32];
+        let mut log = KeyLog::default();
+        log.entries.push(KeyEntry {
+            role: Role::Server,
+            ..entry(2, 0, None, "a roughtime server")
+        });
+        log.head = Some(sign_head(&log, &secret, UnixNanos(10)));
+        log.checkpoints.push(log.head.take().expect("a head"));
+        log.entries.push(cutoff(1_000));
+        let mut fixing = sign_head_after(&log, &secret, UnixNanos(1_010), Some(vec![0xbe; 12]));
+        fixing.witness = Some(vec![0xef; 20]);
+        log.checkpoints.push(fixing);
+        log.entries.push(certificate(1, 2_000, 3_000));
+        log.head = Some(sign_head_after(
+            &log,
+            &secret,
+            UnixNanos(2_010),
+            Some(vec![0xbf; 12]),
+        ));
+        log
+    }
+
+    #[test]
+    fn a_history_is_written_as_version_2_and_reads_back_as_the_same_history() {
+        let log = history();
+        assert!(log.needs_version_2());
+        let text = write(&log).expect("written");
+        assert!(text.starts_with(MAGIC_V2), "{text}");
+        assert!(
+            text.contains(" org-1 github-oidc a runner with a space in its name\n"),
+            "{text}"
+        );
+        assert!(text.contains("\nbeacon bebebe"), "{text}");
+        assert!(text.contains("\nwitness efef"), "{text}");
+        let read = parse(&text).expect("what this wrote, this reads");
+        assert_eq!(read, log);
+        assert_eq!(read.heads().count(), 3);
+        assert_eq!(read.first_head_covering(0).map(|h| h.head.size), Some(1));
+        assert_eq!(read.first_head_covering(1).map(|h| h.head.size), Some(2));
+        assert_eq!(read.first_head_covering(2).map(|h| h.head.size), Some(3));
+        assert_eq!(read.first_head_covering(3), None);
+        let held = [SigningKey::from_bytes(&[7u8; 32])
+            .verifying_key()
+            .to_bytes()];
+        assert!(read.checkpoints_are_ours(&held));
+        assert!(!read.checkpoints_are_ours(&[[1u8; 32]]));
+        assert_eq!(read.check_head(&held), HeadCheck::Checked(held[0]));
+    }
+
+    #[test]
+    fn a_log_with_nothing_of_version_2_in_it_is_still_written_as_version_1() {
+        let signing = SigningKey::from_bytes(&[7u8; 32]);
+        let log = signed(vec![entry(1, 100, None, "one")], &signing);
+        assert!(!log.needs_version_2());
+        assert!(write(&log)
+            .expect("written")
+            .starts_with(&format!("{MAGIC}\n")));
+    }
+
+    #[test]
+    fn a_beacon_is_signed_with_its_head_and_a_witness_is_not() {
+        let log = history();
+        let mut moved = log.clone();
+        moved.head.as_mut().unwrap().head.beacon = Some(vec![0xaa; 12]);
+        assert_eq!(moved.head_is_signed_by_the_key_it_names(), Some(false));
+
+        let mut witnessed = log.clone();
+        witnessed.head.as_mut().unwrap().witness = Some(vec![1, 2, 3]);
+        assert_eq!(witnessed.head_is_signed_by_the_key_it_names(), Some(true));
+        let head = log.head.as_ref().unwrap();
+        let mut other = head.clone();
+        other.signature[0] ^= 1;
+        assert_ne!(head.witness_digest(), other.witness_digest());
+    }
+
+    #[test]
+    fn a_version_1_file_refuses_everything_version_2_adds() {
+        let key = hex(&[1u8; 32]);
+        for line in [
+            format!("entry certificate {key} 1 2 org-1 github-oidc name"),
+            format!("entry cutoff {key} 1 - name"),
+        ] {
+            let text = format!("{MAGIC}\n{line}\n");
+            assert!(
+                matches!(parse(&text), Err(FormatError::BadLine(2, _))),
+                "read as v1: {line}"
+            );
+            assert!(parse(&format!("{MAGIC_V2}\n{line}\n")).is_ok(), "{line}");
+        }
+        let text = write(&history())
+            .expect("written")
+            .replacen(MAGIC_V2, MAGIC, 1);
+        assert!(parse(&text).is_err(), "a history is not a v1 file");
+    }
+
+    #[test]
+    fn a_history_whose_heads_are_out_of_place_is_refused() {
+        let text = write(&history()).expect("written");
+        let lines: Vec<&str> = text.lines().collect();
+
+        // A beacon line that does not sit under a head.
+        let mut stray = lines.clone();
+        let at = stray.iter().position(|l| l.starts_with("beacon")).unwrap();
+        let beacon = stray.remove(at);
+        stray.insert(1, beacon);
+        assert!(parse(&stray.join("\n")).is_err());
+
+        // Two beacons on one head.
+        let mut twice = lines.clone();
+        twice.insert(at + 1, beacon);
+        assert!(parse(&twice.join("\n")).is_err());
+
+        // A head moved above an entry it says it covers.
+        let mut early = lines.clone();
+        let head = early.iter().position(|l| l.starts_with("head")).unwrap();
+        let line = early.remove(head);
+        early.insert(1, line);
+        assert!(matches!(
+            parse(&early.join("\n")),
+            Err(FormatError::HeadDisagrees(_))
+        ));
+
+        // An entry changed under an earlier head, with the newest head re-signed over it.
+        let changed = text.replace(" 2000 3000 ", " 2000 3001 ");
+        assert!(parse(&changed).is_err());
+    }
+
+    #[test]
+    fn each_role_carries_only_the_fields_it_is_allowed() {
+        let key = hex(&[1u8; 32]);
+        for line in [
+            format!("entry certificate {key} 1 - org-1 github-oidc name"),
+            format!("entry certificate {key} 1 2 org-1"),
+            format!("entry cutoff {key} 1 2 name"),
+        ] {
+            assert!(
+                parse(&format!("{MAGIC_V2}\n{line}\n")).is_err(),
+                "read: {line}"
+            );
+        }
+        let mut agent = entry(1, 100, None, "one");
+        agent.issued = Some(Issued {
+            organisation: "o".to_string(),
+            method: "m".to_string(),
+        });
+        let log = KeyLog {
+            entries: vec![agent],
+            ..KeyLog::default()
+        };
+        assert!(write(&log).is_err());
+        let mut spaced = certificate(1, 1, 2);
+        spaced.issued.as_mut().unwrap().organisation = "two words".to_string();
+        let log = KeyLog {
+            entries: vec![spaced],
+            ..KeyLog::default()
         };
         assert!(write(&log).is_err());
     }

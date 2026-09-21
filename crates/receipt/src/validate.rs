@@ -787,6 +787,7 @@ fn into_outcome(checked: Checked) -> Outcome {
         checks: checked.checks,
         earliest,
         latest,
+        stated: checked.stated,
     }
 }
 

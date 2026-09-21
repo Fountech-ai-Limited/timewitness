@@ -72,6 +72,7 @@ fn anchors() -> TrustAnchors {
 
 fn entry(key: [u8; 32], from: UnixNanos, until: Option<UnixNanos>) -> KeyEntry {
     KeyEntry {
+        issued: None,
         public_key: key,
         role: Role::Agent,
         deployment: "a build runner".to_string(),
@@ -98,6 +99,7 @@ fn retired(key: [u8; 32], at: UnixNanos) -> KeyEntry {
 
 fn signed_by(entries: Vec<KeyEntry>, secret: &[u8; 32], at: i128) -> KeyLog {
     let mut log = KeyLog {
+        checkpoints: Vec::new(),
         entries,
         head: None,
     };
@@ -337,6 +339,7 @@ fn a_head_whose_signature_was_moved_onto_it_refuses_and_nothing_under_it_is_read
     let (signed, key, at) = the_receipt();
     let mut log = our_log(vec![entry(key, UnixNanos(at.0 - 1_000_000_000), None)]);
     let elsewhere = KeyLog {
+        checkpoints: Vec::new(),
         entries: vec![entry([4u8; 32], UnixNanos(0), None)],
         head: None,
     };
@@ -346,7 +349,9 @@ fn a_head_whose_signature_was_moved_onto_it_refuses_and_nothing_under_it_is_read
         UnixNanos(1_800_000_000_000_000_000),
     );
     log.head = Some(SignedHead {
+        witness: None,
         head: TreeHead {
+            beacon: None,
             size: log.entries.len(),
             root: log.root(),
             at: moved.head.at,
@@ -370,6 +375,7 @@ fn a_log_with_no_head_answers_nothing_and_says_it_is_signed_by_nobody() {
     // signed" in one sentence. A list nobody signed is not a list we signed.
     let (signed, key, at) = the_receipt();
     let log = KeyLog {
+        checkpoints: Vec::new(),
         entries: vec![entry(key, UnixNanos(at.0 - 1_000_000_000), None)],
         head: None,
     };
@@ -455,6 +461,7 @@ fn a_kept_log_pins_nothing_unless_we_signed_it() {
     let grown = our_log(entries.clone());
 
     let unsigned = KeyLog {
+        checkpoints: Vec::new(),
         entries: entries.clone(),
         head: None,
     };

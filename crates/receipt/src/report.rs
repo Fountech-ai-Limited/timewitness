@@ -33,6 +33,12 @@ pub enum Outcome {
         earliest: Option<UnixNanos>,
         /// The latest, absent under the same rule and absent together with `earliest`.
         latest: Option<UnixNanos>,
+        /// The instant the attestation states on its signer's own clock, where it states one.
+        ///
+        /// Present where `latest` is absent for a token whose authority states no accuracy, and
+        /// never an edge in UTC. A reader asking which side of a date a signing fell, rather than
+        /// how wide a bound is, is told this and told whose clock it is on.
+        stated: Option<UnixNanos>,
     },
     /// The verifier holds nothing to check this entry against.
     ///
