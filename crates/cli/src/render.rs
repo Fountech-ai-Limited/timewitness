@@ -570,6 +570,16 @@ pub fn fields(a: &Assessment) -> String {
         );
         write_field(&mut out, "attestations_carried", evidence.entries.len());
         write_field(&mut out, "attestations_checked", evidence.checked());
+        // The witness over the signature itself, which is the only one that places the signing.
+        write_field(
+            &mut out,
+            "signature_witness",
+            match &evidence.signature_witness {
+                None => "none",
+                Some(w) if w.outcome.is_checked() => "checked",
+                Some(_) => "not-checked",
+            },
+        );
         write_field(&mut out, "basis_granted", evidence.basis_granted);
     }
     out

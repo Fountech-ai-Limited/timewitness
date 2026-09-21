@@ -323,6 +323,16 @@ function renderResult(result) {
     }
     evidence.append(item);
   }
+  if (result.signature_witness !== undefined) {
+    evidence.append(element("li", null,
+      result.signature_witness === "checked"
+        ? "The signature itself is witnessed by a timestamp token checked on this page, so the " +
+          "receipt was signed no later than the moment that token supports."
+        : result.signature_witness === "not-checked"
+          ? "The signature itself carries a timestamp token this page holds no key to check."
+          : "The signature itself carries no witness, so nothing outside this receipt says when " +
+            "it was signed, only when its subject existed."));
+  }
   document.getElementById("basis").textContent =
     result.basis_reason === undefined ? "" :
     "The bound in this receipt " + (result.basis_granted ? "does" : "does not") +

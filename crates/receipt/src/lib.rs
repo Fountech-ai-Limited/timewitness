@@ -30,7 +30,10 @@ pub mod validate;
 pub mod value;
 
 pub use anchors::{RoughtimeServerKey, TrustAnchors};
-pub use cose::{check_signature, envelope_parts, open, open_with, AgentKey, Envelope};
+pub use cose::{
+    check_signature, envelope_parts, open, open_with, signature_of, with_signature_witness,
+    AgentKey, Envelope, SIGNATURE_WITNESS,
+};
 pub use error::ReceiptError;
 pub use report::{Bracket, EntryReport, Outcome, Verified};
 pub use schema::{

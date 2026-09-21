@@ -132,6 +132,15 @@ fn value(a: &Assessment) -> Value {
             ),
         ));
         top.push(("basis_granted", Value::Bool(evidence.basis_granted)));
+        // The witness over the signature itself: checked, not checked, or none carried.
+        top.push((
+            "signature_witness",
+            Value::text(match &evidence.signature_witness {
+                None => "none",
+                Some(w) if w.outcome.is_checked() => "checked",
+                Some(_) => "not-checked",
+            }),
+        ));
         top.push(("basis_reason", Value::text(evidence.basis_reason.clone())));
     }
 

@@ -62,7 +62,9 @@ use timewitness_core::time::{Nanos, NANOS_PER_SEC};
 use timewitness_core::{Attestation, UnixNanos};
 use timewitness_platform::EnvironmentWatch;
 use timewitness_receipt::schema::{Evidence, Receipt, Role, Scheme, TakenBy};
-use timewitness_receipt::{chain_link, sha256_payload, AgentKey};
+use timewitness_receipt::{
+    chain_link, sha256_payload, signature_of, with_signature_witness, AgentKey,
+};
 use timewitness_sources::drand::DrandClient;
 use timewitness_sources::ntp::{NtpClient, NtpServer};
 use timewitness_sources::nts::{NtsClient, NtsServer};
@@ -388,6 +390,15 @@ pub fn run(args: &Args) -> Outcome {
     let signed = match key.sign(&receipt) {
         Ok(bytes) => bytes,
         Err(e) => return fail(&format!("the receipt would not sign: {e}")),
+    };
+    // After signing, because it is about the signature. Every attestation gathered above is about
+    // the subject, so it places the thing stamped and not the signing; this one places the signing.
+    let signed = if args.flag("--no-evidence") {
+        signed
+    } else {
+        let (witnessed, said) = witness_the_signature(signed, deadline);
+        notes.push(said);
+        witnessed
     };
     if let Err(e) = fs::write(out_path, &signed) {
         return fail(&format!("{out_path} could not be written: {e}"));
@@ -803,6 +814,54 @@ fn gather(
     }
 
     (evidence, notes)
+}
+
+/// A timestamp over the receipt's own signature, put outside the signed body where version 1 allows
+/// it, from the first published authority that answers.
+///
+/// Optional, as every attestation is: a receipt whose signature nobody witnessed is signed all the
+/// same and says so, and the verifier reports it as a receipt that places its subject and not its
+/// signing. What comes back is the receipt to write and the line the run prints about it.
+fn witness_the_signature(signed: Vec<u8>, deadline: Deadline) -> (Vec<u8>, String) {
+    let signature = match signature_of(&signed) {
+        Ok(signature) => signature,
+        Err(e) => return (signed, format!("no witness over the signature: {e}")),
+    };
+    let digest = sha256_payload(&signature).hash;
+    let mut refusals = Vec::new();
+    for authority in published_authorities() {
+        if deadline.left().is_none() {
+            refusals.push(format!(
+                "this run passed its {} s deadline first",
+                deadline.whole.as_secs()
+            ));
+            break;
+        }
+        let name = authority.name.clone();
+        match TimestampClient::new(authority).witness(&digest) {
+            Ok(attestation) => match with_signature_witness(&signed, &attestation.blob) {
+                Ok(witnessed) => {
+                    return (
+                        witnessed,
+                        format!(
+                            "the signature itself was witnessed by {name}, so a reader can place \
+                             the signing and not only the subject"
+                        ),
+                    )
+                }
+                Err(e) => refusals.push(format!("{name}: {e}")),
+            },
+            Err(e) => refusals.push(format!("{name}: {e}")),
+        }
+    }
+    (
+        signed,
+        format!(
+            "no witness over the signature, so nothing outside this receipt says when it was \
+             signed, only when its subject existed ({})",
+            refusals.join("; ")
+        ),
+    )
 }
 
 fn entry(role: Role, scheme: &str, attestation: &Attestation, detail: String) -> Evidence {

@@ -82,6 +82,8 @@ pub fn validate_with(receipt: &Receipt, anchors: &TrustAnchors) -> Result<Verifi
         basis_granted: granted,
         basis_reason: reason,
         anchors_held: anchors.count(),
+        // Carried outside the signed body, so it is read off the envelope by the caller that has it.
+        signature_witness: None,
     })
 }
 
@@ -1095,6 +1097,25 @@ fn examine_witness(
     printed_nonce_is_the_signed_one(entry, inspected.nonce())
         .map_err(|why| on_its_own("rfc3161", &why))?;
 
+    under_a_held_authority(
+        &inspected,
+        anchors,
+        |label_held| about_the_label(entry, label_held),
+        entry.detail.as_deref(),
+    )
+}
+
+/// A token, tried under every authority the reader pinned one of its certificates for.
+///
+/// Nobody holding a pin for it is an answer rather than a failure: the token is reported as not
+/// checked and why. A token that fails under a pin the reader holds refuses the whole receipt,
+/// because a signature that does not check out is not a weaker claim, it is a wrong one.
+fn under_a_held_authority(
+    inspected: &rfc3161::Inspected<'_>,
+    anchors: &TrustAnchors,
+    about_the_label: impl Fn(bool) -> String,
+    label: Option<&str>,
+) -> Result<Outcome, ReceiptError> {
     let carried = inspected.certificate_digests();
     let holders: Vec<&rfc3161::Authority> = anchors
         .timestamp_authorities
@@ -1112,7 +1133,7 @@ fn examine_witness(
             .iter()
             .map(|authority| authority.accepted_certificates.len())
             .sum();
-        let label_held = entry.detail.as_deref().is_some_and(|label| {
+        let label_held = label.is_some_and(|label| {
             anchors
                 .timestamp_authorities
                 .iter()
@@ -1123,7 +1144,7 @@ fn examine_witness(
              it holds {pinned}, so nothing here can check the signature{}",
             carried.len(),
             if carried.len() == 1 { "" } else { "s" },
-            about_the_label(entry, label_held)
+            about_the_label(label_held)
         )));
     }
     let mut last = (String::new(), String::new());
@@ -1138,6 +1159,55 @@ fn examine_witness(
         &format!("the certificate this reader pinned for {}", last.0),
         &last.1,
     ))
+}
+
+/// The witness over a receipt's own signature, which version 1 carries outside the signed body.
+///
+/// Every other outside signature in a receipt is about the thing stamped, so it places the subject
+/// and never the signing. This one is an RFC 3161 token over the SHA-256 of the 64 signature bytes,
+/// and it is held to everything the evidence entries are held to, with that digest where theirs has
+/// the payload hash: a token about any other signature is refused whatever the reader holds.
+///
+/// A checked witness dated before a checked beacon the receipt carries is refused as well. The
+/// beacon's value is inside the signature, so the signing came after the beacon, and a witness saying
+/// the signature existed before it is a receipt whose evidence contradicts itself.
+pub(crate) fn examine_signature_witness(
+    blob: &[u8],
+    signature: &[u8],
+    anchors: &TrustAnchors,
+    report: &Verified,
+) -> Result<EntryReport, ReceiptError> {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(signature).to_vec();
+    let inspected = rfc3161::inspect(blob, &digest).map_err(|e| {
+        ReceiptError::Inconsistent(format!(
+            "the witness over this receipt's signature fails a check that needs no key to see: {e}"
+        ))
+    })?;
+    let outcome = under_a_held_authority(&inspected, anchors, |_| String::new(), None)?;
+    if let (
+        Outcome::Checked {
+            latest: Some(witnessed),
+            ..
+        },
+        Some(beacon),
+    ) = (&outcome, report.bracket().not_earlier)
+    {
+        if *witnessed < beacon {
+            return Err(ReceiptError::Inconsistent(
+                "the witness over this receipt's signature is dated before the beacon inside the \
+                 signature was published, so the evidence says the receipt was signed before it \
+                 could have been"
+                    .into(),
+            ));
+        }
+    }
+    Ok(EntryReport {
+        role: Role::NotLaterThan,
+        scheme: rfc3161::SCHEME.to_string(),
+        detail: Some("over this receipt's own signature".to_string()),
+        outcome,
+    })
 }
 
 /// Whether the receipt may claim its bound rests on outside signatures.

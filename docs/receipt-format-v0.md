@@ -354,7 +354,8 @@ individual source's interval, and the two that bound how far an oscillator's rat
 during holdover. A reader can check the three the receipt carries and cannot check the three that
 decide what they are looking at.
 
-That is a limit of v0, stated here rather than left to be discovered.
+That is a limit of v0, stated here rather than left to be discovered. Version 1 carries all three,
+and `docs/receipt-format-v1.md` says how.
 
 **`first_party` was added on 2026-09-12, and it is the one optional field whose
 absence and whose stated value mean the same thing.** Everywhere else in this format absent is a
@@ -411,6 +412,9 @@ structure. A change to any of them is version 1, not a change to version 0.
 A later version may add fields. A v0 reader meeting a v1 receipt refuses it rather than reading the
 fields it recognises, because a receipt is evidence and half-reading evidence is worse than not
 reading it.
+
+Version 1 was written on 2026-09-21 and `docs/receipt-format-v1.md` is what it adds. Nothing in
+this document moved for it: a version 0 receipt reads exactly as it did, byte for byte.
 
 Two things this format deliberately leaves out because they belong to phase 2: anything about the
 countersign exchange between two agents, and anything about time domains. Adding them here would be

@@ -73,6 +73,12 @@ pub struct Verified {
     pub basis_reason: String,
     /// How many anchors the verifier was holding when it read this.
     pub anchors_held: usize,
+    /// The witness over the receipt's own signature, where it carries one.
+    ///
+    /// Receipt format version 1 carries it outside the signed body, because it is about the
+    /// signature. Every entry above is about the subject, so this is the only line that can place
+    /// the signing rather than the thing signed.
+    pub signature_witness: Option<EntryReport>,
 }
 
 /// What the checked outside evidence says about when, and nothing the receipt says about itself.
@@ -196,6 +202,45 @@ impl Verified {
                     ));
                 }
             }
+        }
+        match &self.signature_witness {
+            None => out.push(
+                "The signature itself carries no witness, so nothing outside this receipt says \
+                 when it was signed, only when its subject existed."
+                    .to_string(),
+            ),
+            Some(EntryReport {
+                outcome:
+                    Outcome::Checked {
+                        signer,
+                        checks,
+                        latest,
+                        ..
+                    },
+                ..
+            }) => {
+                out.push(match latest {
+                    Some(_) => format!(
+                        "The signature itself is witnessed by an rfc3161 token checked against \
+                         {signer}, so the receipt was signed no later than the edge that token \
+                         supports"
+                    ),
+                    None => format!(
+                        "The signature itself is witnessed by an rfc3161 token checked against \
+                         {signer}. Its authority states no accuracy, so it puts the signing no \
+                         later than a moment on that authority's own clock and bounds nothing in UTC"
+                    ),
+                });
+                for check in checks {
+                    out.push(format!("    {check}"));
+                }
+            }
+            Some(EntryReport {
+                outcome: Outcome::NotChecked(why),
+                ..
+            }) => out.push(format!(
+                "The signature itself carries an rfc3161 witness: not checked, {why}"
+            )),
         }
         out.push(format!(
             "The bound in this receipt {} rest on third-party evidence: {}",
