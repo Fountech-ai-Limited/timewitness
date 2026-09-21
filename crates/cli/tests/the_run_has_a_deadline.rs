@@ -13,17 +13,34 @@
 //! `--no-evidence` keeps the third-party calls out of it either way.
 
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 fn timewitness() -> Command {
     Command::new(env!("CARGO_BIN_EXE_timewitness"))
 }
 
+/// Each call gets a folder of its own. The tests in this file run in parallel, and when they shared
+/// one key path two of them could both find it missing and both try to create it, so the second was
+/// refused with "could not be written" rather than for the waiting it was there to prove. That
+/// failed `main` at `201abed` on 2026-09-21 with nothing else changed.
+fn scratch() -> std::path::PathBuf {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let folder = std::env::temp_dir().join(format!(
+        "tw-deadline-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    ));
+    std::fs::create_dir_all(&folder).expect("the temp directory takes a folder");
+    folder
+}
+
 fn stamp(extra: &[&str]) -> (bool, String) {
-    let subject = std::env::temp_dir().join("tw-deadline-subject");
+    let folder = scratch();
+    let subject = folder.join("subject");
     std::fs::write(&subject, b"a file to stamp").expect("the temp directory takes a file");
-    let key = std::env::temp_dir().join("tw-deadline.key");
-    let out = std::env::temp_dir().join("tw-deadline-receipt.cbor");
+    let key = folder.join("stamp.key");
+    let out = folder.join("receipt.cbor");
 
     let mut command = timewitness();
     command.args([
@@ -43,6 +60,7 @@ fn stamp(extra: &[&str]) -> (bool, String) {
         String::from_utf8_lossy(&done.stdout),
         String::from_utf8_lossy(&done.stderr)
     );
+    let _ = std::fs::remove_dir_all(&folder);
     (done.status.success(), said)
 }
 
