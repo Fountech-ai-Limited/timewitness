@@ -5,7 +5,8 @@
 //! timescale, in `Sample::from_exchange`, where a source answering on TAI is converted to UTC using
 //! the offset that source stated. A reader checking a receipt a stranger handed them was trusting
 //! the signer to have done that conversion and had no way to see whether it was done, and on TAI
-//! the difference is thirty-seven seconds against a bound of about 154 ms.
+//! the difference is thirty-seven seconds, wider than either shipped ceiling allows a receipt to
+//! state: two seconds for the one-shot command and 250 ms for the agent.
 //!
 //! The refusals live in the receipt crate, where a value nothing can read belongs, and they are
 //! held by `crates/receipt/tests/dishonest_receipts.rs`. What is left for a reader is to be told,
@@ -133,4 +134,32 @@ fn a_source_on_another_timescale_that_was_dropped_is_named_and_said_to_have_been
         said.contains("no source this bound rests on is one of them"),
         "and the reader is told what that means, and got {said:?}"
     );
+}
+
+/// A kept source announcing a leap second is named, with which way the second goes.
+///
+/// Found 2026-09-21: a receipt whose kept source said a second was about to be added was reported
+/// as all nine sources answering on UTC with nothing to say, which is true of the timescale and
+/// leaves out the one thing that source did say. Around a leap second a source's answers and
+/// another's can differ by the second itself, so a reader should be told it was announced.
+#[test]
+fn a_source_announcing_a_leap_second_is_named_rather_than_left_out() {
+    for (leap, words) in [
+        ("add-second", "announced a leap second being added"),
+        ("delete-second", "announced a leap second being removed"),
+    ] {
+        let mut receipt = common::receipt_local_only();
+        receipt.claim.sources[0] = SourceRecord {
+            leap: leap.to_string(),
+            ..receipt.claim.sources[0].clone()
+        };
+        let id = receipt.claim.sources[0].id.clone();
+        let said = detail(&signed(&receipt));
+        assert!(said.contains(words), "on {leap}, got {said:?}");
+        assert!(said.contains(&id), "the source is named, and got {said:?}");
+        assert!(
+            !said.contains("nothing was converted"),
+            "the ordinary case is not what this is, and got {said:?}"
+        );
+    }
 }

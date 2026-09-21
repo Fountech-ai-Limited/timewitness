@@ -512,7 +512,8 @@ pub fn fields(a: &Assessment) -> String {
         // The kinds, and what each source said it was speaking, counted the same way. The
         // validator refuses a receipt on the timescale and the smear, so a script has to be able to
         // see both rather than take the verdict on trust.
-        let spoken: [(&str, fn(&SourceRecord) -> &str); 3] = [
+        type Spoken = fn(&SourceRecord) -> &str;
+        let spoken: [(&str, Spoken); 3] = [
             ("source_kinds", |s| s.kind.as_str()),
             ("source_timescales", |s| s.timescale.as_str()),
             ("source_smears", |s| s.smear.as_str()),
