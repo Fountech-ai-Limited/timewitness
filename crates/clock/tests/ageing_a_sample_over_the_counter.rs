@@ -396,3 +396,46 @@ fn a_fit_outside_the_band_that_cannot_separate_it_widens_by_half_the_band() {
         "the blunt branch and the no-fit branch are the same allowance, and the page says so"
     );
 }
+
+#[test]
+fn a_fit_whose_error_bar_is_wider_than_the_band_cannot_tell_and_says_so() {
+    // Found 2026-09-18: the reading looked at the fitted rate alone and never at its standard error,
+    // so a fit of 3 ppm at a standard error of 5000 ppm read as inside the band and one of 4000 ppm at
+    // the same error read as outside it by 3950, a claim about a crystal taken off a measurement of
+    // jitter. A fit the model itself refuses as noise cannot say where the rate is.
+    let noisy = |ppm: f64, stderr: f64| Fit {
+        frequency_stderr_ppm: stderr,
+        ..fit_at(ppm)
+    };
+    for (ppm, stderr) in [
+        (3.0, 5000.0),
+        (4000.0, 5000.0),
+        (-4000.0, 5000.0),
+        (0.0, f64::NAN),
+    ] {
+        match RateKnowledge::from_fit(&noisy(ppm, stderr), &d()).band {
+            BandReading::CannotTell { .. } => {}
+            other => panic!("rate {ppm} at an error of {stderr} read as {other:?}"),
+        }
+    }
+    // At the edge: the default band is a hundred and the coverage factor two, so an error of fifty
+    // separates the band and one just over it does not.
+    assert_eq!(
+        RateKnowledge::from_fit(&noisy(3.0, 50.0), &d()).band,
+        BandReading::Inside { magnitude_ppm: 3.0 }
+    );
+    assert!(matches!(
+        RateKnowledge::from_fit(&noisy(3.0, 50.001), &d()).band,
+        BandReading::CannotTell { .. }
+    ));
+    // And every answer says itself in words an operator reads, with none of them saying inside or
+    // outside where the fit could not tell.
+    let said = RateKnowledge::from_fit(&noisy(3.0, 5000.0), &d())
+        .band
+        .to_string();
+    assert!(said.contains("cannot tell"), "{said}");
+    assert!(
+        !said.contains("inside") && !said.contains("outside"),
+        "{said}"
+    );
+}
