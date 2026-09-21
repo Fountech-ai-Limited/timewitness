@@ -211,16 +211,8 @@ impl SourceRecord {
                 named => Some(named.to_string()),
             },
             kind: s.kind.as_wire().to_string(),
-            timescale: match s.timescale {
-                Timescale::Utc => "utc".to_string(),
-                Timescale::Tai { offset_seconds } => format!("tai+{offset_seconds}"),
-                Timescale::Unknown => "unknown".to_string(),
-            },
-            smear: match s.smear {
-                SmearPolicy::None => "none".to_string(),
-                SmearPolicy::Linear { window_seconds } => format!("linear/{window_seconds}"),
-                SmearPolicy::Unknown => "unknown".to_string(),
-            },
+            timescale: timescale_on_the_wire(s.timescale),
+            smear: smear_on_the_wire(s.smear),
             leap: match s.leap {
                 LeapIndicator::None => "none",
                 LeapIndicator::AddSecond => "add-second",
@@ -280,6 +272,26 @@ pub const LEAP_VALUES: [&str; 4] = ["none", "add-second", "delete-second", "unsy
 /// otherwise.
 const SOUND_LEAP: [&str; 3] = ["none", "add-second", "delete-second"];
 
+/// How a timescale is written into a receipt, and the one spelling [`reads_timescale`] reads back.
+#[must_use]
+pub fn timescale_on_the_wire(timescale: Timescale) -> String {
+    match timescale {
+        Timescale::Utc => "utc".to_string(),
+        Timescale::Tai { offset_seconds } => format!("tai+{offset_seconds}"),
+        Timescale::Unknown => "unknown".to_string(),
+    }
+}
+
+/// How a smear policy is written into a receipt, and the one spelling [`reads_smear`] reads back.
+#[must_use]
+pub fn smear_on_the_wire(smear: SmearPolicy) -> String {
+    match smear {
+        SmearPolicy::None => "none".to_string(),
+        SmearPolicy::Linear { window_seconds } => format!("linear/{window_seconds}"),
+        SmearPolicy::Unknown => "unknown".to_string(),
+    }
+}
+
 /// What a source said it was speaking, read back off the wire.
 ///
 /// The writer produces three shapes and no others: `utc`, `unknown`, and `tai+` with a whole number
@@ -291,32 +303,43 @@ const SOUND_LEAP: [&str; 3] = ["none", "add-second", "delete-second"];
 /// is converted to UTC using the offset it stated. The verifier did not, so a reader checking a
 /// receipt a stranger handed them was trusting the signer to have done that conversion with no way
 /// to see whether it was done, and a receipt on TAI is thirty-seven seconds from the UTC it claims.
+///
+/// **Only the spelling the writer produces is read.** Parsing the number alone read `tai++37`,
+/// `tai+037` and `tai+-0` as values the writer spells otherwise, which is one value with several
+/// spellings that hash differently: the fault the deterministic encoding exists to remove. So what
+/// is parsed is written back and compared, and a spelling that does not come back identical is one
+/// this format cannot read. Found 2026-09-21.
 #[must_use]
 pub fn reads_timescale(stated: &str) -> Option<Timescale> {
-    match stated {
-        "utc" => Some(Timescale::Utc),
-        "unknown" => Some(Timescale::Unknown),
+    let read = match stated {
+        "utc" => Timescale::Utc,
+        "unknown" => Timescale::Unknown,
         other => other
             .strip_prefix("tai+")
             .and_then(|seconds| seconds.parse().ok())
-            .map(|offset_seconds| Timescale::Tai { offset_seconds }),
-    }
+            .map(|offset_seconds| Timescale::Tai { offset_seconds })?,
+    };
+    (timescale_on_the_wire(read) == stated).then_some(read)
 }
 
 /// What a source said it does with a leap second, read back off the wire.
 ///
 /// `none`, `unknown`, and `linear/` with a whole number of seconds, which is the window the smear
-/// is spread across.
+/// is spread across. Only the writer's own spelling is read, as with the timescale above, and a
+/// window of nought is refused: a smear spread over no time at all is a step, which is what `none`
+/// already says, so `linear/0` would be a second spelling of it.
 #[must_use]
 pub fn reads_smear(stated: &str) -> Option<SmearPolicy> {
-    match stated {
-        "none" => Some(SmearPolicy::None),
-        "unknown" => Some(SmearPolicy::Unknown),
+    let read = match stated {
+        "none" => SmearPolicy::None,
+        "unknown" => SmearPolicy::Unknown,
         other => other
             .strip_prefix("linear/")
             .and_then(|seconds| seconds.parse().ok())
-            .map(|window_seconds| SmearPolicy::Linear { window_seconds }),
-    }
+            .filter(|window_seconds| *window_seconds > 0)
+            .map(|window_seconds| SmearPolicy::Linear { window_seconds })?,
+    };
+    (smear_on_the_wire(read) == stated).then_some(read)
 }
 
 impl AgentClaim {
