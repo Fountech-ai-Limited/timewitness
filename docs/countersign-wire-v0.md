@@ -2,7 +2,9 @@
 
 Supersedes nothing. First version, written 2026-09-20 and extended five times the same day: the
 request half signed, the receive half built, the ordering answer, receiver-only mode held by a
-check rather than by a sentence, and the pair attacked. It is the shape that travels between two agents and the signature over it. Deciding
+check rather than by a sentence, and the pair attacked. Extended again on 2026-09-22 with the send
+half on the command line, which is what lets two machines exchange heartbeats with the shipped
+binary alone. It is the shape that travels between two agents and the signature over it. Deciding
 an order is a separate piece built on top of this one and is not described here.
 
 The version on the wire is `tw1`. The receipt format beside it is `v0` and the two numbers are not
@@ -344,6 +346,35 @@ the one written for it.
 
 Nothing in that path asks for an account, a certificate or a payment, and nothing in it reaches the
 network.
+
+**A sender makes its own half with the same binary, from 2026-09-22.**
+
+```
+timewitness stamp --subject what-we-are-sending --key agent.key --out sending-receipt.cbor
+timewitness countersign --ask --receipt sending-receipt.cbor --key agent.key
+```
+
+Until this, the command line could answer an exchange and not start one, so two machines could
+countersign each other only through a program somebody had written against the library. The shape of
+`--ask` is the shape of `--answer` and deliberately so: it takes no exchange value, because it makes
+a half rather than reading one, and the interval, the sequence, the receipt hash and the payload all
+come out of the receipt. Neither side can be told what its own clock read, and one function reads the
+receipt for both of them, because two copies of that reading are two places for the property to stop
+being true.
+
+`--ask` and `--answer` together are refused rather than resolved in some order, and so is `--ask`
+with an exchange value beside it. Both were watched refusing: with either check taken out of the
+build, one test goes red and it is the one written for it.
+
+**What this pair of commands is for.** Two machines in a fleet exchange heartbeats with these two
+lines and nothing else. There is no account in it, no host of ours, and no service either machine
+has to be able to reach: an exchange made while our app is switched off, unreachable or never
+deployed is the same exchange. A machine may file the pair with the app afterwards, and filing is a
+separate act that the exchange does not wait for and does not depend on.
+
+**A request is not an instruction.** A machine that is asked to countersign and does not is a
+machine that did nothing wrong, and the words the command prints say so. Nothing here obliges
+anybody to answer, and an unanswered request is the request it would have been with no header on it.
 
 ## Attacking a pair
 

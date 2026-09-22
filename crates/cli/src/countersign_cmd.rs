@@ -16,8 +16,10 @@
 
 use std::fs;
 
-use timewitness_countersign::{Countersigned, Exchange, Interval, Ordering, Role, Signed};
-use timewitness_receipt::{chain_link, open};
+use timewitness_countersign::{
+    Countersigned, Digest32, Exchange, Interval, Ordering, Role, Signed,
+};
+use timewitness_receipt::{chain_link, open, AgentKey};
 
 use crate::args::Args;
 use crate::key_file::key_at;
@@ -26,12 +28,30 @@ use crate::verify_cmd::Outcome;
 
 /// Run it.
 pub fn run(args: &Args) -> Outcome {
+    let as_fields = args.flag("--fields");
+
+    // The make-a-half options are read before anything is gathered, because they take no exchange
+    // value and gather refuses where there is none.
+    if args.flag("--ask") {
+        if args.flag("--answer") {
+            return refuse(
+                "--ask makes the sender's half and --answer makes the receiver's half, so it is \
+                 one or the other",
+            );
+        }
+        if !args.positional.is_empty() || args.value("--from").is_some() {
+            return refuse(
+                "--ask makes a half rather than reading one, so it takes no exchange value",
+            );
+        }
+        return ask(args, as_fields);
+    }
+
     let values = match gather(args) {
         Ok(values) => values,
         Err(outcome) => return outcome,
     };
 
-    let as_fields = args.flag("--fields");
     if args.flag("--answer") {
         return match values.as_slice() {
             [request] => answer(args, request, as_fields),
@@ -63,76 +83,18 @@ pub fn run(args: &Args) -> Outcome {
 /// one the receiver made for itself with `timewitness stamp`, and the exchange is between the two
 /// parties with nothing of ours in it.
 fn answer(args: &Args, request: &str, as_fields: bool) -> Outcome {
-    let receipt_path = match args.required("--receipt") {
-        Ok(path) => path,
-        Err(e) => return refuse(&e.0),
-    };
-    let bytes = match fs::read(receipt_path) {
-        Ok(bytes) => bytes,
-        Err(e) => return refuse(&format!("{receipt_path} could not be read: {e}")),
-    };
-    let receipt = match open(&bytes) {
-        Ok(receipt) => receipt,
-        Err(e) => {
-            return refuse(&format!(
-                "{receipt_path} is not a receipt this can read: {e}"
-            ))
-        }
-    };
-
-    let key_path = match args.required("--key") {
-        Ok(path) => path,
-        Err(e) => return refuse(&e.0),
-    };
-    let key = match key_at(key_path) {
-        Ok(Some(key)) => key,
-        Ok(None) => {
-            return refuse(&format!(
-                "{key_path} is not there. Answering means signing with the key that signed the \
-                 receipt being named, so this reads a key and never makes one"
-            ))
-        }
-        Err(text) => return refuse(&text),
-    };
-
-    // The response names a receipt by hash, and a reader who fetches that receipt finds the key
-    // that signed it. If that is not the key that signed the response, the reader is holding two
-    // halves of two different parties and nothing here would have told them. It is refused at the
-    // one place that can see both, which is here, in the party that holds them.
-    if key.public_key_bytes() != receipt.agent_public_key {
-        return refuse(&format!(
-            "the key in {key_path} did not sign the receipt in {receipt_path}, so a response \
-             signed with it would name a receipt of somebody else's"
-        ));
-    }
-
-    let payload: [u8; 32] = match receipt.payload.hash.clone().try_into() {
-        Ok(hash) => hash,
-        Err(_) => {
-            return refuse(&format!(
-                "the receipt in {receipt_path} stamps a hash that is not 32 bytes, and the \
-                 exchange carries a sha-256"
-            ))
-        }
-    };
-    let interval = Interval {
-        earliest_ns: receipt.claim.earliest.as_nanos(),
-        reading_ns: receipt.utc_estimate.as_nanos(),
-        latest_ns: receipt.claim.latest.as_nanos(),
-    };
-    let link: [u8; 32] = match chain_link(&bytes).try_into() {
-        Ok(hash) => hash,
-        Err(_) => return refuse("a sha-256 hash is 32 bytes"),
-    };
-
-    let pair = match Countersigned::answer_wire(
-        request,
+    let Claim {
+        key,
         payload,
-        receipt.sequence,
+        sequence,
         interval,
         link,
-        &key,
-    ) {
+    } = match own_claim(args, Half::Receiver) {
+        Ok(claim) => claim,
+        Err(outcome) => return outcome,
+    };
+
+    let pair = match Countersigned::answer_wire(request, payload, sequence, interval, link, &key) {
         Ok(pair) => pair,
         Err(why) => {
             return Outcome {
@@ -173,6 +135,210 @@ fn answer(args: &Args, request: &str, as_fields: bool) -> Outcome {
     };
     text.push_str(&describe_pair(&pair, request, &response));
     Outcome { text, code: 0 }
+}
+
+/// The send half, made here, from a receipt this machine's own agent already signed.
+///
+/// This is the other side of `--answer` and it exists for the same reason. Until it was built the
+/// command line could answer an exchange and not start one, so two machines could only countersign
+/// each other through a program somebody wrote against the library, and a claim that two machines
+/// countersign each other with the shipped binary was a claim about code that did not exist.
+///
+/// **Every number in the half comes out of the receipt**, exactly as it does on the answering side:
+/// the interval is the receipt's interval, the sequence is the receipt's place in this agent's own
+/// chain, the hash is the hash of those signed bytes, and the payload is what the receipt is a
+/// receipt for. None of the four can be given as an argument, so there is no way here to state an
+/// interval this machine's clock never read.
+///
+/// **Nothing of ours is in it.** No account, no key of ours and no network call, the same as the
+/// answering side, which is what lets two machines in a fleet exchange these with our app switched
+/// off, unreachable or never deployed.
+fn ask(args: &Args, as_fields: bool) -> Outcome {
+    let Claim {
+        key,
+        payload,
+        sequence,
+        interval,
+        link,
+    } = match own_claim(args, Half::Sender) {
+        Ok(claim) => claim,
+        Err(outcome) => return outcome,
+    };
+
+    let exchange = Exchange {
+        role: Role::Request,
+        payload,
+        sequence,
+        interval,
+        receipt: link,
+        key: key.public_key_bytes(),
+        answers: None,
+    };
+    let signed = match Signed::new(&exchange, &key) {
+        Ok(signed) => signed,
+        Err(why) => {
+            return Outcome {
+                text: format!(
+                    "{}\n\n{}",
+                    render::failure(&format!("this request was not made: {why}")),
+                    "Nothing was signed. A sender that cannot make its half sends the request it \
+                     would have sent with no header at all, which is what this product does \
+                     instead of enforcing.",
+                ),
+                code: 1,
+            }
+        }
+    };
+
+    // What is handed back is read back, through the same reader a stranger runs, before a word of
+    // it is printed. The answering side does this and so does this one, for the same reason: a
+    // writer keeping its own list of what a valid half looks like is a second answer waiting to
+    // disagree with the first.
+    let request = signed.to_wire();
+    let read = match Signed::from_wire(&request) {
+        Ok(read) => read,
+        Err(why) => {
+            return refuse(&format!(
+                "the request this built is one our own reader refuses, which is a fault in this \
+                 build rather than in the receipt: {why}"
+            ))
+        }
+    };
+    if as_fields {
+        return Outcome {
+            text: format!(
+                "{}{}",
+                half_fields("request", &read),
+                one_field("request", &request)
+            ),
+            code: 0,
+        };
+    }
+
+    let mut text = String::from(
+        "The request. Send this as the X-Bounded-Time header on what you are sending.\n\n",
+    );
+    text.push_str(&request);
+    text.push_str("\n\n");
+    text.push_str(&describe(&read.exchange, &request));
+    text.push_str(
+        "\nWhat happens next is the other machine's to decide. It answers with `timewitness \
+         countersign --answer`, or it does not, and a request that is not answered is the request \
+         it would have been with no header on it. Nothing here obliges anybody to countersign.\n",
+    );
+    Outcome { text, code: 0 }
+}
+
+/// Which half of an exchange is being made here.
+#[derive(Clone, Copy)]
+enum Half {
+    /// The sender's, under `--ask`.
+    Sender,
+    /// The receiver's, under `--answer`.
+    Receiver,
+}
+
+impl Half {
+    /// The word for the half itself, for a refusal a person reads once.
+    const fn half(self) -> &'static str {
+        match self {
+            Half::Sender => "a request",
+            Half::Receiver => "a response",
+        }
+    }
+}
+
+/// What one party says about its own clock, every field of it taken from its own receipt.
+struct Claim {
+    key: AgentKey,
+    payload: Digest32,
+    sequence: u64,
+    interval: Interval,
+    link: Digest32,
+}
+
+/// Read the receipt and the key, and take the claim out of the receipt.
+///
+/// Both halves are made from this one function on purpose. The property that matters is not that
+/// each side refuses to be told an interval, it is that neither side can be, and two copies of the
+/// same reading are two places for that to stop being true.
+fn own_claim(args: &Args, half: Half) -> Result<Claim, Outcome> {
+    let receipt_path = args.required("--receipt").map_err(|e| refuse(&e.0))?;
+    let bytes = fs::read(receipt_path)
+        .map_err(|e| refuse(&format!("{receipt_path} could not be read: {e}")))?;
+    let receipt = open(&bytes).map_err(|e| {
+        refuse(&format!(
+            "{receipt_path} is not a receipt this can read: {e}"
+        ))
+    })?;
+
+    let key_path = args.required("--key").map_err(|e| refuse(&e.0))?;
+    let key = match key_at(key_path) {
+        Ok(Some(key)) => key,
+        Ok(None) => {
+            return Err(refuse(&format!(
+                "{key_path} is not there. Making {} means signing with the key that signed the \
+                 receipt being named, so this reads a key and never makes one",
+                half.half()
+            )))
+        }
+        Err(text) => return Err(refuse(&text)),
+    };
+
+    // A half names a receipt by hash, and a reader who fetches that receipt finds the key that
+    // signed it. If that is not the key that signed the half, the reader is holding the claims of
+    // two different parties and nothing here would have told them. It is refused at the one place
+    // that can see both, which is here, in the party that holds them.
+    if key.public_key_bytes() != receipt.agent_public_key {
+        return Err(refuse(&format!(
+            "the key in {key_path} did not sign the receipt in {receipt_path}, so {} signed with \
+             it would name a receipt of somebody else's",
+            half.half()
+        )));
+    }
+
+    let payload: Digest32 = receipt.payload.hash.clone().try_into().map_err(|_| {
+        refuse(&format!(
+            "the receipt in {receipt_path} stamps a hash that is not 32 bytes, and the exchange \
+             carries a sha-256"
+        ))
+    })?;
+    let link: Digest32 = chain_link(&bytes)
+        .try_into()
+        .map_err(|_| refuse("a sha-256 hash is 32 bytes"))?;
+
+    Ok(Claim {
+        key,
+        payload,
+        sequence: receipt.sequence,
+        interval: Interval {
+            earliest_ns: receipt.claim.earliest.as_nanos(),
+            reading_ns: receipt.utc_estimate.as_nanos(),
+            latest_ns: receipt.claim.latest.as_nanos(),
+        },
+        link,
+    })
+}
+
+/// The half's own fields, for the surface a script reads.
+///
+/// One function, used for a pair and for a half made on its own, so a script that learned the names
+/// from one reads the other without being taught again.
+fn half_fields(which: &str, half: &Signed) -> String {
+    let e = &half.exchange;
+    let mut out = String::new();
+    out.push_str(&format!("{which}_key={}\n", hex(&e.key)));
+    out.push_str(&format!("{which}_payload={}\n", hex(&e.payload)));
+    out.push_str(&format!("{which}_sequence={}\n", e.sequence));
+    out.push_str(&format!("{which}_earliest_ns={}\n", e.interval.earliest_ns));
+    out.push_str(&format!("{which}_latest_ns={}\n", e.interval.latest_ns));
+    out.push_str(&format!(
+        "{which}_width_ns={}\n",
+        e.interval.latest_ns - e.interval.earliest_ns
+    ));
+    out.push_str(&format!("{which}_receipt={}\n", hex(&e.receipt)));
+    out.push_str(&format!("{which}_sha256={}\n", hex(&half.envelope_hash())));
+    out
 }
 
 /// One `name=value` line, for the field surface.
@@ -253,18 +419,7 @@ fn fields_of(pair: &Countersigned) -> String {
         Ordering::NotSayable => {}
     }
     for (which, half) in [("request", pair.request()), ("response", pair.response())] {
-        let e = &half.exchange;
-        out.push_str(&format!("{which}_key={}\n", hex(&e.key)));
-        out.push_str(&format!("{which}_payload={}\n", hex(&e.payload)));
-        out.push_str(&format!("{which}_sequence={}\n", e.sequence));
-        out.push_str(&format!("{which}_earliest_ns={}\n", e.interval.earliest_ns));
-        out.push_str(&format!("{which}_latest_ns={}\n", e.interval.latest_ns));
-        out.push_str(&format!(
-            "{which}_width_ns={}\n",
-            e.interval.latest_ns - e.interval.earliest_ns
-        ));
-        out.push_str(&format!("{which}_receipt={}\n", hex(&e.receipt)));
-        out.push_str(&format!("{which}_sha256={}\n", hex(&half.envelope_hash())));
+        out.push_str(&half_fields(which, half));
     }
     out
 }
