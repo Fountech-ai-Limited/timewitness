@@ -253,6 +253,20 @@ price_refuses() {
 }
 step "  and that check still refuses a precision tier" price_refuses precision "offers a reduced-precision tier"
 step "  and a price per receipt" price_refuses per-receipt "offers a price per receipt"
+# A count of checks says it came through the hosted checker, or it does not go out. Most checking
+# reaches nothing of ours, so a bare figure claims what nobody counted.
+step "A figure about how much checking happens says where it came from" node scripts/a-verification-figure-names-the-checker.mjs
+count_refuses() {
+  local said
+  if said="$(TW_COUNT_PROVE=1 node scripts/a-verification-figure-names-the-checker.mjs 2>&1)"; then
+    echo "$said"; echo "the check passed with a bare figure seeded into it, so it is not connected"; return 1
+  fi
+  case "$said" in
+    *"README.md states how much checking happens"*) ;;
+    *) echo "$said"; echo "it refused, and not for the seeded figure"; return 1 ;;
+  esac
+}
+step "  and that check still refuses a bare one" count_refuses
 step "The guard that reads the served page is still running" bash scripts/wire-guard-is-alive.sh
 step "Dependency advisories" bash scripts/check-advisories.sh
 
