@@ -204,6 +204,11 @@ pub fn usage() -> String {
     out.push_str("      --fields            the pair as lines a script reads, rather than as\n");
     out.push_str("                          words. Both halves and one of established,\n");
     out.push_str("                          undecided or contradicted\n");
+    out.push_str("      --ask               make the send half and sign it, rather than reading\n");
+    out.push_str("                          one. Needs --receipt and --key, takes no value, and\n");
+    out.push_str("                          every number in it comes out of that receipt. This\n");
+    out.push_str("                          and --answer are the two halves two machines make\n");
+    out.push_str("                          for each other, with nothing of ours in between\n");
     out.push_str("      --answer            make the receive half of this exchange and sign it,\n");
     out.push_str("                          rather than reading one. Needs --receipt and --key.\n");
     out.push_str("                          Everything the response says about your clock comes\n");
