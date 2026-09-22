@@ -34,18 +34,23 @@ pub fn run(args: &Args) -> Outcome {
     let Some(receipt_path) = args.positional.first() else {
         return refuse("send takes the receipt to send", 2);
     };
+    // A missing credential is a setting rather than a mistyped command, so it is said without the
+    // usage under it: in a job log the usage would bury the one line that matters.
     let Ok(credential) = std::env::var(CREDENTIAL) else {
-        return refuse(
-            &format!(
+        return Outcome {
+            text: render::failure(&format!(
                 "{CREDENTIAL} is not set. It holds a machine credential the app issued to this \
                  organisation. Nothing was sent, and the receipt is unaffected"
-            ),
-            2,
-        );
+            )),
+            code: 2,
+        };
     };
     let credential = credential.trim();
     if credential.is_empty() || credential.contains(char::is_whitespace) {
-        return refuse(&format!("{CREDENTIAL} does not hold a credential"), 2);
+        return Outcome {
+            text: render::failure(&format!("{CREDENTIAL} does not hold a credential")),
+            code: 2,
+        };
     }
 
     let bytes = match fs::read(receipt_path) {
