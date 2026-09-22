@@ -116,10 +116,16 @@ pub struct Crossed {
 
 /// How long to wait for an agent that is there but not answering.
 ///
-/// Two seconds. A reading is arithmetic over values already in memory behind one lock, so an agent
-/// that has not answered in two seconds is not busy, it is wedged, and a caller hanging on it
-/// forever is a build that never finishes. There is no retry: a second ask would get a second
-/// reading rather than the same one, and the honest answer to a wedged agent is to say so.
+/// Two seconds. A reading is arithmetic over values already in memory behind one lock, so two
+/// seconds is a very long time for it, and a caller hanging on a silent agent forever is a build
+/// that never finishes. There is no retry: a second ask would get a second reading rather than the
+/// same one, and the honest answer to an agent that will not answer is to say so.
+///
+/// It said "is not busy, it is wedged" until 2026-09-22, and that was wrong about the machine this
+/// product runs on. Two stamps in 942 over three days ran out of patience here while the same
+/// desktop was carrying several builds at once, and the agent was healthy either side of each. A
+/// loaded machine is enough, which is why the refusal says which of the two things happened rather
+/// than telling a reader their agent is wedged.
 pub const PATIENCE: Duration = Duration::from_secs(2);
 
 /// How far the answer may sit from this machine's own clock before the crossing refuses.
@@ -224,24 +230,46 @@ pub fn ask(
     stream.shutdown(Shutdown::Write).ok();
 
     let mut reply = Vec::with_capacity(4_096);
-    stream.read_to_end(&mut reply).map_err(|e| {
+    let read = stream.read_to_end(&mut reply);
+    let answered_at = clock.now();
+    if let Err(e) = read {
         // Two different failures and they were both reported as the agent's until 2026-09-10. A
         // read that ran out of patience says nothing about the agent: it may be busy, it may be
         // answering somebody else, and a person told "the agent stopped mid-answer" restarts a
         // healthy one. Only a connection that actually broke is the agent stopping.
-        match e.kind() {
+        //
+        // From 2026-09-22 a read that ran out of patience says which of two things happened, and
+        // the reason is a measurement rather than a preference. Over three days and 942 stamps
+        // against a resident agent, two of them ran out of patience here, both on a desktop
+        // carrying several builds at once, and the message they printed covered two cases at once:
+        // an agent that took the connection and said nothing, and an answer that started and did
+        // not finish. Those are different faults with different next steps, the first about the agent
+        // getting to the ask at all and the second about the answer crossing, and the caller can
+        // tell them apart without guessing because it knows how many bytes arrived.
+        return Err(match e.kind() {
             std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {
+                let waited = answered_at.since(asked_at) as f64 / NANOS_PER_SEC as f64;
+                let which = if reply.is_empty() {
+                    "it took the connection and sent nothing at all, so it had not got to the ask \
+                     inside that time"
+                        .to_string()
+                } else {
+                    format!(
+                        "it began answering, {} bytes arrived and the rest did not, so the answer \
+                         was cut short rather than never started",
+                        reply.len()
+                    )
+                };
                 CrossingError::Unreachable(format!(
-                    "this end waited {} s for the agent at {} and gave up. Nothing here says the \
-                     agent stopped; it may be busy or wedged. Underneath: {e}",
-                    PATIENCE.as_secs(),
+                    "this end waited {waited:.3} s for the agent at {} and gave up: {which}. \
+                     Nothing here says the agent stopped; a machine under load is enough to do \
+                     this. Underneath: {e}",
                     endpoint.address
                 ))
             }
             _ => CrossingError::Unreachable(format!("the agent stopped mid-answer: {e}")),
-        }
-    })?;
-    let answered_at = clock.now();
+        });
+    }
 
     let carrier = decode_reply(&reply).map_err(CrossingError::Wire)?;
     not_wildly_apart(&carrier, knows.local_wall)?;
@@ -320,6 +348,7 @@ pub fn widen(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use timewitness_clock::monotonic::SystemMonotonic;
     use timewitness_core::time::{NANOS_PER_MILLI, NANOS_PER_SEC};
     use timewitness_core::{
         Bound, BoundBreakdown, EpsilonBasis, FusionRule, Generations, Reading, SourceState, Stamp,
@@ -503,5 +532,70 @@ mod tests {
         let after = widen(&before, 0, 250 * NANOS_PER_MILLI).expect("no widening at all");
         assert_eq!(after.width(), before.width());
         assert_eq!(after.claim.breakdown, before.claim.breakdown);
+    }
+
+    /// A party that takes the connection and then behaves as `then` says, for long enough that the
+    /// caller's patience runs out. It hands back what `ask` said, so a test reads the refusal a
+    /// person would be shown.
+    fn ran_out_of_patience_on(then: fn(&mut std::net::TcpStream)) -> String {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+        let address = listener.local_addr().expect("the port it took").to_string();
+        let held = std::thread::spawn(move || {
+            let (mut taken, _) = listener.accept().expect("the caller's connection");
+            then(&mut taken);
+            // Held open past the caller's patience, because a party that closes the connection is
+            // the other fault entirely and this is not a test of that one.
+            std::thread::sleep(PATIENCE + Duration::from_millis(500));
+        });
+        let endpoint = Endpoint::fresh(address).expect("an endpoint");
+        let knows = WhatTheCallerKnows {
+            local_wall: UnixNanos(1_757_000_000 * NANOS_PER_SEC),
+            ceiling: 250 * NANOS_PER_MILLI,
+        };
+        let said = match ask(&endpoint, &SystemMonotonic::new(), knows) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("a party that never answered was taken as an answer"),
+        };
+        held.join().expect("the party's thread");
+        said
+    }
+
+    #[test]
+    fn a_party_that_takes_the_connection_and_says_nothing_is_told_apart_from_one_cut_short() {
+        // The fault the three-day capture caught twice in 942 stamps. Until 2026-09-22 both of
+        // these printed the same sentence, which named neither of them and told the reader their
+        // agent might be wedged.
+        let silent = ran_out_of_patience_on(|_| {});
+        assert!(
+            silent.contains("sent nothing at all"),
+            "a silent party is not named as one: {silent}"
+        );
+        assert!(
+            !silent.contains("began answering"),
+            "a silent party is described as having started: {silent}"
+        );
+
+        let cut_short = ran_out_of_patience_on(|taken| {
+            taken.write_all(&[0xd9, 0xd9, 0xf7]).expect("three bytes");
+            taken.flush().ok();
+        });
+        assert!(
+            cut_short.contains("began answering") && cut_short.contains("3 bytes"),
+            "an answer cut short is not named as one: {cut_short}"
+        );
+        assert!(
+            !cut_short.contains("sent nothing at all"),
+            "an answer that started is described as never started: {cut_short}"
+        );
+
+        // Both still say the thing that was right about the old message: this end cannot tell
+        // whether the agent stopped, so nobody is sent to restart a healthy one.
+        for said in [&silent, &cut_short] {
+            assert!(
+                said.contains("Nothing here says the agent stopped"),
+                "the refusal blames the agent: {said}"
+            );
+        }
     }
 }
