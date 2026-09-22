@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod agent_cmd;
+mod app;
 mod args;
 mod as_json;
 mod countersign_cmd;
@@ -16,6 +17,7 @@ mod key_log_cmd;
 mod order_cmd;
 mod render;
 mod roughtime_serve_cmd;
+mod send_cmd;
 mod stamp_cmd;
 mod verify_cmd;
 
@@ -72,6 +74,7 @@ fn main() -> ExitCode {
         Some("key-log") => key_log_cmd::run(&parsed),
         Some("countersign") => countersign_cmd::run(&parsed),
         Some("order") => order_cmd::run(&parsed),
+        Some("send") => send_cmd::run(&parsed),
         Some("cannot-prove") => verify_cmd::Outcome {
             text: render::cannot_prove_document(),
             code: 0,

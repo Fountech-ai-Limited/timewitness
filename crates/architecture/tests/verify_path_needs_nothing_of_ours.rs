@@ -1232,3 +1232,132 @@ version = \"1\"
         ]
     );
 }
+
+// ---------------------------------------------------------------------------
+// The app, named in one module and out of the stamp's reach
+// ---------------------------------------------------------------------------
+//
+// Added 2026-09-22, when `timewitness send` gave the command line its first call to the app. The
+// two paths above promise that checking and countersigning need nothing of ours. This makes a third
+// promise, about a path that does reach us: that reaching us is one separate act. A stamp reads a
+// local clock and signs, and a stamp that waited on the app would be a stamp we could switch off. So
+// the address is written in one module, and no subcommand but `send` can reach that module.
+
+/// The one module of the command line that names the app.
+const APP_MODULE: &str = "app";
+
+/// The app's address, as a source would spell it.
+const APP_HOST: &str = "app.timewitness.dev";
+
+/// Every subcommand that must never reach the module that talks to the app.
+const NEVER_THE_APP: &[&str] = &["stamp", "agent", "verify", "countersign", "order"];
+
+/// Each subcommand above that reaches the app module, with the chain that reached it.
+fn reaching_the_app(read: &impl Fn(&str) -> Option<String>) -> Vec<String> {
+    NEVER_THE_APP
+        .iter()
+        .filter_map(|subcommand| {
+            command_line_reach(subcommand, read)
+                .get(APP_MODULE)
+                .map(|(_, chain)| format!("`timewitness {subcommand}` reaches the app as {chain}"))
+        })
+        .collect()
+}
+
+/// Every source file of every crate, outside the one module allowed, that names the app.
+fn naming_the_app(root: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(root.join("crates"))
+        .expect("the crates folder")
+        .flatten()
+    {
+        collect(&entry.path().join("src"), &mut files);
+    }
+    let allowed = root.join(COMMAND_LINE_SRC).join(format!("{APP_MODULE}.rs"));
+    files
+        .iter()
+        .filter(|file| **file != allowed)
+        .filter(|file| {
+            fs::read_to_string(file).is_ok_and(|text| text.to_ascii_lowercase().contains(APP_HOST))
+        })
+        .map(|file| {
+            file.strip_prefix(root)
+                .unwrap_or(file)
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        })
+        .collect()
+}
+
+#[test]
+fn the_app_is_named_in_one_module_and_no_stamp_can_reach_it() {
+    let root = workspace_root();
+    let read = |path: &str| fs::read_to_string(root.join(COMMAND_LINE_SRC).join(path)).ok();
+
+    let elsewhere = naming_the_app(&root);
+    assert!(
+        elsewhere.is_empty(),
+        "{APP_HOST} is written outside {COMMAND_LINE_SRC}/{APP_MODULE}.rs, the one module allowed \
+         to name it:\n  {}",
+        elsewhere.join("\n  ")
+    );
+
+    let reached = reaching_the_app(&read);
+    assert!(
+        reached.is_empty(),
+        "a subcommand that must never wait on the app can reach the module that talks to it:\n  {}",
+        reached.join("\n  ")
+    );
+
+    // And the reader works: the one command that should reach it does.
+    assert!(
+        command_line_reach("send", read).contains_key(APP_MODULE),
+        "`timewitness send` does not reach {APP_MODULE}, so this check is reading nothing"
+    );
+}
+
+#[test]
+fn the_app_rule_refuses_a_stamp_that_reaches_the_app() {
+    let main = "mod app;
+mod quiet;
+mod send_cmd;
+mod stamp_cmd;
+
+fn main() {
+    match word {
+        Some(\"stamp\") => stamp_cmd::run(),
+        Some(\"agent\") => quiet::run(),
+        Some(\"verify\") => quiet::run(),
+        Some(\"countersign\") => quiet::run(),
+        Some(\"order\") => quiet::run(),
+        Some(\"send\") => send_cmd::run(),
+        None => {}
+    }
+}
+";
+    let honest = in_memory(&[
+        ("main.rs", main),
+        ("app.rs", "pub fn post() {}\n"),
+        ("quiet.rs", "pub fn run() {}\n"),
+        ("send_cmd.rs", "pub fn run() { crate::app::post(); }\n"),
+        ("stamp_cmd.rs", "pub fn run() {}\n"),
+    ]);
+    assert!(reaching_the_app(&honest).is_empty());
+
+    // A stamp that files its own receipt as it goes, which is the shape this exists to refuse.
+    let filing_stamp = in_memory(&[
+        ("main.rs", main),
+        ("app.rs", "pub fn post() {}\n"),
+        ("quiet.rs", "pub fn run() {}\n"),
+        ("send_cmd.rs", "pub fn run() { crate::app::post(); }\n"),
+        ("stamp_cmd.rs", "pub fn run() { crate::send_cmd::run(); }\n"),
+    ]);
+    let refused = reaching_the_app(&filing_stamp);
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert!(refused[0].contains("timewitness stamp"), "{refused:?}");
+    assert!(
+        refused[0].contains("send_cmd"),
+        "the chain is named: {refused:?}"
+    );
+}

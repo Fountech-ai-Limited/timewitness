@@ -51,6 +51,9 @@ const TAKES_A_VALUE: &[&str] = &[
     "--role",
     "--retire",
     "--at",
+    "--event",
+    "--repository",
+    "--to",
 ];
 
 /// What each subcommand accepts, and how many things it takes that are not options.
@@ -127,6 +130,7 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
         &["--anchors", "--no-anchors", "--min-width", "--fields"],
         2,
     ),
+    ("send", &["--event", "--repository", "--to"], 1),
     ("cannot-prove", &[], 0),
 ];
 
