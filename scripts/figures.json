@@ -259,7 +259,7 @@
    "unit": "ms",
    "precision": "0.001 ms",
    "whose": "ours",
-   "conditions": "an ordinary desktop on an ordinary connection, 2026-09-09 at 21:41, sixteen polling rounds, nine public servers of three kinds behind six operators",
+   "conditions": "an ordinary desktop on an ordinary connection, 2026-09-09 at 21:41, sixteen polling rounds, nine public servers of three kinds behind six operators, signed under a ceiling of 30 s, the one-shot default until 2026-09-15",
    "evidence": {
     "kind": "receipt",
     "artefact": "crates/verify/tests/data/a-real-stamp/receipt.cbor",

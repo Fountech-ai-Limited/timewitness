@@ -98,7 +98,7 @@ was checked and states no accuracy, and a witness was checked and bounds the mom
 
 On the receipt committed at `crates/verify/tests/data/a-real-stamp/` that line says a not-later-than
 signature was checked, that its authority states no accuracy of its own, and that nothing outside
-bounds the moment from above, round a width of 153.875 ms that is the signer's own claim. The same
+bounds the moment from above, round a width of 153.875 ms that is the signer's own claim. The ceiling that receipt was signed under was 30 s until 2026-09-15, and the verifier prints it off the receipt itself. The same
 goes for the one at `crates/verify/tests/data/a-backdated-receipt/`, whose attestations are all
 genuine and whose reading was moved back three years. Both pass every check, and until 2026-09-15
 both printed the same first line and nothing under it. Until 2026-09-19 both printed a bracket,

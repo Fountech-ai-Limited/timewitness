@@ -2858,6 +2858,72 @@ def stale_excuses(excused, surfaces_read):
             for e in excused if e['used'] == 0 and e['surfaces'] <= surfaces_read]
 
 
+def ceiling_of(full):
+    """The widest bound the agent that signed this receipt would sign for, in words, read off the
+    receipt through the verifier.
+
+    The number is not written here. The committed receipt was signed under a ceiling of 30 s, the
+    one-shot default until 2026-09-15, and a reader who reproduces the width without that condition
+    reproduces it under a ceiling fifteen times the shipped one. The ceiling moves when the fixture
+    is re-taken, so a copy of it in this file would be the next figure to go stale beside the thing
+    it describes, which is the fault this whole rule is about.
+    """
+    passed, failed, text = verify_receipt(full)
+    if not passed:
+        raise Unreadable(f'{full.name} does not verify, so nothing can be read off it: {", ".join(sorted(failed))}')
+    said = re.search(r'signed for nothing wider than ([0-9]+(?:\.[0-9]+)?) (ms|s)\b', text)
+    if not said:
+        raise Unreadable(f'timewitness verify prints no ceiling for {full.name}, so this rule has nothing to '
+                         f'hold a surface to and is not going to pass by saying so')
+    return said.group(1), said.group(2)
+
+
+def the_ceiling_is_stated(read_from):
+    """Every surface quoting the committed receipt's width says what ceiling the run was signed
+    under. Found on 2026-09-18 by a reader trying to reproduce the width.
+
+    A width is a figure, and this product's first rule about numbers is that a figure is quoted
+    with the conditions it was measured under. The ceiling is one of those conditions and it was
+    the one nobody wrote down: that receipt was signed under 30 s, the default for the one-shot
+    path until 2026-09-15, which is fifteen times what the same command signs under today. Five of
+    the seven surfaces quoting the width said nothing about it.
+
+    The rule is over a surface rather than over a sentence, and deliberately. The limitation list
+    states the ceiling once, in the item about ceilings, three hundred lines from where it quotes
+    the width, and that is a document that states its condition rather than one that hides it. A
+    per-sentence rule would have refused both copies of that list, and the site's copy moves only
+    when the public address moves, so this check would have stood red on a surface that was already
+    honest until somebody shipped a release to fix it.
+    """
+    try:
+        figures = verifier_fields(ROOT / COMMITTED_RECEIPT)
+        in_words = figures.get('width_in_words', '')
+        width = in_words.split()[0]
+        ceiling, ceiling_unit = ceiling_of(ROOT / COMMITTED_RECEIPT)
+    except (Unreadable, OSError, IndexError) as e:
+        return [f'{COMMITTED_RECEIPT}: the receipt every surface points a reader at could not be read, so '
+                f'whether those surfaces state its ceiling is unknown and this run has not checked it: {e}']
+    if not width:
+        return [f'{COMMITTED_RECEIPT}: timewitness verify prints no width in words for it']
+    # Both spellings of the same number, because a surface writes 30 s where the verifier writes
+    # 30.000 s, and holding prose to the verifier's own decimal places would be a rule about
+    # typography.
+    forms = {f'{ceiling} {ceiling_unit}'}
+    if '.' in ceiling:
+        forms.add(f'{ceiling.rstrip("0").rstrip(".")} {ceiling_unit}')
+    quotes, states = set(), set()
+    for where, sentence in read_from:
+        surface = surface_of(where)
+        if width in sentence:
+            quotes.add(surface)
+        if 'ceiling' in sentence.lower() and any(form in sentence for form in forms):
+            states.add(surface)
+    return [f'{surface}: quotes the committed receipt at {in_words} '
+            f'and never says it was signed under a ceiling of {sorted(forms)[0]}, which is the condition a reader '
+            f'reproducing that width today would not be under'
+            for surface in sorted(quotes - states)]
+
+
 # Seeds, each the sentence a fault took on a served or shipped surface before 2026-09-15 or a
 # paraphrase of it, and each has to be refused by the rule it is here for. The paraphrases were
 # added the evening of 2026-09-15, when the rotation found every rule matched only the sentence
@@ -3172,6 +3238,39 @@ def every_attribute_a_reader_is_given_is_read(policy):
     run_on = page_text('<ul><li>signed evidence from outside parties</li><li>our own bound</li></ul>')
     if len(sentences(run_on)) < 2:
         faults.append('two list items were read as one sentence, so a block element is not ending one')
+    return faults
+
+
+def a_surface_hiding_the_ceiling_is_refused():
+    """Whether a surface quoting the committed receipt's width without its ceiling is refused.
+
+    Three probes, because the rule has three ways to be wrong and only the first is obvious. A
+    surface that quotes the width and says nothing has to be named. A surface that states the
+    ceiling anywhere in itself has to pass, since the rule is over a surface and not over a
+    sentence, and that is the half that keeps the limitation list green. And a surface that states
+    some other ceiling has to be refused, because the number is read off the receipt and a surface
+    carrying the agent's 250 ms instead has not stated the condition this width was taken under.
+    """
+    faults = []
+    width = 'a bound of 153.875 ms on the receipt committed in this repository'
+    probes = [
+        ('says nothing', [('a made-up surface', width)], True),
+        ('states it elsewhere in itself',
+         [('a made-up surface', width),
+          ('a made-up surface', 'The ceiling it was signed under was 30 s until 2026-09-15.')], False),
+        ('states another ceiling',
+         [('a made-up surface', width),
+          ('a made-up surface', 'The ceiling it was signed under was 250 ms.')], True),
+    ]
+    for what, read_from, refuse in probes:
+        try:
+            said = the_ceiling_is_stated(read_from)
+        except (Unreadable, OSError) as e:
+            return [f'the ceiling rule could not be run against a made-up surface: {e}']
+        if refuse and not said:
+            faults.append(f'a surface that quotes the committed receipt and {what} passed the ceiling rule')
+        if not refuse and said:
+            faults.append(f'a surface that quotes the committed receipt and {what} was refused: {said[0]}')
     return faults
 
 
@@ -4805,7 +4904,8 @@ def self_test(policy):
               + every_attribute_a_reader_is_given_is_read(policy)
               + every_figure_is_read(policy) + the_register_holds_a_figure_to_its_subject(policy)
               + the_score_refuses_a_fitted_set(policy)
-              + the_score_refuses_a_fitted_set_however_it_is_written(policy))
+              + the_score_refuses_a_fitted_set_however_it_is_written(policy)
+              + a_surface_hiding_the_ceiling_is_refused())
     for rule, seed in SEEDS:
         faults = judge(seed, policy)
         if not faults:
@@ -4915,6 +5015,7 @@ def main(argv):
     figure_faults, figures = unclaimed(read_from, policy, landing, excused, known)
     problems += figure_faults
     problems += stale_excuses(excused, {surface_of(w) for w, _ in read_from})
+    problems += the_ceiling_is_stated(read_from)
     for p in problems:
         print('policy sentences: ' + p, file=sys.stderr)
     said = (f'floor {policy["floor"]}, {policy["roughtime_operators"]} Roughtime operators, agent '
