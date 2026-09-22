@@ -250,6 +250,11 @@ No account, nothing of ours involved, and no network. `bash scripts/build-verifi
 same verifier as one HTML file that runs from your own disk. What it checks and what it deliberately
 does not is `docs/verifier.md`.
 
+Because a check here reaches nothing of ours, almost none of it can be counted, and none of it is
+guessed at. What may ever be counted, and how such a figure may be stated, is
+`docs/counting-verifications.md`, held by `scripts/a-verification-figure-names-the-checker.mjs`
+before there is anything to count.
+
 ## Stamping a build
 
 One line in a workflow file:

@@ -211,6 +211,20 @@ jobs:
             printf '%s\n' "$said" | grep -qF "offers ${mode#*:}" || { printf '%s\n' "$said"; echo "it refused, and not for ${mode#*:}"; exit 1; }
           done
 
+      - name: A figure about how much checking happens says where it came from
+        # Most checking reaches nothing of ours and cannot be counted, so a count of verifications
+        # with no words saying where it came from claims every one of them. Nothing states such a
+        # figure today, which is the cheapest moment for this. The second run is the check
+        # backwards, with a refused sentence added to the README as read.
+        run: |
+          node scripts/a-verification-figure-names-the-checker.mjs
+          if said="$(TW_COUNT_PROVE=1 node scripts/a-verification-figure-names-the-checker.mjs 2>&1)"; then
+            echo "$said"; echo "the check passed with a bare figure seeded into it, so it is not connected"; exit 1
+          fi
+          echo "$said" | grep -qF "README.md states how much checking happens" || {
+            echo "$said"; echo "it refused, and not for the seeded figure"; exit 1
+          }
+
       - name: The guard that reads the served page is still running
         # The other half of splitting the surfaces check, and the reason the step above may finish
         # without reading the site. A scheduled workflow that GitHub has disabled for inactivity
