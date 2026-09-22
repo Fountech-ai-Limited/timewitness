@@ -131,6 +131,7 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
         2,
     ),
     ("send", &["--event", "--repository", "--to"], 1),
+    ("status", &["--agent"], 0),
     ("cannot-prove", &[], 0),
 ];
 

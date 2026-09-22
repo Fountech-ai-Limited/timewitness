@@ -250,6 +250,14 @@ pub fn usage() -> String {
     out.push_str("      --event <word>      what happened, such as build or test, to search by\n");
     out.push_str("      --repository <name> the repository it happened in, owner/name\n");
     out.push_str("      --to <address>      another address of the app, such as a test one\n\n");
+    out.push_str("  timewitness status --agent <file>\n");
+    out.push_str(
+        "      Whether the agent is up, and how wide its bound is right now: the width,\n",
+    );
+    out.push_str("      how many sources it rests on and how long since it last heard from one.\n");
+    out.push_str("      It asks the agent what a stamp asks it, signs nothing and writes\n");
+    out.push_str("      nothing, and it says so plainly where no agent is running.\n\n");
+    out.push_str("      --agent <file>      the endpoint file the agent wrote\n\n");
     out.push_str("  timewitness cannot-prove\n");
     out.push_str("      What this product cannot prove, in full. It ships with the claim rather\n");
     out.push_str("      than under it.\n\n");

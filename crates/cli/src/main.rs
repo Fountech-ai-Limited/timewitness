@@ -19,6 +19,7 @@ mod render;
 mod roughtime_serve_cmd;
 mod send_cmd;
 mod stamp_cmd;
+mod status_cmd;
 mod verify_cmd;
 
 use std::process::ExitCode;
@@ -75,6 +76,7 @@ fn main() -> ExitCode {
         Some("countersign") => countersign_cmd::run(&parsed),
         Some("order") => order_cmd::run(&parsed),
         Some("send") => send_cmd::run(&parsed),
+        Some("status") => status_cmd::run(&parsed),
         Some("cannot-prove") => verify_cmd::Outcome {
             text: render::cannot_prove_document(),
             code: 0,
