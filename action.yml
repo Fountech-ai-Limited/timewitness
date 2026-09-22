@@ -109,6 +109,16 @@ inputs:
       image applies them.
     required: false
     default: ""
+  send:
+    description: >-
+      Also give a copy of the receipt to the app that keeps an organisation's receipts, as a step
+      after the stamp. It reads a machine credential from the TIMEWITNESS_MACHINE_CREDENTIAL
+      environment variable, which the workflow sets from a secret, and sends the receipt and the
+      figures it states, never the file it stamps. A send that fails is reported as a warning and
+      never fails the job: the receipt is already written, and it checks the same with the free
+      verifier whether or not the app holds a copy.
+    required: false
+    default: "false"
 
 outputs:
   receipt:
@@ -161,6 +171,23 @@ runs:
         TW_IMAGE: ${{ inputs.image }}
         TW_ACTION_PATH: ${{ github.action_path }}
       run: bash "${{ github.action_path }}/scripts/action-stamp.sh"
+
+    # Its own step, after the stamp, and one that cannot fail the job. The stamp has already
+    # finished and written the receipt by the time this runs, so nothing here can change it.
+    - name: Send the receipt to the app
+      if: inputs.send == 'true'
+      shell: bash
+      env:
+        TW_RECEIPT: ${{ steps.stamp.outputs.receipt }}
+        TW_EVENT: ${{ inputs.event }}
+        TW_REPOSITORY: ${{ github.repository }}
+        TW_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        binary="$TW_ACTION_PATH/target/release/timewitness"
+        [ -x "$binary" ] || binary="$TW_ACTION_PATH/target/release/timewitness.exe"
+        if ! "$binary" send "$TW_RECEIPT" --event "$TW_EVENT" --repository "$TW_REPOSITORY"; then
+          echo "::warning title=TimeWitness::The receipt was not sent to the app. It is written and unaffected, and this job carries on."
+        fi
 
 branding:
   icon: clock

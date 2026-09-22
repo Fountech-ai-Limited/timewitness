@@ -26,6 +26,10 @@ timewitness-verify = { workspace = true }
 # that did not ship.
 timewitness-roughtime-server = { workspace = true }
 getrandom = "0.2"
+# What `timewitness send` speaks HTTPS with. Both are already linked for NTS, so this names them
+# for the command line's own use rather than bringing anything new into the build.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+webpki-roots = "1"
 
 [lints]
 workspace = true

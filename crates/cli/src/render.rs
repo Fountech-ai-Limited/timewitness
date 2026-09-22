@@ -240,6 +240,16 @@ pub fn usage() -> String {
     out.push_str("      --fields            the reading as one field per line, for a script.\n");
     out.push_str("                          One of established, undecided, contradicted or\n");
     out.push_str("                          not-sayable, and whether it stands\n\n");
+    out.push_str("  timewitness send <receipt> [options]\n");
+    out.push_str("      Give a copy of a receipt this machine signed to the app that keeps an\n");
+    out.push_str("      organisation's receipts. The machine credential is read from\n");
+    out.push_str("      TIMEWITNESS_MACHINE_CREDENTIAL and never from the command line. What\n");
+    out.push_str("      travels is the receipt and the figures it states; the thing it stamps\n");
+    out.push_str("      never does. Sending is separate from stamping, so a send that fails\n");
+    out.push_str("      leaves the receipt where it was and changes nothing about it.\n\n");
+    out.push_str("      --event <word>      what happened, such as build or test, to search by\n");
+    out.push_str("      --repository <name> the repository it happened in, owner/name\n");
+    out.push_str("      --to <address>      another address of the app, such as a test one\n\n");
     out.push_str("  timewitness cannot-prove\n");
     out.push_str("      What this product cannot prove, in full. It ships with the claim rather\n");
     out.push_str("      than under it.\n\n");
