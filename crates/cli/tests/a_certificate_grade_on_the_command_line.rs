@@ -54,14 +54,32 @@ fn verify(anchors: &Path, extra: &[&str]) -> (i32, String) {
 }
 
 #[test]
-fn a_receipt_witnessed_before_certification_began_prints_its_version_0_verdict_first_and_exits_0() {
+fn a_subject_witnessed_before_certification_began_does_not_date_the_signing() {
+    // The committed receipt's witness is over its subject, which whoever holds a key chooses, so it
+    // says nothing about when the receipt was signed. Until 2026-09-23 this run printed "Signed
+    // before certification began" off it and exited 0. The grade now needs a checked beacon and a
+    // witness after it, and this reader holds DigiCert's key alone, so nothing places the signing.
     let anchors = anchors_file("before", &[DIGICERT, "certification 1820000000000000000"]);
     let (code, text) = verify(&anchors, &[]);
-    assert_eq!(code, 0, "{text}");
-    let first = text.lines().next().expect("a first line");
-    assert!(first.starts_with("This receipt holds up"), "{text}");
-    assert!(text.contains("Signed before certification began"), "{text}");
-    assert!(!text.contains("TimeWitness certificate"), "{text}");
+    assert_eq!(code, 1, "{text}");
+    let mut lines = text.lines();
+    assert_eq!(
+        lines.next(),
+        Some(
+            "Not a TimeWitness certificate: nothing outside this receipt places when it was signed"
+        ),
+        "{text}"
+    );
+    assert!(
+        lines
+            .next()
+            .is_some_and(|l| l.starts_with("This receipt holds up")),
+        "{text}"
+    );
+    assert!(
+        !text.contains("Signed before certification began"),
+        "{text}"
+    );
 
     let anchors = anchors_file(
         "before-fields",
@@ -69,10 +87,19 @@ fn a_receipt_witnessed_before_certification_began_prints_its_version_0_verdict_f
     );
     let (_, fields) = verify(&anchors, &["--fields"]);
     assert!(
-        fields.contains("certificate=before-certification\n"),
+        fields.contains(
+            "certificate=not-a-certificate
+"
+        ),
         "{fields}"
     );
-    assert!(fields.contains("holds=true\n"), "{fields}");
+    assert!(
+        fields.contains(
+            "holds=false
+"
+        ),
+        "{fields}"
+    );
 }
 
 #[test]

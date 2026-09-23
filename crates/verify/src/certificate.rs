@@ -27,9 +27,14 @@
 //! whose first head carries a beacon round at or after C and a timestamp token over the head. A log
 //! stating a different C is refused, and so is a log certifying a window that starts before C.
 //!
-//! A receipt carrying a verified witness dated before C was signed before certification began. It
-//! is graded as version 0 grades it, and the verifier says nothing about whose key signed it. A
-//! beacon never counts for this, because an old round is available to anybody at any time.
+//! A receipt carrying a verified witness over its own signature dated before C was signed before
+//! certification began. It is graded as version 0 grades it, and the verifier says nothing about
+//! whose key signed it. A witness over the subject never counts for this, because it dates the
+//! subject and the signer chose the subject; a beacon never counts either, because an old round is
+//! available to anybody at any time, and a checked beacon at or after C refuses it outright. So a
+//! receipt with no witness over its signature, which is every version 0 receipt, is graded on the
+//! key log once certification has begun, and a key that was never certified reads as not a
+//! TimeWitness certificate.
 //!
 //! # Whose statement it is
 //!
@@ -291,13 +296,20 @@ fn not_later(evidence: &Verified) -> Option<(Instant, Places)> {
         .map(|i| (i, Places::TheSubject))
 }
 
-/// Whether any checked witness, over the subject or the signature, dates the receipt before C.
+/// Whether a checked witness over the receipt's own signature dates the signing before C.
+///
+/// Only that witness places the signing. A witness over the subject says the subject existed by
+/// then, and whoever holds a key chooses the subject: until 2026-09-23 this counted one, so an old
+/// timestamp token over a payload let a key nobody certified sign that payload after C and be graded
+/// as signed before it. And a checked beacon at or after C refuses the grade outright, whatever any
+/// witness says, because its value is inside the signature and the signing cannot have come before it.
 fn witnessed_before(evidence: &Verified, began: UnixNanos) -> Option<Instant> {
+    if evidence.bracket().not_earlier.is_some_and(|at| at >= began) {
+        return None;
+    }
     evidence
-        .entries
+        .signature_witness
         .iter()
-        .filter(|e| e.role == EvidenceRole::NotLaterThan)
-        .chain(evidence.signature_witness.iter())
         .filter_map(later_instant)
         .filter(|i| i.at < began)
         .min_by_key(|i| i.at)
