@@ -89,14 +89,26 @@ witness dated before that beacon is refused.
 **The unprotected header.** A version 1 header holds the key identifier and at most this one entry.
 Anything else is refused, as in version 0.
 
-**What this costs the rule that a receipt is one byte string.** The witness sits outside the
-signature, so a holder can drop it, or swap in a later genuine token over the same signature, without
-the agent's key. Each is a different file with a different chain link, and each verifies to a
-different report: with no witness, or with a later one. Neither can move the signing earlier, since a
-token cannot be dated before the signature it is over existed. So a version 1 receipt has one spelling
-per witness rather than exactly one, and the next receipt's `prev`, which is the SHA-256 of the whole
-file the signer wrote, pins which one that was. Version 0 is untouched: its header holds the key
-identifier and nothing else.
+**The hash of a version 1 receipt is of the receipt as its agent signed it.** The witness sits
+outside the signature, so a holder can drop it, or swap in a later genuine token over the same
+signature, without the agent's key. A timestamp token also carries plenty its own signature does not
+cover: the request stored beside it, certificates besides the one a reader pins, fields nobody reads.
+Until 2026-09-23 the chain link was the SHA-256 of the whole file, and on that day a third of the
+single-bit flips inside the committed receipt's witness still verified, each as a file with a hash of
+its own, so a holder with no key could fork or break a chain.
+
+So the chain link, the next receipt's `prev` and the hash the verifier prints are the SHA-256 of the
+file with the `signature_witness` entry taken out of the unprotected header, which is the file the
+agent wrote before the witness came back. Every other byte of that form is covered by the signature
+or is canonical CBOR the decoder re-encodes and compares, so it has exactly one spelling, as version 0
+does. Dropping the witness, swapping it or respelling it changes what the verifier reports about the
+signing and never which receipt it is. None of them can move the signing earlier, since a token
+cannot be dated before the signature it is over existed.
+
+What this gives up is the property version 0 chose its link for: for a version 1 receipt carrying a
+witness, the hash is not what `sha256sum` prints of the file, and the verifier says so on the line
+that prints it. A receipt with no witness, and every version 0 receipt, still hashes as the file it
+is. Version 0 is untouched: its header holds the key identifier and nothing else.
 
 ## What version 1 still does not do
 

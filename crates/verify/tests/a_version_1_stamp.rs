@@ -96,8 +96,9 @@ fn a_witness_altered_by_one_byte_refuses_the_receipt() {
 
 #[test]
 fn dropping_the_witness_leaves_a_receipt_that_places_only_its_subject() {
-    // What a holder without the key can do. The result verifies, reports no witness, and is a
-    // different file with a different chain link, so it is never the receipt the signer wrote.
+    // What a holder without the key can do. The result verifies and reports no witness. It is the
+    // file the signer wrote before the witness came back, so it is the same receipt with the same
+    // chain link, and what it has lost is only what it can say about when it was signed.
     let header: Vec<(Value, Value)> = header_of(&receipt())
         .into_iter()
         .filter(|(k, _)| k.as_text() != Some(SIGNATURE_WITNESS))
@@ -105,7 +106,7 @@ fn dropping_the_witness_leaves_a_receipt_that_places_only_its_subject() {
     let dropped = with_header(&receipt(), header);
     let (_, report) = open_with(&dropped, &published()).expect("still a receipt");
     assert_eq!(report.signature_witness, None);
-    assert_ne!(
+    assert_eq!(
         timewitness_receipt::chain_link(&dropped),
         timewitness_receipt::chain_link(&receipt())
     );

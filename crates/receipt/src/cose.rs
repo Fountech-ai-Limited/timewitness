@@ -329,6 +329,33 @@ pub fn with_signature_witness(signed: &[u8], blob: &[u8]) -> Result<Vec<u8>, Rec
     Ok(cbor::encode(&Value::Array(parts)))
 }
 
+/// The receipt as its agent signed it: the same envelope with the witness over its signature taken
+/// out of the unprotected header, or `None` where there is none to take out or the bytes are not an
+/// envelope of that shape.
+///
+/// This is the inverse of [`with_signature_witness`], so for a receipt that function made it gives
+/// back the bytes it was handed. The decoder refuses any spelling that is not canonical, and the
+/// header's order is the canonical one, so taking an entry out leaves the others as they were.
+#[must_use]
+pub fn without_signature_witness(signed: &[u8]) -> Option<Vec<u8>> {
+    let envelope = cbor::decode(signed).ok()?;
+    let parts = envelope.as_array().filter(|parts| parts.len() == 4)?;
+    let Value::Map(header) = &parts[1] else {
+        return None;
+    };
+    let kept: Vec<(Value, Value)> = header
+        .iter()
+        .filter(|(k, _)| k.as_text() != Some(SIGNATURE_WITNESS))
+        .cloned()
+        .collect();
+    if kept.len() == header.len() {
+        return None;
+    }
+    let mut parts = parts.to_vec();
+    parts[1] = Value::Map(kept);
+    Some(cbor::encode(&Value::Array(parts)))
+}
+
 /// A receipt whose signature checks, and the witness over that signature where it carries one, as
 /// the witness's blob beside the signature bytes it has to be about.
 type Opened = (Receipt, Option<(Vec<u8>, Vec<u8>)>);
@@ -382,14 +409,16 @@ fn read_and_check_signature(bytes: &[u8]) -> Result<Opened, ReceiptError> {
 /// because the signed copy of the key is the one that counts. That reading is correct about what the
 /// receipt means and it is the wrong rule for a format that chains by hashing bytes.
 ///
-/// **Version 1 allows one entry more, the witness over the signature, and gives up exactly one
-/// thing for it.** A holder can drop the witness, or swap in a later genuine token over the same
-/// signature, without the agent's key. Each is a different file with a different chain link, and each
-/// verifies to a different report, so none is a second spelling of the same receipt: the one without
-/// is a receipt with no witness, and the later one is a receipt witnessed later. Neither can move the
-/// signing earlier, because a token cannot be dated before the signature it is over existed. The next
-/// receipt's link, the hash of the whole file its signer wrote, pins which one that was. The blob is
-/// returned for the caller to check, since checking it needs the reader's anchors.
+/// **Version 1 allows one entry more, the witness over the signature, and it is the one part of the
+/// file that is not one spelling.** A holder can drop the witness, swap in a later genuine token over
+/// the same signature, or flip any of the many bits of a token its own signature does not cover, all
+/// without the agent's key; on 2026-09-23 a third of the single-bit flips inside the committed
+/// witness still verified. So the chain link is not taken over it: [`crate::chain_link`] hashes the
+/// receipt with this entry set aside, which is the file the agent wrote, and that form has exactly
+/// one spelling. What a respelled witness changes is what a reader is told about the signing, never
+/// which receipt it is, and nothing can move the signing earlier, because a token cannot be dated
+/// before the signature it is over existed. The blob is returned for the caller to check, since
+/// checking it needs the reader's anchors.
 fn check_unprotected_header(
     header: &Value,
     receipt: &Receipt,

@@ -271,9 +271,12 @@ where the command line itself was wrong.
 - It does not check that a receipt sits in a chain, which is the point above. What it does check is
   that the receipt in front of it has one spelling: the COSE unprotected header is outside the
   signature by design, so the format pins it to the single key identifier entry and a restated
-  receipt is refused rather than accepted with a chain link of its own. The digest the verifier
-  prints is therefore the chain link, and two readers holding what they believe is the same receipt
-  can compare one number.
+  receipt is refused rather than accepted with a chain link of its own. A version 1 receipt may
+  carry one entry more, a witness over its signature, and anybody holding the file can respell
+  that, so the digest is taken with it set aside, over the receipt as its agent signed it. The
+  digest the verifier prints is therefore the chain link, and two readers holding what they believe
+  is the same receipt can compare one number. For a version 1 receipt carrying a witness it is not
+  what `sha256sum` prints of the file, and the verifier says so beside it.
 - It does not chain a timestamp authority's certificate to a commercial root. It pins a leaf, which
   is narrower than trusted.
 
