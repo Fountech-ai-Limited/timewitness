@@ -412,8 +412,11 @@ fn committed(hex: &str) -> Vec<u8> {
 }
 
 #[test]
-fn the_committed_receipts_were_signed_before_certification_and_never_say_certificate() {
-    // Certification is put a year after both, as the release that fixes it will.
+fn the_committed_version_0_receipts_are_not_dated_before_certification_and_never_held() {
+    // Certification is put a year after both. Neither carries a witness over its own signature,
+    // which only version 1 can, so nothing outside either one dates its signing: the witness each
+    // carries is over its subject, and whoever holds a key chooses the subject. Until 2026-09-23
+    // this test said both were signed before certification began, on that witness alone.
     let mut published = anchor_file::published();
     published.certification_began = Some(UnixNanos(1_820_000_000 * SECOND));
     let real = include_bytes!("data/a-real-stamp/receipt.cbor");
@@ -426,30 +429,20 @@ fn the_committed_receipts_were_signed_before_certification_and_never_say_certifi
         let a = verify(&bytes, subject, &published, &Floor::default());
         assert!(a.accepted(), "{name}: {:?}", a.refusal());
         match &a.certificate {
-            Some(Grade::BeforeCertification { witnessed, .. }) => {
-                assert!(
-                    witnessed.on_its_own_clock,
-                    "{name}: a shipped authority states no accuracy"
-                );
+            Some(Grade::BeforeCertification { .. }) => {
+                panic!("{name}: a witness over the subject dated the signing")
             }
-            other => panic!("{name}: {other:?}"),
+            Some(Grade::Held { .. }) => panic!("{name}: held with no key log"),
+            Some(_) => {}
+            None => panic!("{name}: certification has begun, so there is a grade"),
         }
-        assert!(a.holds(), "{name}");
-        assert_eq!(
-            a.headline(),
-            a.verdict(),
-            "{name}: the version 0 verdict is the first line"
-        );
-        let detail = a.certificate.as_ref().unwrap().detail();
+        assert!(!a.holds(), "{name}");
         assert!(
-            detail.starts_with("Signed before certification began"),
-            "{name}"
+            a.headline()
+                .starts_with("Not checked as a TimeWitness certificate"),
+            "{name}: {}",
+            a.headline()
         );
-        assert!(
-            !detail.contains("TimeWitness certificate"),
-            "{name}: {detail}"
-        );
-        assert!(!a.headline().contains("TimeWitness certificate"), "{name}");
     }
 }
 
