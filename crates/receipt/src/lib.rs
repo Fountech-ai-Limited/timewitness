@@ -31,8 +31,8 @@ pub mod value;
 
 pub use anchors::{RoughtimeServerKey, TrustAnchors};
 pub use cose::{
-    check_signature, envelope_parts, open, open_with, signature_of, with_signature_witness,
-    without_signature_witness, AgentKey, Envelope, SIGNATURE_WITNESS,
+    check_signature, enrolment_message, envelope_parts, open, open_with, signature_of,
+    with_signature_witness, without_signature_witness, AgentKey, Envelope, SIGNATURE_WITNESS,
 };
 pub use error::ReceiptError;
 pub use report::{Bracket, EntryReport, Outcome, Verified};

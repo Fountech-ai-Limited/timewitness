@@ -342,6 +342,13 @@ pub fn run(args: &Args) -> Outcome {
         Err(_) => return fail("a sha-256 hash is 32 bytes"),
     };
 
+    // Before a key is made or a source is asked. Where a certificate is needed and not held, nothing
+    // is stamped, and a refusal after `key_from` would leave a key on disk for a run that never
+    // happened. The certificate is a file fetched earlier; reading it opens no connection.
+    if let Err(missing) = a_certificate_where_one_is_needed(args) {
+        return uncertified(&missing, args.value("--key").unwrap_or("<key>"));
+    }
+
     let key = match key_from(args) {
         Ok(key) => key,
         Err(text) => return fail(&text),
@@ -892,54 +899,44 @@ fn entry(role: Role, scheme: &str, attestation: &Attestation, detail: String) ->
 /// as this agent.
 fn key_from(args: &Args) -> Result<AgentKey, String> {
     let path = args.required("--key").map_err(|e| e.0)?;
-    if let Some(key) = crate::key_file::key_at(path)? {
-        return Ok(key);
-    }
-
-    let mut seed = [0u8; 32];
-    getrandom::getrandom(&mut seed)
-        .map_err(|e| format!("this machine would not give us random bytes: {e}"))?;
-    write_private(Path::new(path), &seed)
-        .map_err(|e| format!("{path} could not be written: {e}"))?;
-    Ok(AgentKey::from_seed(&seed))
+    crate::key_file::key_or_new(path)
 }
 
-/// Write a private key, readable and writable by its owner and nobody else.
+/// Whether this run may sign, where a certificate is asked for.
 ///
-/// The permission goes on at creation rather than after the write, because a `chmod` after the fact
-/// leaves a window with the bytes on disk and the world able to read them. On a platform with no
-/// mode bits this is an ordinary create and the file inherits whatever the directory gives it, which
-/// is stated here rather than left to be discovered.
-///
-/// `create_new` rather than `create`. Reaching here means the file could not be read, which is
-/// usually because it is not there and could be because somebody else is writing it; either way,
-/// writing over a key would orphan every receipt already signed with the old one.
-fn write_private(path: &Path, seed: &[u8; 32]) -> std::io::Result<()> {
-    use std::io::Write;
+/// One is asked for once certification has begun, which is the cutoff the verifier holds, or where
+/// the caller names a certificate file. Until then nothing can be certified and nothing is asked.
+fn a_certificate_where_one_is_needed(args: &Args) -> Result<(), String> {
+    let key_path = args.required("--key").map_err(|e| e.0)?;
+    let Some(certificate) = crate::certificate_file::needed(
+        timewitness_verify::anchor_file::CERTIFICATION_BEGAN,
+        args.value("--certificate"),
+        key_path,
+    ) else {
+        return Ok(());
+    };
+    let key = crate::key_file::key_at(key_path)?.ok_or_else(|| {
+        format!("there is no key at {key_path}, so there is no certificate for it")
+    })?;
+    let public = render::hex(&key.public_key_bytes());
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "this machine's clock reads before 1970".to_string())?
+        .as_nanos();
+    let now = i128::try_from(now)
+        .map_err(|_| "this machine's clock is past any certificate".to_string())?;
+    crate::certificate_file::current(&certificate, &public, now).map(|_| ())
+}
 
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            let mut builder = fs::DirBuilder::new();
-            builder.recursive(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::DirBuilderExt;
-                builder.mode(0o700);
-            }
-            builder.create(parent)?;
-        }
-    }
-
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(seed)?;
-    file.sync_all()
+/// A stamp refused for want of a certificate. It names what is missing and the command that fetches
+/// one, and says that no receipt was written, which is the part a job log has to make plain.
+fn uncertified(missing: &str, key_path: &str) -> Outcome {
+    fail(&format!(
+        "no receipt was written: {missing}. A receipt is a TimeWitness certificate only where the \
+         app certified the key that signed it, so a stamp signs only under a current certificate \
+         for its key. Fetch one first with `timewitness certificate --key {key_path}`, which asks \
+         the app for it; a stamp never does"
+    ))
 }
 
 fn fail(what: &str) -> Outcome {
@@ -995,7 +992,7 @@ mod tests {
 
         let mut seed = [0u8; 32];
         seed[0] = 7;
-        write_private(&path, &seed).expect("a key in a folder that was not there");
+        crate::key_file::write_private(&path, &seed).expect("a key in a folder that was not there");
 
         assert_eq!(fs::read(&path).unwrap().len(), 32);
 
@@ -1019,8 +1016,8 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("agent.key");
 
-        write_private(&path, &[1u8; 32]).expect("the first one");
-        let second = write_private(&path, &[2u8; 32]);
+        crate::key_file::write_private(&path, &[1u8; 32]).expect("the first one");
+        let second = crate::key_file::write_private(&path, &[2u8; 32]);
 
         assert!(second.is_err(), "the second write should have been refused");
         assert_eq!(fs::read(&path).unwrap(), vec![1u8; 32]);

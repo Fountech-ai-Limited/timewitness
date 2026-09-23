@@ -11,6 +11,8 @@ mod agent_cmd;
 mod app;
 mod args;
 mod as_json;
+mod certificate_cmd;
+mod certificate_file;
 mod countersign_cmd;
 mod key_file;
 mod key_log_cmd;
@@ -76,6 +78,8 @@ fn main() -> ExitCode {
         Some("countersign") => countersign_cmd::run(&parsed),
         Some("order") => order_cmd::run(&parsed),
         Some("send") => send_cmd::run(&parsed),
+        Some("enrol") => certificate_cmd::run_enrol(&parsed),
+        Some("certificate") => certificate_cmd::run_certificate(&parsed),
         Some("status") => status_cmd::run(&parsed),
         Some("cannot-prove") => verify_cmd::Outcome {
             text: render::cannot_prove_document(),

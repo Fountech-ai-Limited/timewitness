@@ -2,8 +2,9 @@
 //!
 //! The app at `app.timewitness.dev` keeps an organisation's receipts. It is never on the path of a
 //! stamp: a stamp reads a local clock and signs, and nothing in it waits on us. It is never on the
-//! path of a check either, which needs nothing of ours at all. What reaches it is a separate act
-//! after the stamp, `timewitness send`, and that act lives here so the address is written once.
+//! path of a check either, which needs nothing of ours at all. What reaches it are separate acts,
+//! each its own command: `timewitness enrol` and `timewitness certificate` before a stamp, and
+//! `timewitness send` after one. They live here so the address is written once.
 //! `crates/architecture` holds both halves: no other source names the host, and neither `stamp`
 //! nor `agent` can reach this module.
 //!
@@ -32,6 +33,15 @@ pub const APP: &str = "https://app.timewitness.dev";
 /// with a redirect. A redirect is never followed here: it would carry the credential to wherever it
 /// pointed.
 pub const RECEIPTS: &str = "/api/machine/receipts/";
+
+/// Where a machine asks for a challenge to sign with a key it is enrolling.
+pub const KEY_CHALLENGE: &str = "/api/machine/keys/challenge/";
+
+/// Where a machine enrols a key, with the challenge signed.
+pub const KEYS: &str = "/api/machine/keys/";
+
+/// Where a machine asks for a certificate for a key it enrolled.
+pub const CERTIFICATES: &str = "/api/machine/certificates/";
 
 /// The most answer this client reads. The app answers a filing in a few hundred bytes.
 const MAX_ANSWER: usize = 256 * 1024;

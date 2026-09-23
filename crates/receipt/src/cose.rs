@@ -95,6 +95,28 @@ impl AgentKey {
         Ok(self.sign_value(&receipt.to_value()))
     }
 
+    /// Sign the statement that enrols this key with an organisation of the app, over a challenge the
+    /// app issued.
+    ///
+    /// The statement is built here from its three parts and never taken from the app as text, so the
+    /// key signs one thing only: words saying which organisation, which key and which challenge. It
+    /// begins with words rather than a CBOR list, so it can never be the `Sig_structure` a receipt
+    /// signs, which is a list beginning `Signature1`. A part that could break the statement's lines
+    /// is refused rather than signed.
+    pub fn sign_enrolment(
+        &self,
+        organisation: &str,
+        challenge: &str,
+    ) -> Result<Vec<u8>, ReceiptError> {
+        let public = self
+            .public_key_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        let message = enrolment_message(organisation, &public, challenge)?;
+        Ok(self.signing.sign(&message).to_bytes().to_vec())
+    }
+
     /// Sign whatever value tree it is handed, without asking whether it is a sensible receipt.
     ///
     /// This exists so the validator can be tested. Checking that a mislabelled receipt is refused
@@ -124,6 +146,50 @@ impl AgentKey {
             Value::Bytes(signature.to_bytes().to_vec()),
         ]))
     }
+}
+
+/// The exact bytes a key signs to enrol with an organisation of the app.
+///
+/// The app builds the same bytes and checks the signature against them, in `enrolmentMessage` in
+/// `lib/accounts.ts` of the app's repository; a test on each side holds its copy to the same
+/// literal. The organisation is an identifier of hex digits and hyphens, the key 64 lowercase hex
+/// digits and the challenge unpadded base64url, and anything else is refused, so no part can carry
+/// a line of its own into the statement.
+pub fn enrolment_message(
+    organisation: &str,
+    public_key_hex: &str,
+    challenge: &str,
+) -> Result<Vec<u8>, ReceiptError> {
+    let fits = |text: &str, allowed: fn(char) -> bool, most: usize| {
+        !text.is_empty() && text.len() <= most && text.chars().all(allowed)
+    };
+    if !fits(organisation, |c| c.is_ascii_hexdigit() || c == '-', 64) {
+        return Err(ReceiptError::Signature(
+            "an organisation is named by hex digits and hyphens".into(),
+        ));
+    }
+    if public_key_hex.len() != 64
+        || !public_key_hex
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+    {
+        return Err(ReceiptError::Signature(
+            "a public key is 64 lowercase hex digits".into(),
+        ));
+    }
+    if !fits(
+        challenge,
+        |c| c.is_ascii_alphanumeric() || c == '-' || c == '_',
+        128,
+    ) {
+        return Err(ReceiptError::Signature(
+            "a challenge is unpadded base64url".into(),
+        ));
+    }
+    Ok(format!(
+        "timewitness enrols this key\norganisation {organisation}\nkey {public_key_hex}\nchallenge {challenge}\n"
+    )
+    .into_bytes())
 }
 
 /// A `COSE_Sign1` taken apart: the protected header, the payload, the signature, and the
