@@ -877,6 +877,14 @@ SOURCES_ENOUGH = re.compile(r'\b(' + COUNT + r') (?:good |healthy |independent |
 REFUSAL_RECEIPT = re.compile(r'\b(?:signed )?refusal receipts?\b', re.I)
 REFUSAL_HYPOTHETICAL = re.compile(r'\bwould\b|\bif one\b|\bnot yet\b|\bis not (?:built|shipped|issued)\b|\bphrase rather than\b|'
                                   r'\bthere is no\b|\bno refusal receipt\b', re.I)
+# A refusal said to be kept somewhere. Nothing keeps one: a receiver that declines to countersign
+# signs nothing and writes nothing, and the agent's own refusal is a return value. Version 21 of the
+# list said a declining receiver "records a refusal" for a day, and no check read the verb.
+REFUSAL_RECORDED = re.compile(r'\b(?:records?|recorded|recording|logs?|logged|logging|keeps?|kept|keeping|stores?|stored|storing|'
+                              r'files?|filed|filing) (?:a |an |its |the |their |every |each )?refusals?\b|'
+                              r'\brefusals? (?:is|are|gets?|got|will be|was|were|has been|have been|stays?) '
+                              r'(?:recorded|logged|kept|stored|written down|filed)\b|'
+                              r'\b(?:recorded|logged|kept|stored|filed) as (?:a )?refusals?\b', re.I)
 # A ceiling, in the forms a sentence gives one: refused over, up to, capped at, nothing wider than,
 # holds itself to, at worst, will happily sign a bound of.
 CEILING = re.compile(r'(?:refuses? (?:any|an|one|a)(?: interval| bound| width| receipt)? (?:wider|over|more|past|beyond) (?:than )?|'
@@ -1298,6 +1306,14 @@ def judge(sentence, policy, landing=None, read=None):
         m = REFUSAL_RECEIPT.search(sentence)
         if m and not negated(sentence, m) and not REFUSAL_HYPOTHETICAL.search(sentence):
             faults.append('speaks of a refusal receipt as a thing that exists, and there is no refusal receipt')
+
+    # The negation has to sit on the verb itself. The clause-wide reading `negated` gives would let
+    # "a receiver that will not countersign records a refusal" through on the "not" that belongs to
+    # countersigning, and that is the sentence this rule was written for.
+    m = REFUSAL_RECORDED.search(sentence)
+    if m and not re.search(r"(?:\b(?:no|not|never|nothing|none|nor|cannot|without)|n't)\s+$", sentence[:m.start()], re.I):
+        faults.append('says a refusal is recorded, and nothing records one: a receiver that declines to countersign '
+                      'signs nothing and keeps nothing, and the agent\'s own refusal is a return value')
 
     def whose(before):
         # Whose ceiling the figure is, read off the nearest subject before it in the sentence, and
@@ -2976,6 +2992,10 @@ SEEDS = [
     ('a refusal receipt records', 'A refusal receipt records that TimeWitness declined to sign.'),
     ('a refusal receipt records', 'The refusal receipt proves the agent declined.'),
     ('a refusal receipt records', 'A signed refusal receipt is issued when the agent declines.'),
+    ('a refusal said to be recorded', 'A receiver that declines to countersign records a refusal and stops nothing.'),
+    ('a refusal said to be recorded', 'A receiver that will not countersign records a refusal and stops nothing.'),
+    ('a refusal said to be recorded', 'The refusal is logged and nothing is stopped.'),
+    ('a refusal said to be recorded', 'A declined request is kept as a refusal.'),
     ('a ceiling without saying whose', 'The shipped default refuses any interval wider than 250 ms, and the GitHub Action raises that to 30 s, which is headroom and not a measurement.'),
     ('a ceiling stated wrongly', 'The resident agent refuses any interval wider than 500 ms.'),
     ('a ceiling stated wrongly', 'The agent will answer with a bound of up to half a second.'),
@@ -3107,6 +3127,8 @@ HONEST = [
     'The resident agent refuses any interval wider than 250 ms, and the one-shot command, which the GitHub Action runs, refuses one wider than 2 s.',
     'Every receipt this product issues says its bound rests on the agent\'s own model, so no receipt yet carries third-party signed evidence for its bound.',
     'There is no refusal receipt.',
+    'A receiver that declines to countersign signs nothing, keeps nothing and stops nothing.',
+    'Nothing records a refusal.',
     'A refusal records that TimeWitness declined to sign, and today that record is a return value inside the agent rather than anything a third party can be shown.',
     'The shipped policy will not sign on fewer than four operators standing behind the round.',
     'Nine servers reach six operators, so two can go dark and the agent carries on.',

@@ -266,8 +266,9 @@ where the command line itself was wrong.
 - It does not prove the log is honest to a reader seeing it for the first time. What it proves, to
   a reader who kept an earlier copy and passes it as `--kept-log`, is that nothing they held has
   been removed, changed or reordered since.
-- It does not check order. `sequence` and `chain_previous` are signed and are reported; nothing
-  compares two receipts, and one verifier run has one receipt.
+- It does not check order. `sequence` and `chain_previous` are signed and are reported, and one
+  verifier run has one receipt. Two receipts are put in order by `timewitness order`, which checks
+  each of them this way first.
 - It does not check that a receipt sits in a chain, which is the point above. What it does check is
   that the receipt in front of it has one spelling: the COSE unprotected header is outside the
   signature by design, so the format pins it to the single key identifier entry and a restated

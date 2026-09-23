@@ -29,8 +29,8 @@
 //! reader below calls contradicted, and a party should not sign what its own reader calls
 //! impossible. Reading is untouched: a pair like that from somebody else's receiver still reads.
 //!
-//! **It does not enforce anything.** A receiver that will not countersign records a refusal and the
-//! request is the request it would have been with no header at all.
+//! **It does not enforce anything.** A receiver that will not countersign signs nothing and keeps
+//! nothing, and the request is the request it would have been with no header at all.
 
 use timewitness_core::time::{Nanos, UnixNanos};
 use timewitness_core::{order_of, MomentInterval, Order};
