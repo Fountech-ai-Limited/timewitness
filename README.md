@@ -150,7 +150,7 @@ reasoning and with what each kind of evidence actually says, is
 [`docs/what-timewitness-cannot-prove.md`](docs/what-timewitness-cannot-prove.md). A reviewer who
 knows this field should find nothing there that we did not say first.
 
-The full list runs to 60 items. What follows groups them and leaves some out, so read the full list
+The full list runs to 61 items. What follows groups them and leaves some out, so read the full list
 before deciding whether this product does what you need. `scripts/three-surfaces.sh` holds that
 number to the list itself, which is how an item added there and not summarised here gets noticed.
 
@@ -224,7 +224,7 @@ seconds is the narrowest interval a Roughtime corridor can state, and the widest
 runner has given us is 287.147 ms wide, on 2026-09-14 at sixteen rounds.
 Nothing verifies order. Every receipt carries a sequence number and the hash of the receipt before it, both
 signed, and no code anywhere compares two receipts, so nothing that exists today can put two receipts
-in order. There is no refusal receipt. A refusal is a return value inside the agent. Nothing signed
+in order. A countersigned exchange shows that two claims are consistent with an order and nothing more: neither side's interval is evidence for the other, an overlap is undecided, and the command that reads one is on `main` and in no release. There is no refusal receipt. A refusal is a return value inside the agent. Nothing signed
 and nothing portable is produced, so there is no artefact a third party could be shown. There is no
 released binary, so a stranger compiles the verifier rather than downloading it. Nothing links an
 agent's key to anybody. A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and no agent key. The `v0` release cannot read it. There is no first-run figure from anybody outside.
