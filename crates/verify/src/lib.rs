@@ -40,7 +40,9 @@ use timewitness_core::{SmearPolicy, Timescale};
 use timewitness_receipt::anchors::TrustAnchors;
 use timewitness_receipt::report::Verified;
 use timewitness_receipt::schema::{reads_smear, reads_timescale, Role, SourceRecord};
-use timewitness_receipt::{chain_link, open_with, sha256_payload, Receipt, ReceiptError};
+use timewitness_receipt::{
+    chain_link, open_with, sha256_payload, without_signature_witness, Receipt, ReceiptError,
+};
 
 pub use floor::Floor;
 pub use order::{order_of_receipts, Link, PairReading, Verdict, Which};
@@ -141,13 +143,16 @@ pub struct Assessment {
     pub receipt: Option<Receipt>,
     /// What was established about the evidence entries, where the receipt could be read.
     pub evidence: Option<Verified>,
-    /// The SHA-256 of the bytes exactly as they were handed over.
+    /// The SHA-256 of the receipt as its agent signed it, which is what a chain link is taken over,
+    /// so it is printed: two readers comparing what they hold are comparing this.
     ///
-    /// This is what a chain link is taken over today, so it is printed: two readers comparing what
-    /// they hold are comparing this. A holder can restate a receipt as different bytes carrying the
-    /// same claim, which changes this value and changes nothing else, and that question is not
-    /// settled.
+    /// It is the hash of the bytes as handed over unless they carry a witness over the signature,
+    /// and then it is the hash of the same bytes with that witness taken out. The witness is outside
+    /// the signature and can be respelled by anybody holding the file, so a hash that moved with it
+    /// would let one receipt be many. See [`timewitness_receipt::chain_link`].
     pub link: Vec<u8>,
+    /// Whether the bytes carried a witness over the signature, which the link is taken without.
+    pub witness_set_aside: bool,
     /// How large the receipt was.
     pub encoded_bytes: usize,
     /// The numbers this reader judged it against.
@@ -453,6 +458,7 @@ fn assess(
         receipt: None,
         evidence: None,
         link,
+        witness_set_aside: without_signature_witness(signed_receipt).is_some(),
         encoded_bytes,
         floor: *floor,
         anchors_held: anchors.count(),

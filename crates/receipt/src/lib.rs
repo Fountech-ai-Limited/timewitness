@@ -32,7 +32,7 @@ pub mod value;
 pub use anchors::{RoughtimeServerKey, TrustAnchors};
 pub use cose::{
     check_signature, envelope_parts, open, open_with, signature_of, with_signature_witness,
-    AgentKey, Envelope, SIGNATURE_WITNESS,
+    without_signature_witness, AgentKey, Envelope, SIGNATURE_WITNESS,
 };
 pub use error::ReceiptError;
 pub use report::{Bracket, EntryReport, Outcome, Verified};
@@ -66,11 +66,25 @@ pub fn sha256_payload(bytes: &[u8]) -> Payload {
     }
 }
 
-/// The SHA-256 of a signed receipt, which is what the next receipt in a chain links back to.
+/// The SHA-256 of a signed receipt as its agent signed it, which is what the next receipt in a chain
+/// links back to and what a reader is told the receipt hashes to.
+///
+/// For every version 0 receipt, and every version 1 receipt with no witness over its signature, that
+/// is the hash of the file. Where the unprotected header carries the witness, it is the hash of the
+/// file with that entry taken out, which is the file the agent wrote before the witness came back.
+/// The witness is outside the signature, and a timestamp token carries plenty its own signature does
+/// not cover either, so a holder with no key can respell it: on 2026-09-23 a third of the single-bit
+/// flips inside the committed witness still verified. A hash of the file would make each of those a
+/// receipt of its own and let a holder fork or break a chain. A hash of what was signed cannot move
+/// without the agent's key.
+///
+/// Bytes that are not an envelope of that shape are hashed as they are. Nothing here decides whether
+/// they are a receipt; [`open`] does, and it refuses anything else in that header.
 #[must_use]
 pub fn chain_link(signed_receipt: &[u8]) -> Vec<u8> {
     use sha2::{Digest, Sha256};
+    let as_signed = cose::without_signature_witness(signed_receipt);
     let mut hasher = Sha256::new();
-    hasher.update(signed_receipt);
+    hasher.update(as_signed.as_deref().unwrap_or(signed_receipt));
     hasher.finalize().to_vec()
 }

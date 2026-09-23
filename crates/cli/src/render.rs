@@ -436,11 +436,24 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
     for rule in a.floor.lines() {
         out.push_str(&format!("  {rule}\n"));
     }
-    out.push_str(&format!(
-        "  The receipt as handed over is {} bytes and hashes to {}.\n",
-        a.encoded_bytes,
-        hex(&a.link)
-    ));
+    if a.witness_set_aside {
+        // The file hashes to something else, and saying so is what stops a reader who hashes the
+        // file concluding that one of the two was altered.
+        out.push_str(&format!(
+            "  The receipt as handed over is {} bytes. As its agent signed it, without the witness\n  \
+             over its signature, it hashes to {}, and that is what the next receipt in a\n  \
+             chain names. The witness is outside the signature, so a hash of the whole file is not\n  \
+             the receipt's.\n",
+            a.encoded_bytes,
+            hex(&a.link)
+        ));
+    } else {
+        out.push_str(&format!(
+            "  The receipt as handed over is {} bytes and hashes to {}.\n",
+            a.encoded_bytes,
+            hex(&a.link)
+        ));
+    }
     if matches!(subject, Subject::NotSupplied) {
         out.push_str("  No subject was supplied, so this bounds a moment and not a moment for\n");
         out.push_str("  anything in particular.\n");
