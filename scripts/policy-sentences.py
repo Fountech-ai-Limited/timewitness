@@ -17,6 +17,7 @@ policy off the code and asks each sentence whether it contradicts it.
     python3 scripts/policy-sentences.py --prints FILE   the sentence prints to record when a set becomes fitted
     python3 scripts/policy-sentences.py --attributions [FILE]   record the generated subject grade for the register, and write it
     python3 scripts/policy-sentences.py FILE...         only the files named, for a copy of an old tree
+    python3 scripts/policy-sentences.py --tree DIR --surfaces PATTERN   the claims in another tree, the app's
 
 **The only number anybody may quote about this file comes from `--score` on a set whose sha256 was
 frozen before this file was opened.** `--self-test` proves each seed is refused by the rule it is
@@ -718,8 +719,15 @@ VOUCHING = [re.compile(p, re.I) for p in (
 # moment as its object is the claim whoever is said to be doing it.
 # The moment, in the words the surfaces use for it. "They pin when it was taken to 2 s" said the
 # whole claim without the noun, and the first draft of the rule below read straight past it.
-MOMENT = (r'(?:the moment|when it was taken|when that reading was taken|'
-          r'when the (?:reading|stamp|receipt|event) was taken)')
+#
+# The signing is the same moment in other words, and the app's front page said "they pin when it was
+# signed" from 2026-09-14 to 2026-09-23 with this rule green, because it read taken and not signed.
+# The verifier says the opposite on the receipt every surface points at: nothing outside it says when
+# it was signed, only when its subject existed. A version 1 receipt can carry a witness over its own
+# signature, and that one does say when it was signed, but its authority states no accuracy either,
+# so it pins nothing in UTC.
+MOMENT = (r'(?:the moment|the signing|when it was (?:taken|signed|made|issued)|when that reading was taken|'
+          r'when (?:the|a|this|that) (?:reading|stamp|receipt|event|signature) was (?:taken|signed|made|issued))')
 BRACKETING = [re.compile(p, re.I) for p in (
     r'\b(pins?|pinning|pinned|brackets?|bracketing|bracketed|encloses?|enclosing|enclosed|straddles?|straddling|'
     r'sandwiches|sandwiched)\b[^.;]{0,40}?\b' + MOMENT + r'\b',
@@ -3080,11 +3088,21 @@ SEEDS = [
     ('a shipped authority proves not-later-than', 'DigiCert signed for the payload hash, so the document existed no later than the moment its token states.'),
     ('a shipped authority proves not-later-than', 'The Sectigo token proves not-later-than for everything this agent stamps.'),
     ('outside signatures bracket the moment', 'The outside signatures it carries are checked and pin the moment to a few seconds, and nothing issues a receipt whose width rests on them.'),
+    # The app's front page, word for word, from 2026-09-14 until it was taken down on 2026-09-23.
+    ('outside signatures bracket the moment', 'The outside signatures in it can be checked without trusting either party, and they pin when it was signed.'),
+    ('outside signatures bracket the moment', 'The outside signatures pin when the receipt was signed.'),
+    ('outside signatures bracket the moment', 'Its witnesses bracket the signing to a few seconds.'),
+    ('outside signatures bracket the moment', 'When the receipt was signed is pinned by the signatures it carries.'),
 ]
 
 # The sentences that replaced them and the sentences the surfaces carry that sit nearest a rule,
 # which have to pass, so a rule wide enough to refuse everything cannot pass this test either.
 HONEST = [
+    # What the verifier and the app's front page say instead of the seeds of 2026-09-23 above.
+    'The signature itself carries no witness, so nothing outside this receipt says when it was signed, only when its subject existed.',
+    'They say when the thing it stamps existed, and only a witness over the receipt\'s own signature says when it was signed.',
+    'The timestamp authorities used today state no accuracy of their own, so a token from them bounds nothing in UTC.',
+    'They do not pin when it was signed.',
     'A machine that can reach only the three public Roughtime servers reaches three operators, which is under the shipped floor of four, so it refuses to sign, and nothing that ships lowers the floor.',
     'The resident agent refuses any interval wider than 250 ms, and the one-shot command, which the GitHub Action runs, refuses one wider than 2 s.',
     'Every receipt this product issues says its bound rests on the agent\'s own model, so no receipt yet carries third-party signed evidence for its bound.',
@@ -4899,8 +4917,79 @@ def the_score_refuses_a_fitted_set_however_it_is_written(policy):
     return faults
 
 
+def another_tree(tree, pattern, policy):
+    """The claim rules over the surfaces of a tree that is not this one, as (sentences read, files
+    read, problems).
+
+    The app's front page told every reader that the outside signatures pin when a receipt was signed,
+    for nine days, while this file held the site and the README to the opposite. Nothing read the
+    app. The rules are read from here rather than copied there, which is how the price rules already
+    reach it, so there is still one copy of them.
+
+    Only the claims are held. The figures are not, because what answers a figure is a register of
+    this tree's surfaces, and a tree it has never heard of would be refused on every number it holds,
+    which is a check nobody keeps switched on. The ceiling rule is held, because it asks only whether
+    a surface quoting the committed receipt also says what that receipt was signed under.
+    """
+    base = Path(tree).resolve()
+    if not base.is_dir():
+        raise Unreadable(f'{tree} is not a directory')
+    # What a build or a tool leaves behind is not a surface: a dot folder, dependencies, build output.
+    skip = {'node_modules', 'out', 'target'}
+    files = sorted(p for p in base.rglob('*')
+                   if p.is_file()
+                   and not any(part.startswith('.') or part in skip for part in p.relative_to(base).parts[:-1])
+                   and pattern.search(p.relative_to(base).as_posix()))
+    # Every tree this is pointed at has a README and at least one page of content, so fewer than two
+    # files means the pattern is wrong rather than that the tree has nothing to say.
+    if len(files) < 2:
+        raise Unreadable(f'the pattern found {len(files)} surfaces in {tree}, so it is not reading the tree')
+    read_from, _ = surfaces([str(p) for p in files], None, 1)
+    names = {str(p): p.relative_to(base).as_posix() for p in files}
+    read_from = [(names.get(where, where), sentence) for where, sentence in read_from]
+    problems = []
+    for where, sentence in read_from:
+        for fault in judge(sentence, policy):
+            problems.append(f'{where}: {fault}:\n    "{sentence[:220]}"')
+    problems += the_ceiling_is_stated(read_from)
+    return len(read_from), len(files), problems
+
+
+def a_tree_elsewhere_is_read(policy):
+    """Whether --tree reads the tree it is given and refuses the sentence the app actually served.
+
+    A tree made up here with a README and a page of content: once honest, where it has to pass, and
+    once with the app's own sentence of 2026-09-14 planted in the page, where it has to be refused
+    and the refusal has to name the page rather than the README."""
+    import tempfile
+    page = {'free': {'body': 'Anyone can verify a receipt, free and with no account. The outside signatures in a '
+                             'receipt can be checked without trusting either party. They say when the thing it stamps '
+                             'existed, and only a witness over the receipt\'s own signature says when it was signed.'}}
+    planted = {'free': {'body': 'Anyone can verify a receipt, free and with no account. The outside signatures in it '
+                                'can be checked without trusting either party, and they pin when it was signed.'}}
+    faults = []
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        (base / 'content').mkdir()
+        (base / 'README.md').write_text('# A made-up tree\n\nIt holds one page and nothing else.\n', encoding='utf-8')
+        for what, body, refuse in (('honest', page, False), ('planted', planted, True)):
+            (base / 'content' / 'app.json').write_text(json.dumps(body), encoding='utf-8')
+            try:
+                _, files, problems = another_tree(tmp, re.compile(r'\.(md|txt)$|^content/'), policy)
+            except (Unreadable, OSError) as e:
+                return [f'--tree could not read a made-up tree: {e}']
+            if files != 2:
+                faults.append(f'--tree read {files} files of a made-up tree holding 2')
+            if refuse and not any(p.startswith('content/app.json: ') for p in problems):
+                faults.append('--tree passed the app\'s own sentence of 2026-09-14 planted in a made-up tree')
+            if not refuse and problems:
+                faults.append(f'--tree refused an honest made-up tree: {problems[0]}')
+    return faults
+
+
 def self_test(policy):
     missed = (content_reader_reads_the_leaf() + the_fetch_refuses_a_redirect()
+              + a_tree_elsewhere_is_read(policy)
               + every_attribute_a_reader_is_given_is_read(policy)
               + every_figure_is_read(policy) + the_register_holds_a_figure_to_its_subject(policy)
               + the_score_refuses_a_fitted_set(policy)
@@ -4985,6 +5074,28 @@ def main(argv):
         except (Unreadable, OSError, UnicodeDecodeError) as e:
             print(f'policy sentences: that set could not be read: {e}', file=sys.stderr)
             return 2
+
+    if '--tree' in argv or '--surfaces' in argv:
+        try:
+            tree = argv[argv.index('--tree') + 1]
+            pattern = re.compile(argv[argv.index('--surfaces') + 1])
+        except (ValueError, IndexError, re.error):
+            print('policy sentences: --tree and --surfaces are given together or not at all, each with its value',
+                  file=sys.stderr)
+            return 2
+        try:
+            count, files, problems = another_tree(tree, pattern, policy)
+        except (Unreadable, OSError, ValueError) as e:
+            print(f'policy sentences: a surface could not be read: {e}', file=sys.stderr)
+            return 2
+        for p in problems:
+            print('policy sentences: ' + p, file=sys.stderr)
+        if problems:
+            print(f'policy sentences: {len(problems)} sentences in {tree} contradict the shipped policy', file=sys.stderr)
+            return 1
+        print(f'policy sentences: {count} sentences over {files} surfaces read in {tree} agree with the shipped '
+              f'policy. Their figures are not read here: what answers a figure is this tree\'s register')
+        return 0
 
     site = None
     files = [a for a in argv if not a.startswith('--')]
