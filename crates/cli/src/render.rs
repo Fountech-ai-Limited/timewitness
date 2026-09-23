@@ -136,7 +136,14 @@ pub fn usage() -> String {
     out.push_str(
         "                          not evidence; the third-party corridor is what catches\n",
     );
-    out.push_str("                          a careful forgery, and --no-evidence skips it\n\n");
+    out.push_str("                          a careful forgery, and --no-evidence skips it\n");
+    out.push_str("      --certificate <file> the certificate for this key, fetched earlier by\n");
+    out.push_str("                          `timewitness certificate`. Once certification has\n");
+    out.push_str("                          begun the stamp refuses, and writes no receipt,\n");
+    out.push_str("                          without a current one with an hour of its window\n");
+    out.push_str("                          left, looked for beside the key unless named here.\n");
+    out.push_str("                          It is read from disk; a stamp never asks the app\n");
+    out.push_str("                          for anything\n\n");
     out.push_str("  timewitness agent --endpoint <file> [options]\n");
     out.push_str("      Discipline this machine's clock continuously and answer readings to\n");
     out.push_str("      `stamp --agent`. It runs in the foreground until it is stopped. It\n");
@@ -249,6 +256,22 @@ pub fn usage() -> String {
     out.push_str("      leaves the receipt where it was and changes nothing about it.\n\n");
     out.push_str("      --event <word>      what happened, such as build or test, to search by\n");
     out.push_str("      --repository <name> the repository it happened in, owner/name\n");
+    out.push_str("      --to <address>      another address of the app, such as a test one\n\n");
+    out.push_str("  timewitness enrol --key <file> [options]\n");
+    out.push_str("      Enrol this machine's key with the organisation whose machine credential\n");
+    out.push_str("      is in TIMEWITNESS_MACHINE_CREDENTIAL, making the key where the file is\n");
+    out.push_str("      absent. The app asks the key to sign a challenge, so only a machine\n");
+    out.push_str("      holding the secret half can enrol it, and what is signed is built here\n");
+    out.push_str("      rather than taken from the app as text.\n\n");
+    out.push_str("      --label <name>      what the organisation's people see the machine as\n");
+    out.push_str("      --to <address>      another address of the app, such as a test one\n\n");
+    out.push_str("  timewitness certificate --key <file> [options]\n");
+    out.push_str("      Fetch a certificate for an enrolled key and keep it beside the key, for\n");
+    out.push_str("      `stamp` to read. It is the one thing a machine asks the app for before\n");
+    out.push_str("      it stamps, and it is asked here, never during a stamp.\n\n");
+    out.push_str("      --kind <kind>       agent, for a week, or action, for a day; agent by\n");
+    out.push_str("                          default\n");
+    out.push_str("      --out <file>        where to keep it, beside the key by default\n");
     out.push_str("      --to <address>      another address of the app, such as a test one\n\n");
     out.push_str("  timewitness status --agent <file>\n");
     out.push_str(
