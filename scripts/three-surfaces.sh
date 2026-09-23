@@ -414,6 +414,29 @@ compare_site() {
   return "$bad"
 }
 
+# Whether the public address is in the holding state, where there is no site copy to read.
+#
+# While the product is in development the site's production deployment serves one holding page at
+# the root and answers every other page, the limitation list among them, with a 308 to the root. The
+# list then has no public copy on the site, and the copy a stranger can read is the markdown in this
+# repository. That is a state the wire route states rather than a surface it failed to reach, so it
+# is asserted on both halves: the list's address has to answer 308 to the root, and the root has to
+# carry the holding page's own `tw-stage` tag. A site that answers anything else is read and compared
+# as it always was, so the marketing site coming back to the public address is compared on the day
+# it does.
+holding=1
+apex_holding() {
+  local apex answer
+  apex="$(printf '%s' "$site_url" | sed -E 's#^(https?://[^/]+).*#\1/#')"
+  answer="$(curl -sS --max-time 30 -o /dev/null -w '%{http_code} %{redirect_url}' "$site_url" 2>/dev/null)" || return 1
+  [ "$answer" = "308 $apex" ] || return 1
+  curl -fsS --max-time 30 "$apex" -o "$scratch/apex.html" 2>/dev/null || return 1
+  case "$(cat "$scratch/apex.html")" in
+    *'<meta name="tw-stage" content="holding"'*) return 0 ;;
+  esac
+  return 1
+}
+
 # The tree routes take the file beside this tree, because that is the copy a pre-push hook is trying
 # to catch before it ships.
 if [ "$route" != wire ] && [ -f "$site" ]; then
@@ -435,6 +458,11 @@ if [ -z "$site_copy" ] && [ "$route" != tree ]; then
   wire_ok=1
   while true; do
     : > "$attempt"
+    if apex_holding; then
+      holding=0
+      wire_ok=0
+      break
+    fi
     if read_wire "$scratch/served.json" >>"$attempt" 2>&1; then
       wire_read=0
       if compare_site "$scratch/served.json" "$site_url" >>"$attempt" 2>&1; then
@@ -476,7 +504,9 @@ fi
 # route allowed to finish without the site, and it is allowed only because something else reads it
 # and `ci.yml` fails when that something has stopped running.
 if [ -z "$site_copy" ]; then
-  if [ "$route" = tree ]; then
+  if [ "$holding" -eq 0 ]; then
+    echo "three surfaces: $site_url answers 308 to the holding page, so while the product is in development the site carries no copy of the list, by design. The public copy is docs/what-timewitness-cannot-prove.md in this repository, and the markdown and the README were held to each other"
+  elif [ "$route" = tree ]; then
     echo "three surfaces: no site copy beside this tree, so this run held the markdown and the README to each other and to the committed receipt, and read nothing from the site"
     echo "three surfaces: the served page is read by .github/workflows/surfaces.yml, and scripts/wire-guard-is-alive.sh turns this build red when that has stopped running"
   else
