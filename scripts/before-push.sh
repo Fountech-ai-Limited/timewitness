@@ -230,6 +230,9 @@ step "The hook's steps are this file's" bash -c "node scripts/steps-match.mjs --
 # place that catches a markdown change before it ships without the site copy beside it. Strictly more
 # than CI does, which is the point of the hook rather than a difference to reconcile.
 step "The limitation list, on all three surfaces" bash scripts/three-surfaces.sh
+# The wire route's holding branch, driven against a local server with the holding page and nine pages
+# that are not it. Nothing above reads a served page, so without this only the schedule runs it.
+step "The wire route tells the holding page from a page carrying its tag" python3 scripts/the-apex-is-the-holding-page.py --self-test
 # And the newest release against its own copy of that list, which is a different question: the one
 # above asks whether three surfaces of this commit agree, and this asks whether the thing a reader
 # can actually download says what it can actually do.

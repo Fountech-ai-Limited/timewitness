@@ -180,6 +180,13 @@ jobs:
           TW_SURFACES_SITE: tree
         run: bash scripts/three-surfaces.sh
 
+      - name: The wire route tells the holding page from a page carrying its tag
+        # The step above cannot run the wire route's holding branch, because it reads no served page,
+        # and the scheduled guard was the only other thing that did. So a local server answers the
+        # way the public address does, with the holding page and with nine pages that are not it,
+        # and the branch is watched accepting the one and refusing the nine.
+        run: python3 scripts/the-apex-is-the-holding-page.py --self-test
+
       - name: The newest release against its own limitation list
         # Two files in one released tree, held to each other: what that release can do, and what its
         # own list says it cannot. `main` is allowed to be ahead of it, which is why this asks about
