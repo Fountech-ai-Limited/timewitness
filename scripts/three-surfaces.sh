@@ -106,8 +106,10 @@ wait_budget="${TW_SURFACES_WAIT:-0}"
 wait_step="${TW_SURFACES_WAIT_STEP:-30}"
 
 sentences=(
-  "Nothing verifies order."
-  "Every receipt carries a sequence number and the hash of the receipt before it, both signed, and no code anywhere compares two receipts, so nothing that exists today can put two receipts in order."
+  # Replaced 2026-09-24, when `v0.2` shipped `timewitness order`. The two they replace said nothing
+  # compares two receipts, which was true of every release before it.
+  "Order is checked two receipts at a time, and nothing walks a chain."
+  "Two receipts signed by different agent keys are not a chain, so only their intervals are compared."
   "There is no refusal receipt."
   "A refusal is a return value inside the agent. Nothing signed and nothing portable is produced, so there is no artefact a third party could be shown."
   # Added 2026-09-08. Each of these is a figure or a claim that was

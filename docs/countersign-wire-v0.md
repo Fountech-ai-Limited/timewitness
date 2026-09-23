@@ -24,8 +24,8 @@ That is the whole of it, and the limits below are part of the claim rather than 
 - **Two intervals are never averaged and never intersected into a narrower one.** Where two moments
   are further apart than the two bounds added together, their order is known. Where they are not,
   the order is undecided and the answer says so rather than picking one.
-- **A receiver that will not countersign records a refusal and stops nothing.** There is no
-  enforcement here and there is none anywhere else in this product.
+- **A receiver that will not countersign signs nothing, keeps nothing and stops nothing.** There is
+  no enforcement here and there is none anywhere else in this product.
 - **None of this is a claim about accuracy.** It is a claim about order, and about the width of two
   intervals.
 

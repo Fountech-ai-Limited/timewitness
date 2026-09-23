@@ -1,5 +1,13 @@
 # What TimeWitness cannot prove
 
+Version 22, 2026-09-24. Supersedes version 21 of 2026-09-23, which it keeps whole and corrects in
+three places, all of them about what the `v0.2` release ships. The item saying nothing verifies order
+said so of every release until this one, and `v0.2` carries `timewitness order`, so the item now says
+what that command answers and where it stops. The countersign item said the command reading an
+exchange was in no release, and `v0.2` carries it. The same item said a receiver that declines to
+countersign records a refusal, and nothing records one: the receiver signs nothing and keeps nothing.
+The list still runs to 61 items.
+
 Version 21, 2026-09-23. Supersedes version 20 of 2026-09-19, which it keeps whole, adds one item to
 and extends one. The new item says what a countersigned exchange cannot prove, now that the command
 reading one is on `main`. The item on the oscillator said the read-back cannot see a machine outside
@@ -611,13 +619,20 @@ Roughtime alone on 2026-09-08, a round the operator floor has refused since 2026
 the one-shot command signed before 2026-09-15 states that older ceiling in its own policy, the one at
 `crates/verify/tests/data/a-real-stamp/` included.
 
-**Nothing verifies order.** Every receipt carries a sequence number and the hash of the receipt
-before it, both signed, and no code anywhere compares two receipts, so nothing that exists today can
-put two receipts in order. The claim this product opens with is bounded time and unbroken order, and
-the second half of it is carried rather than checked.
+**Order is checked two receipts at a time, and nothing walks a chain.** `timewitness order` reads
+two receipts offline, checks each of them the way `verify` does, and keeps two answers apart. The two
+intervals say which moment came first, and where they touch or overlap the answer is that nobody can
+say. A receipt that names the other by the hash of its signed bytes says which of the two was signed
+first, which rests on a hash rather than on a clock and says nothing about UTC. Two receipts signed by
+different agent keys are not a chain, so only their intervals are compared. An order resting on a
+receipt the verifier refused does not stand, and where an agent's chain runs against its own
+intervals the command says that agent contradicted itself and does not pick which claim to drop. A
+receipt missing from between the two handed over is not seen, and a fork is seen only when the two
+handed over are its two sides. The claim this product opens with is bounded time and unbroken order,
+and the second half of it is checked two receipts at a time and no further.
 
 **A countersigned exchange shows that two claims are consistent with an order, and nothing more.**
-The `timewitness countersign` command that reads one is on `main` and in no release. Two agents each
+The `timewitness countersign` command that reads one ships from the `v0.2` release. Two agents each
 sign a statement about their own clock, the receiver names the sender's request by its hash, and the
 command reads the pair offline. Neither interval is third-party evidence for the other, and
 countersigning does not make it so: the outside evidence lives in the receipts each claim came from,
@@ -626,8 +641,8 @@ narrower one, so where they touch or overlap the answer is that the order is und
 receive interval sits wholly before the send, one clock is outside its own bound or one party is
 lying, and the pair cannot say which. A holder of one exchange cannot see whether the same request
 was answered more than once. A pair signed by two keys nobody has heard of is a valid pair, and
-nothing in it says who holds either key. A receiver that declines to countersign records a refusal
-and stops nothing.
+nothing in it says who holds either key. A receiver that declines to countersign signs nothing,
+keeps nothing and stops nothing.
 
 **There is no refusal receipt.** A refusal is a return value inside the agent. Nothing signed and
 nothing portable is produced, so there is no artefact a third party could be shown. The phrase reads
