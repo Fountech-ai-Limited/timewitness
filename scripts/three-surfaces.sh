@@ -421,20 +421,27 @@ compare_site() {
 # list then has no public copy on the site, and the copy a stranger can read is the markdown in this
 # repository. That is a state the wire route states rather than a surface it failed to reach, so it
 # is asserted on both halves: the list's address has to answer 308 to the root, and the root has to
-# carry the holding page's own `tw-stage` tag. A site that answers anything else is read and compared
-# as it always was, so the marketing site coming back to the public address is compared on the day
-# it does.
+# be the holding page itself. A site that answers anything else is read and compared as it always
+# was, so the marketing site coming back to the public address is compared on the day it does.
+#
+# The root is read as a page by `scripts/the-apex-is-the-holding-page.py`, and until 2026-09-23 it
+# was searched for the tag's bytes instead: the tag in a comment, in a script string, in a textarea,
+# on a page with no link to the list, or in the body of a redirect elsewhere all passed, seven shapes
+# of eleven that were not the holding page. That script's self-test drives this branch with each of
+# them, because the scheduled guard is the only other thing that runs it.
 holding=1
 apex_holding() {
-  local apex answer
+  local apex answer status
   apex="$(printf '%s' "$site_url" | sed -E 's#^(https?://[^/]+).*#\1/#')"
   answer="$(curl -sS --max-time 30 -o /dev/null -w '%{http_code} %{redirect_url}' "$site_url" 2>/dev/null)" || return 1
   [ "$answer" = "308 $apex" ] || return 1
-  curl -fsS --max-time 30 "$apex" -o "$scratch/apex.html" 2>/dev/null || return 1
-  case "$(cat "$scratch/apex.html")" in
-    *'<meta name="tw-stage" content="holding"'*) return 0 ;;
-  esac
-  return 1
+  status="$(curl -sS --max-time 30 -o "$scratch/apex.html" -w '%{http_code}' "$apex" 2>/dev/null)" || return 1
+  if ! python3 scripts/the-apex-is-the-holding-page.py "$status" "$scratch/apex.html" 2>"$scratch/apex.why"; then
+    echo "three surfaces: $site_url sends the list to $apex, and $apex is not the holding page:" >>"$attempt"
+    sed 's/^/  /' "$scratch/apex.why" >>"$attempt"
+    return 1
+  fi
+  return 0
 }
 
 # The tree routes take the file beside this tree, because that is the copy a pre-push hook is trying
