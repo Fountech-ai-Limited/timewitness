@@ -1,5 +1,12 @@
 # What TimeWitness cannot prove
 
+Version 21, 2026-09-23. Supersedes version 20 of 2026-09-19, which it keeps whole, adds one item to
+and extends one. The new item says what a countersigned exchange cannot prove, now that the command
+reading one is on `main`. The item on the oscillator said the read-back cannot see a machine outside
+the band before the first sharp fit, and it is equally blind behind any fit whose error bar is wider
+than the band, at any uptime; it now says so, and says what the agent prints instead. The list runs
+to 61 items. Version 20 said 59 when it ran to 60, counted the way the verifier counts them.
+
 Version 20, 2026-09-19. Supersedes version 19 of 2026-09-15, which it keeps whole and corrects in two
 places, both of them the same fault. The claim at the head of the list said the outside evidence pins
 the moment to a few seconds, and the note on version 18 said it again. An authority that states no
@@ -244,9 +251,12 @@ measured nothing about this counter, so neither the magnitude nor the error bar 
 widening is half the band, exactly as it is before any fit at all. That is what every start
 produces, because the first rounds are a fraction of a second apart and a rate fitted across a
 fraction of a second is the sources' own scatter divided by almost nothing. So what it cannot do is
-see a machine outside the band until there is a fit sharp enough to say so, and there is none in
-the first rounds after a start. On a machine outside the
-band, nothing on this page is a promise the arithmetic can keep.
+see a machine outside the band until there is a fit sharp enough to say so, and there is none in the
+first rounds after a start. The read-back is blind in the same way wherever a fit's error bar is
+wider than the band, whatever the agent's uptime: it answers that it cannot tell where this
+machine's rate sits, the agent prints that answer rather than an inside reading, and a machine
+outside the band goes unseen for as long as the fit stays that blunt. On a machine outside the band,
+nothing on this page is a promise the arithmetic can keep.
 
 ## About the evidence, and this is where most of the surprises are
 
@@ -605,6 +615,19 @@ the one-shot command signed before 2026-09-15 states that older ceiling in its o
 before it, both signed, and no code anywhere compares two receipts, so nothing that exists today can
 put two receipts in order. The claim this product opens with is bounded time and unbroken order, and
 the second half of it is carried rather than checked.
+
+**A countersigned exchange shows that two claims are consistent with an order, and nothing more.**
+The `timewitness countersign` command that reads one is on `main` and in no release. Two agents each
+sign a statement about their own clock, the receiver names the sender's request by its hash, and the
+command reads the pair offline. Neither interval is third-party evidence for the other, and
+countersigning does not make it so: the outside evidence lives in the receipts each claim came from,
+which the exchange names by hash and does not carry. The two intervals are never combined into a
+narrower one, so where they touch or overlap the answer is that the order is undecided. Where the
+receive interval sits wholly before the send, one clock is outside its own bound or one party is
+lying, and the pair cannot say which. A holder of one exchange cannot see whether the same request
+was answered more than once. A pair signed by two keys nobody has heard of is a valid pair, and
+nothing in it says who holds either key. A receiver that declines to countersign records a refusal
+and stops nothing.
 
 **There is no refusal receipt.** A refusal is a return value inside the agent. Nothing signed and
 nothing portable is produced, so there is no artefact a third party could be shown. The phrase reads
