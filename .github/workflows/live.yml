@@ -19,6 +19,10 @@ name: Live
 # log at run time by `scripts/our-servers.py --list`, which is the same reader that holds every
 # surface to that log, so a server added to it is asked the next morning and nothing here names one.
 #
+# It starts a fresh agent ten times from cold and times how soon `timewitness status` says how wrong
+# the clock could be, from 2026-09-24. The README states that time, and a stated time is a claim
+# about a machine that can reach the servers, which is this job and no other in this repository.
+#
 # What it does not run: the printer in the clock crate, which asserts nothing.
 #
 # A failure is visible without a log: the badge in the README turns red, and the run's summary is a
@@ -33,6 +37,7 @@ on:
       - '.github/workflows/live.yml'
       - 'scripts/live-summary.sh'
       - 'scripts/our-servers.py'
+      - 'scripts/status-from-cold.py'
 
 permissions:
   contents: read
@@ -98,4 +103,25 @@ jobs:
           done <<<"$servers"
           printf '\n### Our own Roughtime servers\n\n' >>"$GITHUB_STEP_SUMMARY"
           bash scripts/live-summary.sh <"$out" >>"$GITHUB_STEP_SUMMARY" || status=1
+          exit "$status"
+
+      # Ten cold starts of the agent, each asked every half second until `status` prints the width
+      # and the plain sentence, and each stopped by the number it was started under. It fails if a
+      # start takes longer than the time the README states, or if the README and the code state
+      # different times. It runs whatever the steps above said, because it asks the same public
+      # servers for a different reason. The self-test goes first, so a reader that no longer
+      # recognises an answer is caught before it is trusted with ten.
+      - name: A fresh agent says how wrong the clock could be within the stated time
+        if: ${{ !cancelled() }}
+        run: |
+          python3 scripts/status-from-cold.py --self-test
+          cargo build --locked --release -p timewitness-cli
+          status=0
+          python3 scripts/status-from-cold.py --starts 10 >"$RUNNER_TEMP/cold.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/cold.txt"
+          {
+            printf '\n### A fresh agent, ten starts from cold\n\n```\n'
+            tail -n 18 "$RUNNER_TEMP/cold.txt"
+            printf '```\n'
+          } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"

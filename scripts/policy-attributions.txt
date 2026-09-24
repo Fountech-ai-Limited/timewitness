@@ -1,4 +1,4 @@
 # The generated grade of figures.json: every entry given to every other subject in every phrasing and form. Written by --attributions; --self-test refuses a register whose vocabulary has changed since.
 vocabulary 2f19a263052cc342818f1ab7d916ceb07454ed3568e1019a353b37a5e0dee35a
 generator 1
-lines 88221
+lines 96572

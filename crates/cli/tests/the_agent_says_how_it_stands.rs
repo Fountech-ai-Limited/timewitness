@@ -11,7 +11,9 @@ use std::process::{Command, Output};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use timewitness_agent::wire::{encode_reading, encode_refusal, Endpoint, TOKEN_BYTES};
+use timewitness_agent::wire::{
+    encode_reading, encode_refusal, encode_refusal_past_ceiling, Endpoint, TOKEN_BYTES,
+};
 use timewitness_core::UnixNanos;
 use timewitness_receipt::open;
 
@@ -98,6 +100,15 @@ fn an_agent_that_answers_is_described_by_its_bound_and_its_sources() {
     assert!(words.contains("last heard"), "{words}");
     assert!(words.contains("left alone"), "{words}");
     assert!(words.contains("not how right it is"), "{words}");
+    // The plain sentence, which is what somebody new reads first.
+    assert!(
+        words.contains("Right now the time it gives could be wrong by as much as "),
+        "{words}"
+    );
+    assert!(
+        words.contains("A stamp taken now would carry that bound."),
+        "{words}"
+    );
     for never in ["accurate", "accuracy"] {
         assert!(!words.to_lowercase().contains(never), "{never}: {words}");
     }
@@ -115,6 +126,67 @@ fn an_agent_that_refuses_is_said_to_be_up_and_refusing_with_its_reason() {
     assert!(words.contains("would not give a reading"), "{words}");
     assert!(
         words.contains("not heard from enough sources yet"),
+        "{words}"
+    );
+    // An agent this young is told to be still on its way to a first bound, and when to ask again.
+    assert!(words.contains("has no bound to give yet"), "{words}");
+}
+
+#[test]
+fn a_bound_past_the_ceiling_is_stated_in_a_plain_sentence_and_still_refused() {
+    // A fresh agent's first minutes: the model has a bound and it is wider than the agent will sign
+    // for. The status says the width, in words somebody new can read, and exits as a refusal does.
+    let endpoint = stand_in(
+        "past",
+        encode_refusal_past_ceiling(
+            1_203_645_522,
+            250_000_000,
+            "the bound has grown to 1203.645522 ms, past the 250 ms ceiling this model will sign \
+             for",
+        ),
+    );
+    let output = status(&endpoint);
+    let words = said(&output);
+    assert_eq!(output.status.code(), Some(1), "{words}");
+    assert!(
+        words.contains(
+            "Right now the time it gives could be wrong by as much as 1.204 s, on its own model."
+        ),
+        "{words}"
+    );
+    assert!(
+        words.contains("past the 250.000 ms it will sign for"),
+        "{words}"
+    );
+    assert!(
+        words.contains("a stamp taken now would be refused"),
+        "{words}"
+    );
+    // The endpoint file was written a moment ago, so this reads as an agent still settling.
+    assert!(words.contains("It started "), "{words}");
+    assert!(
+        words.contains("the agent said  the bound has grown to")
+            && words.contains("not how right it is"),
+        "{words}"
+    );
+    for never in ["accurate", "accuracy"] {
+        assert!(!words.to_lowercase().contains(never), "{never}: {words}");
+    }
+}
+
+#[test]
+fn a_bound_too_wide_to_state_is_said_to_be_more_than_an_hour() {
+    let endpoint = stand_in(
+        "widest",
+        encode_refusal_past_ceiling(i128::MAX, 250_000_000, "the bound has grown past anything"),
+    );
+    let output = status(&endpoint);
+    let words = said(&output);
+    assert_eq!(output.status.code(), Some(1), "{words}");
+    assert!(
+        words.contains(
+            "Right now the time it gives could be wrong by more than an hour, on its own model."
+        ),
         "{words}"
     );
 }

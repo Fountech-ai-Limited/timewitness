@@ -278,6 +278,8 @@ pub fn usage() -> String {
         "      Whether the agent is up, and how wide its bound is right now: the width,\n",
     );
     out.push_str("      how many sources it rests on and how long since it last heard from one.\n");
+    out.push_str("      It says in one sentence how wrong the clock could be, and says it with\n");
+    out.push_str("      the width while a fresh agent's bound is still too wide to sign.\n");
     out.push_str("      It asks the agent what a stamp asks it, signs nothing and writes\n");
     out.push_str("      nothing, and it says so plainly where no agent is running.\n\n");
     out.push_str("      --agent <file>      the endpoint file the agent wrote\n\n");
@@ -905,6 +907,18 @@ pub fn agent_started(endpoint_path: &str, address: &str, at: AgentStart) -> Stri
     out.push_str(
         "Nothing is stamped here. It hands over readings and a caller builds the receipt.\n",
     );
+    // What somebody who has just started it wants to know next, said before they have to ask. Both
+    // times are the ones `status` states and the README measures.
+    out.push_str(&format!(
+        "`timewitness status --agent {endpoint_path}` says how wrong the clock could be,\n"
+    ));
+    out.push_str(&format!(
+        "within {} s of starting where the sources answer. Its bound swings above the\n",
+        crate::status_cmd::FIRST_BOUND_WITHIN,
+    ));
+    out.push_str("ceiling between rounds while it learns this machine's clock: in ten starts\n");
+    out.push_str("measured on one desktop, most stamps in the first two minutes were refused,\n");
+    out.push_str("and a refusal was only occasional after about three.\n");
     out
 }
 

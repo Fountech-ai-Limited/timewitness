@@ -38,7 +38,11 @@ use timewitness_receipt::schema::TakenBy;
 use timewitness_sources::{Exchange, TimeSource};
 
 use crate::resident::Resident;
-use crate::wire::{carrier, encode_reading, encode_refusal, tokens_match, TOKEN_BYTES};
+use timewitness_core::Validity;
+
+use crate::wire::{
+    carrier, encode_reading, encode_refusal, encode_refusal_past_ceiling, tokens_match, TOKEN_BYTES,
+};
 
 /// How often the agent asks the sources, and how hard it works to be able to answer at all.
 #[derive(Clone, Copy, Debug)]
@@ -412,7 +416,16 @@ pub fn answer(
                 Ok(stamp) => encode_reading(&carrier(&stamp, policy, TakenBy::ResidentAgent)),
                 // The refusal working rather than a fault. A wider interval says something true and
                 // a narrow wrong one does not, and the last good reading is never offered.
-                Err(refusal) => encode_refusal(&format!("{refusal}")),
+                //
+                // Where the model worked out a bound and it was past the ceiling, the width goes
+                // with the refusal, so `status` can say how wrong the clock could be while a fresh
+                // agent is still above its ceiling. It is still a refusal and nothing signs it.
+                Err(refusal) => match refusal.validity {
+                    Validity::BoundTooWide { width, ceiling } => {
+                        encode_refusal_past_ceiling(width, ceiling, &format!("{refusal}"))
+                    }
+                    _ => encode_refusal(&format!("{refusal}")),
+                },
             }
         }
         Err(_) => encode_refusal(
