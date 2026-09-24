@@ -1383,15 +1383,15 @@
    }
   },
   {
-   "figure": "30",
+   "figure": "60",
    "unit": "s",
    "precision": "1 s",
    "whose": "ours, a setting",
-   "conditions": "how soon a fresh agent's status gives the width and the plain sentence, a stated time rather than a measurement, held by scripts/status-from-cold.py to ten measured starts that took 1.9 s to 6.6 s. The same two characters are the one-shot ceiling until 2026-09-15, which is its own entry",
+   "conditions": "how soon a fresh agent's status gives the width and the plain sentence, a stated time rather than a measurement, held by scripts/status-from-cold.py to measured starts: 29 of 30 inside 9 s and one at 38.9 s, on an ordinary desktop on 2026-09-24",
    "evidence": {
     "kind": "code",
     "artefact": "crates/cli/src/status_cmd.rs",
-    "note": "FIRST_BOUND_WITHIN, whose documentation states 30 s"
+    "note": "FIRST_BOUND_WITHIN, whose documentation states 60 s"
    },
    "of": "a setting or a condition",
    "saidWith": [
@@ -1402,12 +1402,14 @@
    "figure": [
     "1.9",
     "6.6",
-    "15"
+    "15",
+    "8.3",
+    "38.9"
    ],
    "unit": "s",
    "precision": "0.1 s",
    "whose": "ours",
-   "conditions": "the uptime at which status first gave the width and the plain sentence, and the last fifteen seconds of five minutes in which four of the ten refused; ten fresh resident agents started one after another on an ordinary Windows desktop, 2026-09-24 from 11:59:55 UTC, nine published servers, thirty-two second cadence, 250 ms ceiling, each asked with timewitness status twice a second for five minutes",
+   "conditions": "the uptime at which status first gave the width and the plain sentence, and the last fifteen seconds of five minutes in which four of the ten refused; fresh resident agents on an ordinary Windows desktop, 2026-09-24 from 11:59:55 UTC, nine published servers, thirty-two second cadence, 250 ms ceiling, thirty starts in three runs of ten",
    "evidence": {
     "kind": "record",
     "artefact": "docs/records/2026-09-24-status-from-cold-uptime-marks.json"

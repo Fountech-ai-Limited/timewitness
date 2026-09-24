@@ -48,13 +48,16 @@ const DESCRIBE_UP_TO: i128 = 3_600 * NANOS_PER_SEC;
 
 /// How soon a fresh agent has a first bound for a status to state, in seconds.
 ///
-/// 30 s, a stated time held to ten measured starts rather than chosen: on 2026-09-24 they gave a
-/// first width at 1.9 s to 6.6 s of uptime on an ordinary desktop. The margin is for a first round
-/// that waits out a source or two, since a round asks nine servers one after another and each may
-/// take five seconds to give up. The README carries the starts, with the machine, the network and
-/// the date, and `scripts/status-from-cold.py` fails if a start takes longer than this or if the
-/// README states a different figure.
-pub const FIRST_BOUND_WITHIN: u64 = 30;
+/// 60 s, a stated time held to measured starts rather than chosen. On 2026-09-24 on an ordinary
+/// desktop, 29 of 30 starts gave a first width inside 9 s, from the four settling rounds. The
+/// thirtieth took 38.9 s: the model refused all four settling rounds, because the sources that could
+/// have disagreed did not agree with each other, and the first bound came with the next round,
+/// thirty-two seconds on. It was 30 s until that start showed it was a figure the starts did not
+/// support. A minute covers one missed set of settling rounds and nothing more, so a start that
+/// misses the next round as well is past it, and the check says so. The README carries the starts,
+/// with the machine, the network and the date, and `scripts/status-from-cold.py` fails if a start
+/// takes longer than this or if the README states a different figure.
+pub const FIRST_BOUND_WITHIN: u64 = 60;
 
 /// How long a status goes on telling somebody that a fresh agent is still settling, in seconds.
 ///
@@ -240,9 +243,9 @@ fn first_bound_to_come(uptime: Option<Duration>) -> Option<String> {
     let up = uptime?.as_secs();
     (up < FIRST_BOUND_WITHIN).then(|| {
         format!(
-            "It started {up} s ago and is still asking its sources. A fresh agent has had a first \
-             bound within {FIRST_BOUND_WITHIN} s of starting in every start measured, so ask again \
-             then."
+            "It started {up} s ago and has no bound to give yet. In the starts measured on one \
+             desktop a fresh agent had one within {FIRST_BOUND_WITHIN} s of starting, most of them \
+             within ten seconds, so ask again then."
         )
     })
 }

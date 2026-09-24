@@ -129,7 +129,7 @@ fn an_agent_that_refuses_is_said_to_be_up_and_refusing_with_its_reason() {
         "{words}"
     );
     // An agent this young is told to be still on its way to a first bound, and when to ask again.
-    assert!(words.contains("still asking its sources"), "{words}");
+    assert!(words.contains("has no bound to give yet"), "{words}");
 }
 
 #[test]

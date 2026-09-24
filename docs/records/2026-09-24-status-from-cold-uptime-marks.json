@@ -3,13 +3,16 @@
  "path": "the resident agent",
  "date": "2026-09-24",
  "cadenceSeconds": 32,
- "how": "Ten resident agents started from cold one after another from 11:59:55 UTC on 2026-09-24 on an ordinary Windows desktop with 32 processors and other builds running on it, against the nine published servers, thirty-two second cadence, 250 ms ceiling, each asked with timewitness status twice a second for five minutes and stopped by its process number, by scripts/status-from-cold.py --starts 10 --watch 300. The binary was the tree at 915c99f with this change on top. Every answer, with its uptime, its kind and its width, is on the desktop that took it, under the product's tests/build-checks/2026-09-24-351/.",
+ "how": "Ten resident agents started from cold one after another from 11:59:55 UTC on 2026-09-24 on an ordinary Windows desktop with 32 processors and other builds running on it, against the nine published servers, thirty-two second cadence, 250 ms ceiling, each asked with timewitness status twice a second for five minutes and stopped by its process number, by scripts/status-from-cold.py --starts 10 --watch 300. The binary was the tree at 915c99f with this change on top. Every answer, with its uptime, its kind and its width, is on the desktop that took it, under the product's tests/build-checks/2026-09-24-351/. Two more runs of ten followed on the same desktop the same afternoon, from 13:03:13 UTC on cce5b82 and from 13:23:02 UTC on ebc32f2, with scripts/status-from-cold.py --starts 10, which stops each agent at its first width: nineteen starts gave it at 2.0 s to 8.3 s and one at 38.9 s, after the model refused all four settling rounds.",
  "figures": [
   "1.9",
   "6.6",
-  "15"
+  "15",
+  "2.0",
+  "8.3",
+  "38.9"
  ],
  "unit": "s",
  "of": "a setting or a condition",
- "what": "Uptime marks of ten fresh agents: status first gave the width and the plain sentence at 1.9 s to 6.6 s, and four of the ten refused at least once in their last fifteen seconds of five minutes"
+ "what": "Uptime marks of fresh agents: status first gave the width and the plain sentence at 1.9 s to 6.6 s on the ten starts watched for five minutes, four of which refused at least once in their last fifteen seconds; and at 2.0 s to 8.3 s on nineteen of twenty later starts and 38.9 s on the twentieth"
 }
