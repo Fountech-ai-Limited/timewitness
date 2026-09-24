@@ -595,6 +595,36 @@ pub fn fields(a: &Assessment) -> String {
                 .signed_by()
                 .map_or_else(|| "none".to_string(), |key| hex(&key)),
         );
+        // Which entry vouches for the key at the reading, and every window the log names for it,
+        // each as `entry:from..until` with `open` where no end is stated. A script checking that a
+        // key outside its window was refused wants the window it fell outside, not only the word.
+        write_field(
+            &mut out,
+            "key_log_entry",
+            log.entry
+                .map_or_else(|| "none".to_string(), |n| n.to_string()),
+        );
+        write_field(
+            &mut out,
+            "key_log_windows",
+            if log.windows.is_empty() {
+                "none".to_string()
+            } else {
+                log.windows
+                    .iter()
+                    .map(|w| {
+                        format!(
+                            "{}:{}..{}",
+                            w.entry,
+                            w.from.as_nanos(),
+                            w.until
+                                .map_or_else(|| "open".to_string(), |u| u.as_nanos().to_string())
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            },
+        );
         for (name, question) in [
             ("key_log_step", KEY_LOG_QUESTION),
             ("kept_log", KEPT_LOG_QUESTION),
