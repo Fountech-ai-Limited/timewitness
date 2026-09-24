@@ -92,6 +92,16 @@ const A_REFUSAL: u8 = 0;
 /// sixteen bytes each, big-endian, and then the reason as text.
 const A_REFUSAL_PAST_CEILING: u8 = 2;
 
+/// What an agent says to a caller whose token is not its own.
+///
+/// Named here rather than written inline in the agent, because an agent about to start reads it too.
+/// An endpoint file whose address answers with this sentence names a port some other agent now
+/// holds, and that agent was never started from this file, so the file is a stale one and not a
+/// live one. See [`is_an_agents_answer`].
+pub const NOT_THIS_TOKEN: &str = "that is not this agent's token. The endpoint file this agent \
+                                  wrote carries the right one, and it is readable only by the \
+                                  account the agent runs as";
+
 /// The bytes the two figures on a refusal past the ceiling take up, ahead of the reason.
 const PAST_CEILING_FIGURES: usize = 32;
 
@@ -172,7 +182,9 @@ impl Endpoint {
         }
         // Not `create_new`. An agent that was killed leaves its file behind and the next one has to
         // be able to start, which is the opposite of the key file, where writing over one would
-        // orphan every receipt it ever signed. There is nothing here that cannot be made again.
+        // orphan every receipt it ever signed. There is nothing here that cannot be made again. A
+        // file whose agent still answers is a different matter, and the agent asks before it gets
+        // here: see [`crate::crossing::an_agent_answers`].
         let mut options = fs::OpenOptions::new();
         options.write(true).create(true).truncate(true);
         #[cfg(unix)]
@@ -320,6 +332,22 @@ pub fn encode_refusal_past_ceiling(width: Nanos, ceiling: Nanos, why: &str) -> V
     out.extend_from_slice(&ceiling.to_be_bytes());
     out.extend_from_slice(why.as_bytes());
     out
+}
+
+/// Whether a reply is an agent answering the token it was sent, whatever it answered.
+///
+/// A reading, a refusal and a refusal past the ceiling all count, because an agent that has not
+/// synchronised yet, or is already answering sixty-four callers, is still an agent holding that
+/// endpoint. Only the first byte is read for a reading, so an agent from an older release, whose
+/// reading this end would refuse to use, still counts as one. Two things do not count: an agent
+/// saying the token is not its own, and anything that does not start the way a reply starts.
+#[must_use]
+pub fn is_an_agents_answer(reply: &[u8]) -> bool {
+    match reply.split_first() {
+        Some((&A_READING | &A_REFUSAL_PAST_CEILING, _)) => true,
+        Some((&A_REFUSAL, why)) => why != NOT_THIS_TOKEN.as_bytes(),
+        _ => false,
+    }
 }
 
 /// Take a reply apart.
@@ -559,6 +587,23 @@ mod tests {
             TakenBy::ResidentAgent,
         );
         assert!(decode_reply(&encode_reading(&current)).is_ok());
+    }
+
+    #[test]
+    fn any_answer_to_the_token_is_an_agent_and_a_wrong_token_is_not() {
+        assert!(is_an_agents_answer(&encode_refusal(
+            "the model has never synchronised"
+        )));
+        assert!(is_an_agents_answer(&encode_refusal_past_ceiling(
+            300, 250, "past"
+        )));
+        // A reading this end would refuse to use is still somebody's reading.
+        assert!(is_an_agents_answer(&[A_READING, 0xff]));
+        assert!(!is_an_agents_answer(&encode_refusal(NOT_THIS_TOKEN)));
+        assert!(!is_an_agents_answer(&[]));
+        assert!(!is_an_agents_answer(b"HTTP/1.1 400 Bad Request\r\n"));
+        // The sentence is written across three lines, and a person reads it as one.
+        assert!(!NOT_THIS_TOKEN.contains("  "));
     }
 
     #[test]

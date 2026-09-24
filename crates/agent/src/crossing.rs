@@ -13,8 +13,8 @@
 //! [`crate::wire`] for what an attacker who can write the endpoint file actually gets.
 
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpStream, ToSocketAddrs};
-use std::time::Duration;
+use std::net::{Shutdown, SocketAddr, TcpStream, ToSocketAddrs};
+use std::time::{Duration, Instant};
 
 use timewitness_clock::policy::{ppm_over, Policy};
 use timewitness_clock::MonotonicClock;
@@ -22,7 +22,7 @@ use timewitness_core::time::{nanos_as_millis_f64, Nanos, NANOS_PER_SEC};
 use timewitness_core::UnixNanos;
 use timewitness_receipt::schema::Receipt;
 
-use crate::wire::{decode_reply, Endpoint, WireError};
+use crate::wire::{decode_reply, is_an_agents_answer, Endpoint, WireError};
 
 /// Why a caller could not get a reading it could stand behind.
 #[derive(Clone, Debug)]
@@ -283,6 +283,71 @@ pub fn ask(
     })
 }
 
+/// How much of a reply [`an_agent_answers`] reads before it has enough to tell.
+const ENOUGH_OF_A_REPLY: usize = 4_096;
+
+/// Whether an agent still answers at `endpoint`, to the token written in it.
+///
+/// Asked by an agent about to start, before it writes its own address over a file somebody else may
+/// be using. Until 2026-09-24 it did not ask: a second agent on a live endpoint took the file over,
+/// and once it stopped the first was still running and polling other people's time servers with
+/// nothing left to find it by (RC-349).
+///
+/// Only a loopback address is asked. An agent only ever writes one, so a file naming anywhere else
+/// was not written by an agent, and a file is not a reason to send a token off this machine.
+///
+/// It is not proof. Once an agent has stopped, anything on this machine can take its old port and
+/// answer the way an agent does, and the next start on that file is refused. That is why the refusal
+/// says to delete the file where no agent of the reader's own is running.
+///
+/// A port nobody listens on, a port something else now holds, and an agent that says the token is
+/// not its own all read as no, because each means the file outlived the agent that wrote it. An
+/// agent that has not answered inside [`PATIENCE`] also reads as no. That is the one way this can
+/// be wrong, and it takes an agent too stuck to answer a token in two seconds, which is an agent
+/// that was not answering anybody else either. Two agents started in the same instant can both hear
+/// nothing, because each asks before either has written. This closes the case somebody actually
+/// meets, a second agent started while the first is up, and not that one.
+#[must_use]
+pub fn an_agent_answers(endpoint: &Endpoint) -> bool {
+    // Parsed rather than resolved. An agent writes a number and a port, so a name in the file was not
+    // written by one, and looking a name up is a wait with no ceiling of ours on it.
+    let Some(address) = endpoint
+        .address
+        .parse::<SocketAddr>()
+        .ok()
+        .filter(|address| address.ip().is_loopback())
+    else {
+        return false;
+    };
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, PATIENCE) else {
+        return false;
+    };
+    stream.set_write_timeout(Some(PATIENCE)).ok();
+    if stream.write_all(&endpoint.token).is_err() {
+        return false;
+    }
+    stream.shutdown(Shutdown::Write).ok();
+
+    // One wait for the whole reply rather than one per read. A party that sent a byte a second would
+    // otherwise hold every start on this file for as long as it liked, with nothing printed. Whatever
+    // has arrived by then is enough: a reading is known by its first byte and a refusal is a
+    // sentence, so the first few thousand bytes of any reply say which it is.
+    let deadline = Instant::now() + PATIENCE;
+    let mut reply = Vec::with_capacity(ENOUGH_OF_A_REPLY);
+    let mut chunk = [0u8; 512];
+    while reply.len() < ENOUGH_OF_A_REPLY {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() || stream.set_read_timeout(Some(left)).is_err() {
+            break;
+        }
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => reply.extend_from_slice(&chunk[..n]),
+        }
+    }
+    is_an_agents_answer(&reply)
+}
+
 /// Pay for the crossing.
 ///
 /// Write `c1` and `c2` for the caller's own counter at the two marks in [`ask`], and `t` for the
@@ -534,6 +599,44 @@ mod tests {
         let after = widen(&before, 0, 250 * NANOS_PER_MILLI).expect("no widening at all");
         assert_eq!(after.width(), before.width());
         assert_eq!(after.claim.breakdown, before.claim.breakdown);
+    }
+
+    #[test]
+    fn a_file_is_live_only_while_its_own_agent_answers_it() {
+        use crate::wire::{encode_refusal, NOT_THIS_TOKEN};
+        use std::net::TcpListener;
+
+        // A party on a loopback port that answers the way an agent does, once.
+        fn party(reply: Vec<u8>) -> Endpoint {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+            let endpoint =
+                Endpoint::fresh(listener.local_addr().expect("the port").to_string()).unwrap();
+            std::thread::spawn(move || {
+                if let Ok((mut taken, _)) = listener.accept() {
+                    let mut token = [0u8; crate::wire::TOKEN_BYTES];
+                    let _ = taken.read_exact(&mut token);
+                    let _ = taken.write_all(&reply);
+                }
+            });
+            endpoint
+        }
+
+        assert!(an_agent_answers(&party(encode_refusal(
+            "the model has never synchronised"
+        ))));
+        assert!(!an_agent_answers(&party(encode_refusal(NOT_THIS_TOKEN))));
+        assert!(!an_agent_answers(&party(
+            b"HTTP/1.1 400 Bad Request\r\n".to_vec()
+        )));
+
+        // A port nobody holds any more.
+        let gone = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+        let address = gone.local_addr().expect("the port").to_string();
+        drop(gone);
+        assert!(!an_agent_answers(&Endpoint::fresh(address).unwrap()));
+
+        // Somewhere off this machine, which is never asked at all.
+        assert!(!an_agent_answers(&Endpoint::fresh("192.0.2.1:9").unwrap()));
     }
 
     /// A party that takes the connection and then behaves as `then` says, for long enough that the

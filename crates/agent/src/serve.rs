@@ -41,7 +41,8 @@ use crate::resident::Resident;
 use timewitness_core::Validity;
 
 use crate::wire::{
-    carrier, encode_reading, encode_refusal, encode_refusal_past_ceiling, tokens_match, TOKEN_BYTES,
+    carrier, encode_reading, encode_refusal, encode_refusal_past_ceiling, tokens_match,
+    NOT_THIS_TOKEN, TOKEN_BYTES,
 };
 
 /// How often the agent asks the sources, and how hard it works to be able to answer at all.
@@ -407,10 +408,7 @@ pub fn answer(
         return;
     }
     if !tokens_match(&offered, token) {
-        let _ = stream.write_all(&encode_refusal(
-            "that is not this agent's token. The endpoint file this agent wrote carries the right \
-             one, and it is readable only by the account the agent runs as",
-        ));
+        let _ = stream.write_all(&encode_refusal(NOT_THIS_TOKEN));
         return;
     }
 
