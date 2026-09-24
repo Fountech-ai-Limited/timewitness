@@ -264,13 +264,26 @@ fn read_and_retire_later(_log: &str, key: &str, at: i128) -> (Work, PathBuf) {
 
 #[test]
 fn the_log_of_our_own_server_keys_does_not_refuse_our_own_receipt() {
-    // The log we serve first holds two server keys and no agent key. Until 2026-09-15 that log
+    // The log we served first held two server keys and no agent key. Until 2026-09-15 that log
     // refused the committed receipt, "none of them names this key", exit 1, while the verifier's
-    // documentation told a reader to pass it.
+    // documentation told a reader to pass it. From 2026-09-24 the committed entries name our agent
+    // keys as well, so the log that first head covered is rebuilt from their server lines alone.
     let dir = work("server-only");
     let log = dir.join("log.txt");
     let key = dir.join("signing-key");
-    std::fs::copy(repository().join("deploy/key-log/entries.txt"), &log).expect("the entries");
+    let committed = std::fs::read_to_string(repository().join("deploy/key-log/entries.txt"))
+        .expect("the entries");
+    let servers_only: String = committed
+        .lines()
+        .filter(|line| !line.starts_with("entry agent "))
+        .map(|line| {
+            format!(
+                "{line}
+"
+            )
+        })
+        .collect();
+    std::fs::write(&log, servers_only).expect("the server entries");
     std::fs::write(&key, SOMEBODY_ELSES).expect("a key");
     let log_s = log.to_string_lossy().into_owned();
     let key_s = key.to_string_lossy().into_owned();
