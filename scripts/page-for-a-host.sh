@@ -21,14 +21,27 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ref="${1:?page-for-a-host.sh needs a tag or a commit}"
 out="${2:?page-for-a-host.sh needs the folder to write the page into}"
 
+# A tag or a commit, and nothing that moves. A branch name, or HEAD, names a different commit tomorrow,
+# and a record naming one would say where the page came from only on the day it was written.
+if git -C "$root" rev-parse --verify --quiet "refs/tags/$ref" >/dev/null 2>&1; then
+    kind="tag"
+elif [[ "$ref" =~ ^[0-9a-f]{7,40}$ ]]; then
+    kind="commit"
+else
+    echo "$ref is neither a tag nor a commit. Name one of those, since a branch or HEAD moves." >&2
+    exit 1
+fi
 commit="$(git -C "$root" rev-parse --verify --quiet "$ref^{commit}")" || {
-    echo "$ref is not a tag or a commit this clone has. Fetch first." >&2
+    echo "$ref is not a $kind this clone has. Fetch first." >&2
     exit 1
 }
 
 scratch="$root/target/page-for-a-host/$commit"
 rm -rf "$scratch"
 mkdir -p "$(dirname "$scratch")"
+# The clone goes whether the build passes or not, so a failed run leaves nothing to be mistaken for
+# the page next time.
+trap 'rm -rf "$scratch"' EXIT
 git clone --quiet --shared --no-checkout "$root" "$scratch"
 git -C "$scratch" checkout --quiet --detach "$commit"
 
@@ -63,4 +76,3 @@ with open(os.path.join(out, "record.json"), "w", encoding="utf-8", newline="\n")
 print("wrote", os.path.join(out, "verifier.html"), len(data), "bytes, sha256", record["sha256"][:16])
 PYTHON
 
-rm -rf "$scratch"

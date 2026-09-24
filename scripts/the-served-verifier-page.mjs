@@ -16,11 +16,12 @@
 //      page nobody else can reproduce.
 //   2. The page as served passes `verifier-page-offline.mjs`, which reads it for any way it could ask
 //      a network for something.
-//   3. The checking code inside the served page, run on its own, gives the command line's verdict,
-//      width, reading and steps on every receipt below.
-//   4. In a real browser at that address, choosing the receipt and the file it stamps and pressing
-//      the button shows the command line's verdict and width, and the page asks for nothing at all
-//      once it is open. A request carrying the file is named as that.
+//   3. The checking code inside the served page, run on its own, gives the command line's answer on
+//      every receipt below, in every field the two both carry.
+//   4. In a real browser at that address, handed the same bytes this read, choosing the receipt and
+//      the file it stamps and clicking the button shows the command line's verdict and width, and
+//      the page asks for nothing at all once it is open: no request, no socket, no worker, no window,
+//      while it checks and while it is left. A request carrying the file is named as that.
 //
 // The receipts are the one committed in this repository, the same receipt against a file it does not
 // stamp, which has to be refused, and one stamped here and now with the command line, which needs the
@@ -28,15 +29,17 @@
 // <subject>` hands one in rather than taking one.
 //
 // A walled host answers its own sign-in page rather than this one. Where the host is walled, put the
-// wall's read-only check in TIMEWITNESS_APP_WALL_COOKIE, as `name=value`, and it is sent with the
-// page request and nothing else. The app repository's `npm run wall-check` prints one.
+// wall's read-only check in TIMEWITNESS_APP_WALL_COOKIE, as `name=value`. It is sent with this
+// script's own request for the page and set in the browser for that host alone. The app
+// repository's `npm run wall-check` prints one.
 //
 // `--self-test` serves the page this tree built on the loopback address, runs the whole check on it,
-// and then runs it on four seeds, each of which has to be refused by the part written for it: a page
-// that shows the wrong verdict, one that shows the wrong width, one that sends the file it was given,
-// and one built from another commit. The seed that sends the file is written so the page check's spellings cannot see it and the
-// policy is taken out so the browser lets it go, and the server has to receive the file, so the seed
-// is shown connected before its refusal is believed. A guard nobody has seen fail is not evidence.
+// and then runs it on five seeds, each of which has to be refused by the part written for it: a page
+// that shows the wrong verdict, one that shows the wrong width, one that sends the file it was given
+// when the button is clicked, one that sends it as the page is left, and one built from another
+// commit. The two that send are written so the page check's spellings cannot see them and the policy
+// is taken out so the browser lets them go, and the server has to receive the file, so each is shown
+// connected before its refusal is believed. A guard nobody has seen fail is not evidence.
 //
 // Exit 0 when everything holds, 1 when something does not, 2 when the check could not run: no browser,
 // no command line, a host that would not answer, or no fresh receipt. Never a pass.
@@ -54,7 +57,7 @@ const binary = join(root, "target", "release", process.platform === "win32" ? "t
 const fixture = join(root, "crates", "verify", "tests", "data", "a-real-stamp");
 const versionOne = join(root, "crates", "verify", "tests", "data", "a-version-1-stamp");
 const BUILT_FROM = /<meta name="tw-built-from" content="([^"]*)">/;
-const MODULE = /const WASM_BASE64 = "([A-Za-z0-9+/=]+)";/;
+const MODULE = /const WASM_BASE64 = "([A-Za-z0-9+/=]+)";/g;
 const POLICY = /<meta http-equiv="Content-Security-Policy" content="[^"]*">\n/;
 
 class CouldNotRun extends Error {}
@@ -86,12 +89,16 @@ function fromCommandLine(cli, receiptFile, subjectFile) {
   const argv = ["verify", receiptFile, "--json", "--subject", subjectFile];
   // A refused receipt exits 1 and prints its JSON on the error stream, and one case below is meant to
   // be refused, so the exit code is read rather than thrown on.
+  let printed;
   try {
-    return JSON.parse(execFileSync(cli, argv, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+    printed = execFileSync(cli, argv, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   } catch (e) {
-    const printed = e.stdout || e.stderr;
-    if (printed) return JSON.parse(printed);
-    throw e;
+    printed = e.stdout || e.stderr;
+  }
+  try {
+    return JSON.parse(printed);
+  } catch {
+    throw new CouldNotRun(`the command line gave no answer to read on ${receiptFile}: ${String(printed).slice(0, 200)}`);
   }
 }
 
@@ -145,10 +152,15 @@ function aFreshReceipt(cli) {
 // ---------------------------------------------------------------------------------------------------
 // The checking code inside the served page, run on its own.
 
-async function theModuleIn(page) {
-  const encoded = page.match(MODULE);
-  if (!encoded) return null;
-  const instance = (await WebAssembly.instantiate(Buffer.from(encoded[1], "base64"), {})).instance.exports;
+// Exactly one module, because a page carrying two would have this check read one and the browser run
+// the other.
+async function theModuleIn(page, problems) {
+  const found = [...page.matchAll(MODULE)];
+  if (found.length !== 1) {
+    problems.push(`the served page carries ${found.length} modules where the build embeds exactly one`);
+    return null;
+  }
+  const instance = (await WebAssembly.instantiate(Buffer.from(found[0][1], "base64"), {})).instance.exports;
   const put = (bytes) => {
     const address = instance.tw_alloc(bytes.length);
     new Uint8Array(instance.memory.buffer, address, bytes.length).set(bytes);
@@ -177,18 +189,44 @@ function agree(problems, what, page, commandLine) {
   }
 }
 
+// The fields a verdict turns on. Each has to be on both sides or on neither, because a field one
+// side drops is the quietest way for the two to disagree.
+const ON_BOTH = ["accepted", "verdict", "bracket", "steps", "certificate", "receipt_sha256", "claim"];
+
+// Every field the two both carry, all the way down. The two are one core behind two shells, and each
+// shell adds words of its own for its reader, the page its widths in words and the command line its
+// limitation list, so a field only one side carries is not a disagreement. A field both carry that
+// differs by a character is.
+function sharedFieldsAgree(problems, what, page, commandLine, path = "") {
+  if (Array.isArray(page) && Array.isArray(commandLine)) {
+    if (page.length !== commandLine.length) {
+      problems.push(`${what}, ${path || "the answer"}: the served page lists ${page.length} and the command line ${commandLine.length}`);
+      return;
+    }
+    page.forEach((item, i) => sharedFieldsAgree(problems, what, item, commandLine[i], `${path}[${i}]`));
+    return;
+  }
+  const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+  if (isObject(page) && isObject(commandLine)) {
+    for (const key of Object.keys(page)) {
+      if (key in commandLine) sharedFieldsAgree(problems, what, page[key], commandLine[key], path ? `${path}.${key}` : key);
+    }
+    return;
+  }
+  agree(problems, `${what}, ${path || "the answer"}`, page, commandLine);
+}
+
 function theModuleAgrees(problems, what, fromPage, cli) {
   if (fromPage === null) {
     problems.push(`${what}: the checking code in the served page returned nothing`);
     return;
   }
-  agree(problems, `${what}, the verdict`, fromPage.accepted, cli.accepted);
-  agree(problems, `${what}, the verdict line`, fromPage.verdict, cli.verdict);
-  agree(problems, `${what}, the line under the verdict`, fromPage.bracket, cli.bracket);
-  agree(problems, `${what}, the width`, fromPage.claim?.width_ns, cli.claim?.width_ns);
-  agree(problems, `${what}, the reading`, fromPage.claim?.reading_ns, cli.claim?.reading_ns);
-  agree(problems, `${what}, the receipt digest`, fromPage.receipt_sha256, cli.receipt_sha256);
-  agree(problems, `${what}, what was checked`, fromPage.steps, cli.steps);
+  for (const field of ON_BOTH) {
+    if (field in fromPage !== field in cli) {
+      problems.push(`${what}, ${field}: ${field in fromPage ? "the served page" : "the command line"} carries it and the other does not`);
+    }
+  }
+  sharedFieldsAgree(problems, what, fromPage, cli);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -231,8 +269,10 @@ async function until(what, test, seconds = 30) {
 }
 
 // Headless, in a profile of its own under `target/` that is thrown away afterwards, driven over its own
-// debugging protocol. No window opens.
+// debugging protocol. No window opens. Whatever goes wrong on the way up, the browser is stopped and
+// its profile taken away before the failure is reported.
 async function aBrowser() {
+  if (typeof WebSocket === "undefined") throw new CouldNotRun(`this Node, ${process.version}, has no WebSocket to drive a browser with. Use 22 or later`);
   const browser = chrome();
   if (!browser) throw new CouldNotRun("no Chrome was found to drive. Name one with CHROME");
   mkdirSync(work, { recursive: true });
@@ -255,48 +295,10 @@ async function aBrowser() {
     ],
     { stdio: "ignore" },
   );
-  const portFile = join(profile, "DevToolsActivePort");
-  await until("opening its debugging port", () => existsSync(portFile) && readFileSync(portFile, "utf8").includes("\n"));
-  const [port, path] = readFileSync(portFile, "utf8").split("\n");
-  const socket = new WebSocket(`ws://127.0.0.1:${port}${path}`);
-  await new Promise((resolve, reject) => {
-    socket.addEventListener("open", resolve, { once: true });
-    socket.addEventListener("error", () => reject(new CouldNotRun("the browser's debugging port would not take a connection")), { once: true });
-  });
+  let socket = null;
 
-  let next = 0;
-  const waiting = new Map();
-  const listeners = new Set();
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(event.data);
-    if (message.id !== undefined && waiting.has(message.id)) {
-      const { resolve, reject } = waiting.get(message.id);
-      waiting.delete(message.id);
-      if (message.error) reject(new Error(`${message.error.message}`));
-      else resolve(message.result);
-    } else if (message.method) {
-      for (const listener of listeners) listener(message);
-    }
-  });
-  const send = (method, params = {}, sessionId) => {
-    next += 1;
-    const id = next;
-    socket.send(JSON.stringify({ id, method, params, sessionId }));
-    return new Promise((resolve, reject) => {
-      waiting.set(id, { resolve, reject });
-      setTimeout(() => {
-        if (waiting.delete(id)) reject(new CouldNotRun(`the browser did not answer ${method}`));
-      }, 30000);
-    });
-  };
-
-  const close = async () => {
-    try {
-      await send("Browser.close");
-    } catch {
-      // Already going.
-    }
-    socket.close();
+  const stop = async () => {
+    socket?.close();
     const gone = () => child.exitCode !== null || child.signalCode !== null;
     for (let i = 0; i < 50 && !gone(); i += 1) await sleep(100);
     if (!gone()) {
@@ -314,39 +316,137 @@ async function aBrowser() {
       // Left for the next run.
     }
   };
-  return { send, listeners, close };
+
+  let next = 0;
+  const waiting = new Map();
+  const listeners = new Set();
+  const requestListeners = new Set();
+  const send = (method, params = {}, sessionId) => {
+    next += 1;
+    const id = next;
+    socket.send(JSON.stringify({ id, method, params, sessionId }));
+    return new Promise((resolve, reject) => {
+      waiting.set(id, { resolve, reject });
+      setTimeout(() => {
+        if (waiting.delete(id)) reject(new CouldNotRun(`the browser did not answer ${method}`));
+      }, 30000);
+    });
+  };
+
+  try {
+    const portFile = join(profile, "DevToolsActivePort");
+    await until("opening its debugging port", () => existsSync(portFile) && readFileSync(portFile, "utf8").includes("\n"));
+    const [port, path] = readFileSync(portFile, "utf8").split("\n");
+    socket = new WebSocket(`ws://127.0.0.1:${port}${path}`);
+    await new Promise((resolve, reject) => {
+      socket.addEventListener("open", resolve, { once: true });
+      socket.addEventListener("error", () => reject(new CouldNotRun("the browser's debugging port would not take a connection")), { once: true });
+    });
+    socket.addEventListener("message", (event) => {
+      const message = JSON.parse(event.data);
+      if (message.id !== undefined && waiting.has(message.id)) {
+        const { resolve, reject } = waiting.get(message.id);
+        waiting.delete(message.id);
+        if (message.error) reject(new Error(`${message.error.message}`));
+        else resolve(message.result);
+      } else if (message.method) {
+        for (const listener of listeners) listener(message);
+      }
+    });
+    // Every new target the browser makes is announced, so a window the page opens is seen.
+    await send("Target.setDiscoverTargets", { discover: true });
+    // Every request the browser makes, from any page, frame or worker and at any moment, is held at
+    // the browser itself until it is read and let go. A tab's own list of requests misses the ones a
+    // page sends as it is left, which is exactly when a page that wanted to hide a send would send,
+    // so that list is not the one this reads.
+    listeners.add((message) => {
+      if (message.method !== "Fetch.requestPaused") return;
+      for (const listener of requestListeners) listener(message.params);
+      send("Fetch.continueRequest", { requestId: message.params.requestId }, message.sessionId).catch(() => {});
+    });
+    await send("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
+    // A browser that says it is headless is one a page could behave differently for.
+    const { userAgent } = await send("Browser.getVersion");
+    const ordinary = userAgent.replace("HeadlessChrome", "Chrome");
+    return {
+      send,
+      listeners,
+      requestListeners,
+      ordinary,
+      close: async () => {
+        await send("Browser.close").catch(() => {});
+        await stop();
+      },
+    };
+  } catch (e) {
+    await stop();
+    throw e;
+  }
 }
 
-// One receipt, in a tab of its own. What the page shows, and every request the tab made, with the
-// moment it made it.
+// One receipt, in a tab of its own. What the page shows, the bytes the browser was handed, and
+// everything the tab reached for, with the moment it reached for it.
 async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile) {
   const { targetId } = await browser.send("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await browser.send("Target.attachToTarget", { targetId, flatten: true });
   const tab = (method, params) => browser.send(method, params, sessionId);
   const requests = [];
+  const others = [];
   let phase = "while the page was loading";
   let loaded = false;
+  let documentId = null;
   const listener = (message) => {
-    if (message.sessionId !== sessionId) return;
-    if (message.method === "Page.loadEventFired") loaded = true;
-    if (message.method === "Network.requestWillBeSent") {
-      const { requestId, request, type } = message.params;
-      requests.push({ requestId, phase, type, method: request.method, url: request.url, hasPostData: request.hasPostData, entries: request.postDataEntries, postData: request.postData });
+    const { method, params } = message;
+    // A window the page opened, which is a way of sending the reader, and anything they chose, away.
+    if (method === "Target.targetCreated" && params.targetInfo.openerId === targetId) {
+      others.push({ kind: `a ${params.targetInfo.type}`, url: params.targetInfo.url, phase });
     }
+    if (message.sessionId !== sessionId) return;
+    if (method === "Page.loadEventFired") loaded = true;
+    // The tab's own list is read for one thing only, which request brought the document, so the bytes
+    // the browser was handed can be read back.
+    if (method === "Network.requestWillBeSent" && params.type === "Document" && documentId === null) documentId = params.requestId;
+    if (method === "Network.webSocketCreated") requests.push({ phase, type: "WebSocket", method: "WEBSOCKET", url: params.url });
+    // A worker, a shared worker, a service worker or a frame in a process of its own: each runs code
+    // the tab's own request list cannot see, and the page has none of them.
+    if (method === "Target.attachedToTarget") others.push({ kind: `a ${params.targetInfo.type}`, url: params.targetInfo.url, phase });
+  };
+  const recorder = (paused) => {
+    const { request, resourceType } = paused;
+    requests.push({ phase, type: resourceType, method: request.method, url: request.url, entries: request.postDataEntries, postData: request.postData });
   };
   browser.listeners.add(listener);
+  browser.requestListeners.add(recorder);
   try {
     await tab("Network.enable");
     await tab("Page.enable");
     await tab("DOM.enable");
     await tab("Runtime.enable");
-    if (cookie) await tab("Network.setExtraHTTPHeaders", { headers: { Cookie: cookie } });
+    await tab("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+    await tab("Network.setUserAgentOverride", { userAgent: browser.ordinary });
+    if (cookie) {
+      const split = cookie.indexOf("=");
+      const { success } = await tab("Network.setCookie", {
+        name: cookie.slice(0, split),
+        value: cookie.slice(split + 1),
+        url: new URL("/", address).href,
+        path: "/",
+        secure: new URL(address).protocol === "https:",
+        httpOnly: true,
+      });
+      if (!success) throw new CouldNotRun("the browser would not take the wall's check for that host");
+    }
     const evaluate = async (expression) => (await tab("Runtime.evaluate", { expression, returnByValue: true })).result.value;
 
     await tab("Page.navigate", { url: address });
     await until("the page loading", () => loaded);
     await until("the page's checking code coming up", () => evaluate('!!document.getElementById("go") && !document.getElementById("go").disabled'));
     phase = "after the page had loaded";
+    let loadedBytes = null;
+    if (documentId) {
+      const body = await tab("Network.getResponseBody", { requestId: documentId });
+      loadedBytes = Buffer.from(body.body, body.base64Encoded ? "base64" : "utf8");
+    }
 
     const { root: documentNode } = await tab("DOM.getDocument", { depth: 1 });
     for (const [selector, file] of [["#receipt", receiptFile], ["#subject", subjectFile]]) {
@@ -355,33 +455,40 @@ async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile) 
       await tab("DOM.setFileInputFiles", { nodeId, files: [file] });
     }
     phase = "after the files were chosen";
-    await evaluate('document.getElementById("go").click()');
+
+    // Clicked as a person clicks, with the mouse, so the page has the user activation a real click
+    // gives it and cannot tell this from one.
+    const at = JSON.parse(
+      await evaluate(
+        '(() => { const b = document.getElementById("go"); b.scrollIntoView({ block: "center" }); const r = b.getBoundingClientRect(); return JSON.stringify({ x: r.x + r.width / 2, y: r.y + r.height / 2 }); })()',
+      ),
+    );
+    for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+      await tab("Input.dispatchMouseEvent", { type, x: at.x, y: at.y, button: type === "mouseMoved" ? "none" : "left", clickCount: 1 });
+    }
     await until("a verdict on the page", () =>
       evaluate(
         '!document.getElementById("result").hidden && document.getElementById("go").textContent !== "Checking" && document.getElementById("verdict").textContent !== ""',
       ),
     );
-    // Anything the page sends on the way to its verdict has been sent by now; a moment more is given
-    // for a send that waits on something.
-    await sleep(750);
-    const shown = await evaluate(`JSON.stringify({
-      verdict: document.getElementById("verdict").textContent,
-      state: document.getElementById("verdict").className.replace("verdict", "").trim(),
-      bracket: document.getElementById("verdict-bracket").textContent,
-      claim: (document.querySelector("#claim p") || { textContent: "" }).textContent,
-    })`);
-    for (const request of requests) {
-      if (request.hasPostData && request.postData === undefined && request.entries === undefined) {
-        try {
-          request.postData = (await tab("Network.getRequestPostData", { requestId: request.requestId })).postData;
-        } catch {
-          // The body is gone with the request; the request is still counted.
-        }
-      }
-    }
-    return { shown: JSON.parse(shown), requests };
+    const shown = JSON.parse(
+      await evaluate(`JSON.stringify({
+        verdict: document.getElementById("verdict").textContent,
+        state: document.getElementById("verdict").className.replace("verdict", "").trim(),
+        bracket: document.getElementById("verdict-bracket").textContent,
+        claim: (document.querySelector("#claim p") || { textContent: "" }).textContent,
+      })`),
+    );
+    // A page that waits before it sends is given the time to, and then it is left, which is when a
+    // page that sends on the way out would.
+    await sleep(3000);
+    phase = "while the page was being left";
+    await tab("Page.navigate", { url: "about:blank" });
+    await sleep(1500);
+    return { shown, requests, others, loadedBytes };
   } finally {
     browser.listeners.delete(listener);
+    browser.requestListeners.delete(recorder);
     await browser.send("Target.closeTarget", { targetId }).catch(() => {});
   }
 }
@@ -398,19 +505,24 @@ function whatThePageShouldShow(cli) {
   return { state: "refused", verdict: "Refused.", bracket: "" };
 }
 
-const UNITS = { ns: 1, us: 1e3, ms: 1e6, s: 1e9 };
-
-// The width the page wrote in words, held to the command line's in nanoseconds to the last digit the
-// page printed.
+// The width the page wrote in words, held to the command line's nanoseconds in the form the verifier
+// writes a width: three decimals in seconds, milliseconds or microseconds, or whole nanoseconds below
+// that. A figure that rounds the right way either side of a tie passes, and nothing coarser does.
 function widthAgrees(claimLine, widthNs) {
-  const said = claimLine.match(/interval ([0-9]+(?:\.([0-9]+))?) (ns|us|ms|s) wide/);
+  const size = Math.abs(widthNs);
+  const [unit, per] = size >= 1e9 ? ["s", 1e9] : size >= 1e6 ? ["ms", 1e6] : size >= 1e3 ? ["us", 1e3] : ["ns", 1];
+  const said = claimLine.match(unit === "ns" ? /interval (-?[0-9]+) ns wide/ : new RegExp(`interval (-?[0-9]+\\.[0-9]{3}) ${unit} wide`));
   if (!said) return false;
-  const unit = UNITS[said[3]];
-  const lastDigit = unit / 10 ** (said[2] ? said[2].length : 0);
-  return Math.abs(Number(said[1]) * unit - widthNs) <= lastDigit / 2 + 1e-6;
+  if (unit === "ns") return Number(said[1]) === widthNs;
+  return Math.abs(Number(said[1]) * 1000 - (widthNs / per) * 1000) <= 0.5 + 1e-9;
 }
 
-function whatTheBrowserShowed(problems, what, seen, cli) {
+function whatTheBrowserShowed(problems, what, seen, cli, fetched) {
+  if (seen.loadedBytes === null) {
+    problems.push(`${what}: the browser's copy of the page could not be read back, so what it ran is not known to be what this read`);
+  } else if (!seen.loadedBytes.equals(fetched)) {
+    problems.push(`${what}: the browser was handed ${seen.loadedBytes.length} bytes that are not the ${fetched.length} this check read and held to the rules above`);
+  }
   const expected = whatThePageShouldShow(cli);
   agree(problems, `${what}, the verdict shown in the browser`, seen.shown.verdict, expected.verdict);
   agree(problems, `${what}, the state shown in the browser`, seen.shown.state, expected.state);
@@ -438,20 +550,27 @@ function carries(request, subject) {
 // The page asks for itself and nothing else. Once it is open it asks for nothing at all, and a request
 // carrying the file it was given, or its digest, is named as that whenever it was made. A `data:`
 // address carries its own bytes and reaches nobody, which is how the page carries its lockup, so the
-// browser reading one is not a request of anybody.
-function whatTheBrowserSent(problems, what, requests, address, subject) {
-  for (const request of requests) {
+// browser reading one is not a request of anybody. Leaving for `about:blank` is this check's own act.
+function whatTheBrowserSent(problems, what, seen, address, subject) {
+  for (const request of seen.requests) {
     const shown = request.url.length > 120 ? `${request.url.slice(0, 120)}...` : request.url;
     if (carries(request, subject)) {
       problems.push(`${what}: the page sent the file it was given, ${request.method} ${shown}, ${request.phase}`);
       continue;
     }
     if (request.url.startsWith("data:") && request.method === "GET") continue;
+    // The browser's own parts, which reach no network and are none of the page's doing.
+    if (/^(chrome|chrome-extension|devtools):/.test(request.url)) continue;
     if (request.phase === "while the page was loading" && request.type === "Document" && sameAddress(request.url, address)) continue;
+    if (request.phase === "while the page was being left" && request.type === "Document" && request.url === "about:blank") continue;
     problems.push(`${what}: the page asked for ${request.method} ${shown} ${request.phase}, and it asks for nothing but itself`);
+  }
+  for (const other of seen.others) {
+    problems.push(`${what}: the page started ${other.kind} at ${other.url || "no address"} ${other.phase}, and it starts nothing`);
   }
 }
 
+// The address asked for, with or without the slash a host adds, is the page. Anywhere else is not.
 function sameAddress(a, b) {
   const tidy = (url) => new URL(url).href.replace(/\/$/, "");
   return tidy(a) === tidy(b);
@@ -475,10 +594,11 @@ async function check(address, options) {
       `${address} answered ${response.status}${cookie ? "" : ". A walled host needs its read-only check in TIMEWITNESS_APP_WALL_COOKIE"}`,
     );
   }
-  const page = await response.text();
+  const fetched = Buffer.from(await response.arrayBuffer());
+  const page = fetched.toString("utf8");
   mkdirSync(work, { recursive: true });
   const saved = join(work, "served.html");
-  writeFileSync(saved, page);
+  writeFileSync(saved, fetched);
 
   // 1. Which commit.
   const builtFrom = page.match(BUILT_FROM)?.[1];
@@ -499,16 +619,15 @@ async function check(address, options) {
   }
 
   // 3 and 4. The receipts.
-  const run = await theModuleIn(page);
-  if (!run) problems.push("the served page carries no checking code");
+  const run = await theModuleIn(page, problems);
   const browser = await aBrowser();
   try {
     for (const { what, receipt, subject } of options.cases) {
       const cli = fromCommandLine(options.cli, receipt, subject);
       if (run) theModuleAgrees(problems, what, run(receipt, subject), cli);
       const seen = await inTheBrowser(browser, address, cookie, receipt, subject);
-      whatTheBrowserShowed(problems, what, seen, cli);
-      whatTheBrowserSent(problems, what, seen.requests, address, readFileSync(subject));
+      whatTheBrowserShowed(problems, what, seen, cli, fetched);
+      whatTheBrowserSent(problems, what, seen, address, readFileSync(subject));
       options.said?.(what, cli, seen);
     }
   } finally {
@@ -520,8 +639,12 @@ async function check(address, options) {
 // ---------------------------------------------------------------------------------------------------
 // The self-test: this tree's own page on the loopback address, as built and seeded.
 
-const SENDS_THE_FILE =
+const SENDS_ON_CLICK =
   '<script>document.getElementById("form").addEventListener("submit", async () => { const f = document.getElementById("subject").files[0]; if (f) globalThis["fe" + "tch"]("/collect/", { method: "POST", body: await f.arrayBuffer() }); });</script>';
+// A file cannot be read once its page is going, so this one reads it when the button is clicked and
+// holds the bytes until then.
+const SENDS_ON_LEAVING =
+  '<script>let held = null; document.getElementById("form").addEventListener("submit", async () => { const f = document.getElementById("subject").files[0]; if (f) held = await f.arrayBuffer(); }); addEventListener("pagehide", () => { if (held) navigator["send" + "Beacon"]("/collect/", held); });</script>';
 
 async function selfTest(cli) {
   const built = join(root, "verifier-page", "verifier.html");
@@ -531,7 +654,8 @@ async function selfTest(cli) {
     "/verify/": page,
     "/wrong-verdict/": page.replace("    renderResult(result);", "    renderResult(Object.assign(result, { accepted: !result.accepted }));"),
     "/wrong-width/": page.replace('"UTC was somewhere in an interval " + c.width_in_words', '"UTC was somewhere in an interval 1" + c.width_in_words'),
-    "/sends-the-file/": page.replace(POLICY, "").replace("</body>", `${SENDS_THE_FILE}\n</body>`),
+    "/sends-on-click/": page.replace(POLICY, "").replace("</body>", `${SENDS_ON_CLICK}\n</body>`),
+    "/sends-on-leaving/": page.replace(POLICY, "").replace("</body>", `${SENDS_ON_LEAVING}\n</body>`),
     "/another-commit/": page.replace(BUILT_FROM, `<meta name="tw-built-from" content="${"0".repeat(40)}">`),
   };
   for (const [path, text] of Object.entries(seeds)) {
@@ -543,7 +667,7 @@ async function selfTest(cli) {
     req.on("data", (chunk) => chunks.push(chunk));
     req.on("end", () => {
       if (req.url === "/collect/") {
-        received.push(Buffer.concat(chunks));
+        received.push({ from: req.headers.referer || "", body: Buffer.concat(chunks) });
         res.writeHead(204).end();
       } else if (seeds[req.url]) {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(seeds[req.url]);
@@ -556,6 +680,7 @@ async function selfTest(cli) {
   const at = (path) => `http://127.0.0.1:${server.address().port}${path}`;
   const cases = theCases({ selfTest: true });
   const options = { cli, cases, selfTest: true };
+  const subjects = cases.map((c) => readFileSync(c.subject));
   const failures = [];
   try {
     const clean = await check(at("/verify/"), options);
@@ -564,38 +689,47 @@ async function selfTest(cli) {
     const expectations = [
       ["/wrong-verdict/", "a page showing the wrong verdict", (p) => p.includes("the verdict shown in the browser")],
       ["/wrong-width/", "a page showing the wrong width", (p) => p.includes("the browser shows") && p.includes("width is")],
-      ["/sends-the-file/", "a page sending the file", (p) => p.includes("the page sent the file it was given")],
+      ["/sends-on-click/", "a page sending the file when the button is clicked", (p) => p.includes("the page sent the file it was given") && p.includes("after the files were chosen")],
+      ["/sends-on-leaving/", "a page sending the file as it is left", (p) => p.includes("while the page was being left")],
       ["/another-commit/", "a page built from another commit", (p) => p.includes(`built from ${"0".repeat(40)}`)],
     ];
     for (const [path, what, caught] of expectations) {
+      const before = received.length;
       const seeded = await check(at(path), options);
       if (!seeded.problems.some(caught)) {
         failures.push(`${what} was not refused by the part written for it: ${seeded.problems.join(" | ") || "nothing refused it"}`);
       } else {
         console.log(`refused ${what}: ${seeded.problems.find(caught)}`);
       }
-    }
-    // The seed that sends the file only shows the check refusing if the file really went.
-    const subjects = cases.map((c) => readFileSync(c.subject));
-    if (!received.some((body) => subjects.some((subject) => body.equals(subject)))) {
-      failures.push("the seed that sends the file never reached the server with it, so it proves nothing about the check");
+      // A seed that sends only shows the check refusing if the file really went.
+      if (path.startsWith("/sends-") && !received.slice(before).some((r) => subjects.some((subject) => r.body.equals(subject)))) {
+        failures.push(`${what} never reached the server with the file, so it proves nothing about the check`);
+      }
     }
   } finally {
     server.close();
   }
 
-  // And the comparison itself, on an answer moved by one character.
+  // And the comparison itself, on an answer moved by one character, deep in the answer and at the top.
   const cli0 = fromCommandLine(cli, cases[0].receipt, cases[0].subject);
-  const moved = [];
-  theModuleAgrees(moved, "an answer moved by one character", { ...cli0, verdict: `${cli0.verdict}.` }, cli0);
-  if (moved.length !== 1) failures.push(`an answer moved by one character was read as ${moved.length} differences rather than one`);
+  for (const [where, moved] of [
+    ["the verdict line", { ...cli0, verdict: `${cli0.verdict}.` }],
+    ["a step's sentence", { ...cli0, steps: cli0.steps.map((s, i) => (i === 0 ? { ...s, detail: `${s.detail}.` } : s)) }],
+  ]) {
+    const found = [];
+    theModuleAgrees(found, "an answer moved by one character", moved, cli0);
+    if (found.length !== 1) failures.push(`an answer moved by one character in ${where} was read as ${found.length} differences rather than one`);
+  }
+  const dropped = [];
+  theModuleAgrees(dropped, "an answer with a field dropped", { ...cli0, certificate: { holds: true } }, cli0);
+  if (dropped.length === 0) failures.push("a certificate on one side and not the other was not read as a difference");
 
   if (failures.length) {
     for (const f of failures) console.error(`  ${f}`);
     console.error("the served page check is not connected the way it says");
     return 1;
   }
-  console.log(`the served page check passed this tree's page on ${cases.length} receipts and refused all four seeds, each by its own part`);
+  console.log(`the served page check passed this tree's page on ${cases.length} receipts and refused all five seeds, each by its own part`);
   return 0;
 }
 
@@ -625,7 +759,11 @@ async function main() {
     said: (what, cli, seen) =>
       console.log(
         `${what}: ${cli.accepted ? "accepted" : "refused"} by both, ${cli.claim ? `${cli.claim.width_ns} ns wide, ` : ""}` +
-          `the browser showed "${seen.shown.verdict}", ${seen.requests.length} request${seen.requests.length === 1 ? "" : "s"} made`,
+          `the browser showed "${seen.shown.verdict}", and the tab asked a network for ` +
+          seen.requests
+            .filter((r) => !r.url.startsWith("data:"))
+            .map((r) => `${r.method} ${r.url} ${r.phase}`)
+            .join(", "),
       ),
   });
   if (problems.length) {
