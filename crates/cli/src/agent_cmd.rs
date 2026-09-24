@@ -79,8 +79,8 @@ pub fn run(args: &Args) -> Outcome {
     };
 
     // Asked before anything is bound or written, so a refused start leaves the file and the agent
-    // it names exactly as they were. Writing over a live file is what orphaned the first agent in
-    // RC-349: it went on polling other people's servers with nothing left to find it by.
+    // it names exactly as they were. Writing over a live file is what orphaned the first agent until
+    // 2026-09-24: it went on polling other people's servers with nothing left to find it by.
     if let Some(address) = already_answering(Path::new(endpoint_path)) {
         return fail(&format!(
             "an agent is already answering on {endpoint_path}, at {address}, so this one has not \

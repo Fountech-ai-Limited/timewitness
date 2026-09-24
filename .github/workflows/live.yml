@@ -27,6 +27,12 @@ name: Live
 # second agent on the same endpoint refuses and leaves the first reachable, and that a stopped agent
 # lets no stamp through. That is acceptance item A-10, and it needs a bound, so it needs the servers.
 #
+# It walks the quick start, from 2026-09-24. `scripts/walk-the-quick-start.py` reads the commands off
+# `docs/quick-start.md` and runs them as written in a fresh Ubuntu container, with no Rust and nothing
+# of ours in it, and the walk has to end in a receipt that verifies. Three more walks each change one
+# command on the page and have to fail. That is acceptance item A-12, and the page stamps, so it
+# needs the servers too.
+#
 # What it does not run: the printer in the clock crate, which asserts nothing.
 #
 # A failure is visible without a log: the badge in the README turns red, and the run's summary is a
@@ -43,6 +49,8 @@ on:
       - 'scripts/our-servers.py'
       - 'scripts/status-from-cold.py'
       - 'scripts/a-stamp-through-the-agent.py'
+      - 'scripts/walk-the-quick-start.py'
+      - 'docs/quick-start.md'
 
 permissions:
   contents: read
@@ -148,6 +156,57 @@ jobs:
           {
             printf '\n### A stamp through the agent\n\n```\n'
             cat "$RUNNER_TEMP/through.txt"
+            printf '```\n'
+          } >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+  # The quick start, walked as a newcomer would walk it. The runner is only the host: the walk runs in
+  # a fresh Ubuntu container that starts with no Rust and nothing of ours, so what this runner has
+  # installed cannot stand in for a step the page forgot. The self-test goes first and needs no
+  # container.
+  quick-start:
+    name: the quick start, walked on a clean machine
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The walk still reads the page and its verdict
+        run: python3 scripts/walk-the-quick-start.py --self-test
+
+      - name: Every command on the quick start, in a fresh container, ends in a verified receipt
+        run: |
+          status=0
+          python3 scripts/walk-the-quick-start.py >"$RUNNER_TEMP/walk.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/walk.txt"
+          {
+            printf '\n### The quick start, walked on a clean machine\n\n```\n'
+            tail -n 3 "$RUNNER_TEMP/walk.txt"
+            printf '```\n'
+          } >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+  # The same walk with one command on the page changed, once per seed. Each has to fail, so a walk
+  # that stopped reading the page, or stopped reading the verdict, turns this red.
+  quick-start-seeds:
+    name: the quick start with one command changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [the-release, the-cargo-path, the-subject-checked]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The walk refuses the page with one command changed
+        run: |
+          status=0
+          python3 scripts/walk-the-quick-start.py --seed "${{ matrix.seed }}" >"$RUNNER_TEMP/seed.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/seed.txt"
+          {
+            printf '\n### The quick start with %s changed\n\n```\n' "${{ matrix.seed }}"
+            tail -n 4 "$RUNNER_TEMP/seed.txt"
             printf '```\n'
           } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"

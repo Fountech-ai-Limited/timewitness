@@ -16,6 +16,10 @@ what this is being built towards.
 
 The claim is bounded time and unbroken order. It is not accurate time.
 
+To go from a machine with nothing of ours on it to a receipt you have checked yourself, follow
+[the quick start](docs/quick-start.md). It is one short page, and every command on it is walked on a
+clean machine every morning.
+
 ## What is built today
 
 This repository is early and it says so rather than describing a finished product.
