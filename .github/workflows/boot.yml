@@ -1,0 +1,110 @@
+name: Boot
+
+# The agent as a service: installed, restarted, and the clock it measures left where it was.
+#
+# A hosted runner cannot restart, so the restart happens in a guest the Linux job boots under KVM and
+# throws away. `scripts/the-agent-survives-a-reboot.py` says what it checks and under what conditions.
+# On a pull request that touches the service the restart runs with ten minutes of watching, beside
+# the install and the uninstall on a runner of each platform. The hour the acceptance check asks for
+# runs on demand, since an hour of runner time is not something every change needs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: How long to watch the guest's clock after the restart, in minutes
+        default: '60'
+  pull_request:
+    paths:
+      - 'crates/cli/src/service_cmd.rs'
+      - 'crates/cli/src/agent_cmd.rs'
+      - 'scripts/the-agent-survives-a-reboot.py'
+      - '.github/workflows/boot.yml'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  self-test:
+    name: the check still reads its own verdicts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/the-agent-survives-a-reboot.py --self-test
+
+  here:
+    name: install and uninstall on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the command line
+        run: cargo build --release -p timewitness-cli
+      - name: Install the service, see it answer, and take it away
+        shell: bash
+        run: |
+          binary=target/release/timewitness
+          [ -f "$binary.exe" ] && binary="$binary.exe"
+          python3 scripts/the-agent-survives-a-reboot.py --here --binary "$binary"
+
+  restart:
+    name: the agent answers after a restart and the clock is left alone
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the command line
+        run: cargo build --release -p timewitness-cli
+      - name: Install a machine to throw away
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils >/dev/null
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Restart it and watch the clock
+        run: |
+          status=0
+          python3 scripts/the-agent-survives-a-reboot.py --binary target/release/timewitness \
+            --minutes "${{ inputs.minutes || '10' }}" >"$RUNNER_TEMP/boot.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/boot.txt"
+          {
+            printf '\n### The agent after a restart\n\n```\n'
+            tail -n 4 "$RUNNER_TEMP/boot.txt"
+            printf '```\n'
+          } >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+  # One thing turned wrong each, and each has to be caught.
+  restart-seeds:
+    name: the restart check with ${{ matrix.seed }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [no-start-at-boot, the-clock-moved]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the command line
+        run: cargo build --release -p timewitness-cli
+      - name: Install a machine to throw away
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils >/dev/null
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: The seed is caught
+        run: |
+          python3 scripts/the-agent-survives-a-reboot.py --binary target/release/timewitness \
+            --seed "${{ matrix.seed }}" --minutes 5 --every 60
