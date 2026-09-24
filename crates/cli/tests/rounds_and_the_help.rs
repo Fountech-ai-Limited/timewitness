@@ -247,10 +247,10 @@ fn the_shipped_help_says_what_the_rounds_actually_do() {
 
 /// The resident agent has to be findable from the help, and it has to be described for what it is.
 ///
-/// `timewitness agent` is in the tree. The thing a reader will assume, and the thing the limitation
-/// list says on all three surfaces, is that it installs itself and comes back after a restart. It
-/// does not, so the help says so where somebody looking for it will read it, rather than only in a
-/// document they have to go and find.
+/// `timewitness agent` is in the tree. A reader will assume it comes back after a restart. Run by
+/// hand it does not, and what makes it start at boot is a separate act, `agent install`, so the help
+/// names that act where somebody looking for it will read it, rather than only in a document they
+/// have to go and find. It said "installs no service" until 2026-09-25, when the install was built.
 #[test]
 fn the_shipped_help_describes_the_agent_without_overclaiming_it() {
     let out = Command::new(env!("CARGO_BIN_EXE_timewitness"))
@@ -267,8 +267,9 @@ fn the_shipped_help_describes_the_agent_without_overclaiming_it() {
         "nothing tells a reader how a stamp reaches the agent"
     );
     assert!(
-        help.contains("installs no service"),
-        "the help has to say the agent installs nothing, because a reader will assume it does"
+        help.contains("It runs in the foreground until it is stopped")
+            && help.contains("timewitness agent install"),
+        "the help has to say the agent run by hand stops with its terminal, and what starts it at boot"
     );
     assert!(
         help.contains("never sets the clock"),

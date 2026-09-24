@@ -39,6 +39,17 @@ const SETTERS: &[(&str, &str)] = &[
     ("systemsetup -setdate", "macOS"),
     ("date -s ", "a shell"),
     ("date --set", "a shell"),
+    // The same commands with their words apart, which is how code starts another program. The
+    // guard read only the shell spelling until 2026-09-25, and a planted
+    // `Command::new("timedatectl").args(["set-time", ...])` went through it.
+    ("\"set-time\"", "systemd, with the words apart"),
+    ("'set-time'", "systemd, with the words apart"),
+    ("\"-settime\"", "macOS, with the words apart"),
+    ("\"-setdate\"", "macOS, with the words apart"),
+    (
+        "Command::new(\"date\")",
+        "a shell's date, which sets the clock when it is given one",
+    ),
 ];
 
 /// Where setting the clock on the operator's word would live, once there is such a thing. None yet.
@@ -158,6 +169,9 @@ fn each_setter_is_refused_in_code_and_let_through_in_a_comment() {
         "Set-Date -Date $when",
         "sudo date -s \"$moment\"",
         "let x = adjtime(&delta, &mut old);",
+        "Command::new(\"timedatectl\").args([\"set-time\", \"2026-09-22 12:00:00\"]).status()?;",
+        "run(['timedatectl', 'set-time', when])",
+        "Command::new(\"date\").arg(\"--set=12:00\").status()?;",
     ];
     for seed in seeds {
         assert!(
