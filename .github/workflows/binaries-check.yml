@@ -1,0 +1,50 @@
+name: Binaries check
+
+# Reads a release's binaries the way a stranger gets them and runs
+# `scripts/the-binaries-are-signed.py` on each of the three systems, because each system's signature
+# can only be checked on that system: `spctl` on macOS, `signtool` on Windows, and cosign for Linux,
+# which every leg runs. Each leg also runs the binary built for it and holds `--version` to the tag.
+#
+# `release.yml` calls it once the assets are attached, and it can be run by hand on any release.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The release tag to check'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check ${{ inputs.tag }} on ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm, macos-15-intel, macos-15, windows-2022]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Check the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -uo pipefail
+          # Windows runners name it python, the others python3.
+          py=python3
+          if ! "$py" -c 'import sys' >/dev/null 2>&1; then py=python; fi
+          "$py" scripts/the-binaries-are-signed.py --self-test || exit 1
+          "$py" scripts/the-binaries-are-signed.py --release "$TAG"
