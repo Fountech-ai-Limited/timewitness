@@ -205,6 +205,16 @@ jobs:
           python3 scripts/policy-sentences.py --no-site
           python3 scripts/policy-sentences.py --self-test
 
+      - name: No surface says our servers are not there
+        # The check above reads the policy off the code, and this reads the deployment off the key
+        # log. Until 2026-09-24 the README and the live workflow both said no Roughtime server of ours
+        # was deployed while the log named two, and the live run asked neither. It also holds the
+        # live workflow to asking every server the served log names. The second run is the check
+        # backwards, one seed per rule.
+        run: |
+          python3 scripts/our-servers.py --no-site
+          python3 scripts/our-servers.py --self-test
+
       - name: No surface sells precision or prices a receipt
         # Full precision for everybody, and never a price per receipt. The same rules read the site
         # in the other repository. The two runs below it are this one backwards, and pass only if it

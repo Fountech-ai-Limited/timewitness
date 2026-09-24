@@ -283,11 +283,17 @@ reaches nothing on that list.
 [![Live](https://github.com/Fountech-ai-Limited/timewitness/actions/workflows/live.yml/badge.svg)](https://github.com/Fountech-ai-Limited/timewitness/actions/workflows/live.yml)
 
 The badge reads the last run of `.github/workflows/live.yml`, once a day, which asks the published
-Roughtime, NTP, NTS, drand and timestamp servers and checks each answer the way the agent does. Its
-summary names every test and whether it answered, and the date of the run is the last time the live
-integrations were seen working. The ordinary build does not ask them, because somebody else's server
-being down is not a fault in a commit. Three tests that need a Roughtime server of ours are not run,
-because none is deployed.
+Roughtime, NTP, NTS, drand and timestamp servers and checks each answer the way the agent does. It
+asks our own two Roughtime servers as well, `timewitness-roughtime-lhr.fly.dev:2002` in London and
+`timewitness-roughtime-iad.fly.dev:2002` in Virginia, under the keys the log served at
+timewitness.dev/key-log.txt names for them, with the three tests in
+`crates/cli/tests/against_a_running_server.rs`. The run reads the servers out of that log each
+morning, so a server added to it is asked from then on. A pass there means the server answered under
+the key we published and stated the narrowest corridor the Roughtime format allows. It is ours, so
+it is never an independent source for anybody's bound. The summary names every test and whether it
+answered, with the tests against our servers named by address, and the date of the run is the last
+time the live integrations were seen working. The ordinary build asks none of them, because a server
+being down is not a fault in a commit.
 
 ## Layout
 
