@@ -358,9 +358,18 @@ pub fn decode_reply(bytes: &[u8]) -> Result<Receipt, WireError> {
             let mut ceiling = [0u8; 16];
             width.copy_from_slice(&figures[..16]);
             ceiling.copy_from_slice(&figures[16..]);
+            let (width, ceiling) = (Nanos::from_be_bytes(width), Nanos::from_be_bytes(ceiling));
+            // A refusal past the ceiling whose width is not past a positive ceiling says two things
+            // at once, and a status would print both. Read it as the malformed answer it is.
+            if ceiling <= 0 || width <= ceiling {
+                return Err(WireError::Malformed(format!(
+                    "a refusal past the ceiling gave a width of {width} ns against a ceiling of \
+                     {ceiling} ns, which is not past it"
+                )));
+            }
             Err(WireError::PastCeiling {
-                width: Nanos::from_be_bytes(width),
-                ceiling: Nanos::from_be_bytes(ceiling),
+                width,
+                ceiling,
                 why: String::from_utf8_lossy(why).into_owned(),
             })
         }
@@ -467,6 +476,19 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn a_refusal_past_the_ceiling_that_is_not_past_it_is_malformed() {
+        for (width, ceiling) in [(250, 250), (100, 250), (-5, 250), (5, 0), (5, -1)] {
+            assert!(
+                matches!(
+                    decode_reply(&encode_refusal_past_ceiling(width, ceiling, "why")),
+                    Err(WireError::Malformed(_))
+                ),
+                "{width} against {ceiling}"
+            );
+        }
     }
 
     #[test]

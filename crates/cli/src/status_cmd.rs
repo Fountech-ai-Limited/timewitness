@@ -31,7 +31,7 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use timewitness_agent::crossing::{ask, CrossingError, WhatTheCallerKnows};
+use timewitness_agent::crossing::{ask, CrossingError, WhatTheCallerKnows, Whose};
 use timewitness_agent::wire::{Endpoint, WireError};
 use timewitness_clock::monotonic::SystemMonotonic;
 use timewitness_core::time::{Nanos, NANOS_PER_SEC};
@@ -144,14 +144,24 @@ pub fn run(args: &Args) -> Outcome {
         },
         // The model worked out a bound and it was past the ceiling, in the agent or once the
         // crossing was paid for. Either way the width is known, and it is what a person asked for.
+        //
+        // The width in the first arm is the agent's own, before the crossing widens it by the
+        // round trip, where a signed answer's width is after. The difference is the asking time
+        // printed beside a signed answer, well under a millisecond on loopback.
         Err(CrossingError::Wire(WireError::PastCeiling {
             width,
             ceiling,
             why,
         })) => past_ceiling(&endpoint.address, width, ceiling, uptime, &why),
-        Err(e @ CrossingError::TooWide { width, ceiling, .. }) => {
-            past_ceiling(&endpoint.address, width, ceiling, uptime, &format!("{e}"))
-        }
+        // Only the agent's ceiling is one "it will sign for". Past the status's own hour the answer
+        // falls through to the refusal below, which says so in its own words.
+        Err(
+            e @ CrossingError::TooWide {
+                width,
+                ceiling,
+                whose: Whose::TheAnsweringParty,
+            },
+        ) => past_ceiling(&endpoint.address, width, ceiling, uptime, &format!("{e}")),
         Err(e) => {
             let mut text = render::failure(&format!(
                 "the agent at {} is up and would not give a reading a stamp could use: {e}",
@@ -170,13 +180,16 @@ pub fn run(args: &Args) -> Outcome {
 ///
 /// The width rather than half of it. The reading and true UTC both sit inside an interval this wide,
 /// on the model's word, so the reading is out by no more than the width. The reading is not the
-/// middle of the interval, so half of it would be a claim the arithmetic does not make.
+/// middle of the interval, so half of it would be a claim the arithmetic does not make. And whose
+/// word it is goes in the sentence, because the bound rests on the agent's own model and nothing
+/// outside it has vouched for this one.
 fn how_wrong(width: Nanos) -> String {
     if width > DESCRIBE_UP_TO {
-        "Right now the time it gives could be wrong by more than an hour.".to_string()
+        "Right now the time it gives could be wrong by more than an hour, on its own model."
+            .to_string()
     } else {
         format!(
-            "Right now the time it gives could be wrong by as much as {}.",
+            "Right now the time it gives could be wrong by as much as {}, on its own model.",
             width_in_words(width)
         )
     }
@@ -205,6 +218,7 @@ fn past_ceiling(
             .to_string()
     }));
     text.push_str(&format!("\n\n\x20 the agent said  {why}"));
+    text.push_str("\n\nThe bound is how wrong the reading could be, not how right it is.");
     Outcome { text, code: 1 }
 }
 
@@ -214,8 +228,9 @@ fn still_settling(uptime: Option<Duration>) -> Option<String> {
     (up < SETTLES_WITHIN).then(|| {
         format!(
             "It started {up} s ago. While a fresh agent learns this machine's clock its bound swings \
-             above its ceiling between rounds, so most stamps in its first two minutes are refused \
-             and a refusal is only occasional after about three. The next answer may be a refusal."
+             above its ceiling between rounds. In ten starts measured on one desktop, most stamps in \
+             the first two minutes were refused and a refusal was only occasional after about \
+             three, so the next answer may be a refusal."
         )
     })
 }

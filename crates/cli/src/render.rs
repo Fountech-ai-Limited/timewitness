@@ -913,11 +913,12 @@ pub fn agent_started(endpoint_path: &str, address: &str, at: AgentStart) -> Stri
         "`timewitness status --agent {endpoint_path}` says how wrong the clock could be,\n"
     ));
     out.push_str(&format!(
-        "within {} s of starting. Its bound swings above the ceiling between rounds while\n",
+        "within {} s of starting where the sources answer. Its bound swings above the\n",
         crate::status_cmd::FIRST_BOUND_WITHIN,
     ));
-    out.push_str("it learns this machine's clock, so most stamps in its first two minutes are\n");
-    out.push_str("refused, and a refusal is only occasional after about three.\n");
+    out.push_str("ceiling between rounds while it learns this machine's clock: in ten starts\n");
+    out.push_str("measured on one desktop, most stamps in the first two minutes were refused,\n");
+    out.push_str("and a refusal was only occasional after about three.\n");
     out
 }
 

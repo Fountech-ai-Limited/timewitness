@@ -149,7 +149,9 @@ fn a_bound_past_the_ceiling_is_stated_in_a_plain_sentence_and_still_refused() {
     let words = said(&output);
     assert_eq!(output.status.code(), Some(1), "{words}");
     assert!(
-        words.contains("Right now the time it gives could be wrong by as much as 1.204 s."),
+        words.contains(
+            "Right now the time it gives could be wrong by as much as 1.204 s, on its own model."
+        ),
         "{words}"
     );
     assert!(
@@ -163,7 +165,8 @@ fn a_bound_past_the_ceiling_is_stated_in_a_plain_sentence_and_still_refused() {
     // The endpoint file was written a moment ago, so this reads as an agent still settling.
     assert!(words.contains("It started "), "{words}");
     assert!(
-        words.contains("the agent said  the bound has grown to"),
+        words.contains("the agent said  the bound has grown to")
+            && words.contains("not how right it is"),
         "{words}"
     );
     for never in ["accurate", "accuracy"] {
@@ -181,7 +184,9 @@ fn a_bound_too_wide_to_state_is_said_to_be_more_than_an_hour() {
     let words = said(&output);
     assert_eq!(output.status.code(), Some(1), "{words}");
     assert!(
-        words.contains("Right now the time it gives could be wrong by more than an hour."),
+        words.contains(
+            "Right now the time it gives could be wrong by more than an hour, on its own model."
+        ),
         "{words}"
     );
 }

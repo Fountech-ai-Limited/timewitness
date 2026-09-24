@@ -491,18 +491,19 @@ last refusal was at 166 s of uptime on one run and 168 s on the other, with 25 a
 34 readings refused; the ageing of a source's interval changed on 2026-09-18, and the figures from
 that day are the ones that describe the code that ships.
 From 2026-09-24 `timewitness status` states the width, and says in a plain sentence how wrong the
-clock could be, within 30 seconds of a fresh agent starting, whether or not a stamp would be signed
-at that width, and it says which. The width it prints while a stamp would be refused is the width
-the agent refused to sign, so nothing was narrowed to reach that time. Measured 2026-09-24 on an
-ordinary Windows desktop against the nine published servers, at the shipped thirty-two second
-cadence and 250 ms ceiling, over ten starts from cold one after another with other builds running on
-the same machine and an agent asked twice a second for five minutes of uptime per start: the first
-width and sentence came at 1.9 s to 6.6 s of uptime, and a width stated while a stamp would have
-been refused was 250.007 ms wide at the narrowest and 4.873 s wide at the widest. Measured over
-those ten starts on the same desktop, 1224 of 1809 answers in the first two minutes of uptime were
-refused and 38 of 1810 from three minutes to five, 25 of the 38 in one start, and four of the ten
-agents refused at least once in their last fifteen seconds, so a refusal becomes occasional after
-about three minutes of uptime and never stops altogether.
+clock could be, within 30 seconds of a fresh agent starting on a machine that can reach its sources,
+whether or not a stamp would be signed at that width, and it says which. The width it prints while a
+stamp would be refused is the width the agent refused to sign, so nothing was narrowed to reach that
+time. Measured 2026-09-24 on an ordinary Windows desktop against the nine published servers, at the
+shipped thirty-two second cadence and 250 ms ceiling, over ten starts from cold one after another
+with other builds running on the same machine and an agent asked twice a second for five minutes of
+uptime per start: the first width and sentence came at 1.9 s to 6.6 s of uptime, and a width stated
+while a stamp would have been refused was 250.007 ms wide at the narrowest and 4.873 s wide at the
+widest. Measured over those ten starts on the same desktop, 1224 of 1809 answers in the first two
+minutes of uptime were refused, 41 of them before the agent had a bound at all, and 38 of 1810 from
+three minutes to five, 25 of the 38 in one start, and four of the ten agents refused at least once
+in their last fifteen seconds, so a refusal becomes occasional after about three minutes of uptime
+and never stops altogether.
 
 **After it settles the agent still refuses a reading whenever the bound crosses the ceiling, and the
 share is not a fixed number.** The shipped cadence is thirty-two seconds and the shipped ceiling is

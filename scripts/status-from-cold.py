@@ -43,7 +43,8 @@ STATUS_SOURCE = ROOT / 'crates' / 'cli' / 'src' / 'status_cmd.rs'
 README = ROOT / 'README.md'
 
 # The sentence a status prints when it knows the width, whether or not a stamp would be signed at it.
-PLAIN = re.compile(r'Right now the time it gives could be wrong by (?:as much as (\S+ \S+)|more than an hour)\.')
+PLAIN = re.compile(r'Right now the time it gives could be wrong by (?:as much as (\S+ \S+)|more than an hour), '
+                   r'on its own model\.')
 # The width line a signed answer carries beside the sentence.
 WIDTH_LINE = re.compile(r'bound now\s+(\S+ \S+) wide')
 
@@ -158,13 +159,17 @@ def conditions(binary):
 def self_test():
     cases = [
         (0, 'The agent at 127.0.0.1:1 is up and answering.\n\nRight now the time it gives could be '
-            'wrong by as much as 84.011 ms. A stamp taken now would carry that bound.\n\n'
+            'wrong by as much as 84.011 ms, on its own model. A stamp taken now would carry that bound.\n\n'
             '  bound now     84.011 ms wide, on 9 of 9 sources', ('signed', '84.011 ms')),
         (1, 'The agent at 127.0.0.1:1 is up, and would not sign a stamp right now.\n\nRight now the '
-            'time it gives could be wrong by as much as 3.868 s. That is past the 250.000 ms it will '
+            'time it gives could be wrong by as much as 3.868 s, on its own model. That is past the 250.000 ms it will '
             'sign for', ('past', '3.868 s')),
         (1, 'The agent at 127.0.0.1:1 is up, and would not sign a stamp right now.\n\nRight now the '
-            'time it gives could be wrong by more than an hour.', ('past', 'more than an hour')),
+            'time it gives could be wrong by more than an hour, on its own model.', ('past', 'more than an hour')),
+        # The sentence without whose word it is does not count: it is the plain sentence of 2026-09-24
+        # before a cold read asked for the owner to be named.
+        (1, 'The agent at 127.0.0.1:1 is up, and would not sign a stamp right now.\n\nRight now the '
+            'time it gives could be wrong by as much as 3.868 s. That is past', ('none', None)),
         (1, 'timewitness: the agent at 127.0.0.1:1 is up and would not give a reading a stamp could '
             'use: the clock has not synchronised yet', ('none', None)),
         (1, 'timewitness: the agent is not answering: no agent answered', ('down', None)),
@@ -256,10 +261,12 @@ def main():
         # stops, so a last refusal is not the figure to state.
         for low, high in ((0, 120), (settles, args.watch)):
             asked = [a for r in runs for a in r['answers'] if low <= a['at'] < high]
-            refused = [a for a in asked if a['kind'] != 'signed']
+            past = [a for a in asked if a['kind'] == 'past']
+            other = [a for a in asked if a['kind'] in ('none', 'down')]
             if asked:
-                print(f'status from cold: {len(refused)} of {len(asked)} answers refused from '
-                      f'{low:.0f} s to {high:.0f} s of uptime')
+                print(f'status from cold: {len(past) + len(other)} of {len(asked)} answers from '
+                      f'{low:.0f} s to {high:.0f} s of uptime would not have been signed, {len(past)} '
+                      f'past the ceiling and {len(other)} with no bound yet or no answer')
 
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps({'conditions': where, 'runs': runs}, indent=1),
