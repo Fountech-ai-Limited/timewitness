@@ -159,12 +159,18 @@ fn an_endpoint_left_by_an_agent_that_was_stopped_is_taken_over() {
     let endpoint = dir.join("agent.endpoint");
     let first = agent(&endpoint, dir.join("first.log"));
     up(&endpoint, &first);
-    let stale = address_in(&endpoint);
+    let stale = std::fs::read(&endpoint).unwrap();
     drop(first);
 
     let second = agent(&endpoint, dir.join("second.log"));
     let said = up(&endpoint, &second);
-    assert_ne!(address_in(&endpoint), stale, "{}", second.said());
+    // Compared whole, because the port may well be handed straight back and the token never is.
+    assert_ne!(
+        std::fs::read(&endpoint).unwrap(),
+        stale,
+        "{}",
+        second.said()
+    );
     assert!(said.contains(&address_in(&endpoint)), "{said}");
     drop(second);
     let _ = std::fs::remove_dir_all(&dir);

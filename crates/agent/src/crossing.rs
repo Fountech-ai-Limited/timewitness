@@ -13,8 +13,8 @@
 //! [`crate::wire`] for what an attacker who can write the endpoint file actually gets.
 
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpStream, ToSocketAddrs};
-use std::time::Duration;
+use std::net::{Shutdown, SocketAddr, TcpStream, ToSocketAddrs};
+use std::time::{Duration, Instant};
 
 use timewitness_clock::policy::{ppm_over, Policy};
 use timewitness_clock::MonotonicClock;
@@ -296,6 +296,10 @@ const ENOUGH_OF_A_REPLY: usize = 4_096;
 /// Only a loopback address is asked. An agent only ever writes one, so a file naming anywhere else
 /// was not written by an agent, and a file is not a reason to send a token off this machine.
 ///
+/// It is not proof. Once an agent has stopped, anything on this machine can take its old port and
+/// answer the way an agent does, and the next start on that file is refused. That is why the refusal
+/// says to delete the file where no agent of the reader's own is running.
+///
 /// A port nobody listens on, a port something else now holds, and an agent that says the token is
 /// not its own all read as no, because each means the file outlived the agent that wrote it. An
 /// agent that has not answered inside [`PATIENCE`] also reads as no. That is the one way this can
@@ -305,11 +309,12 @@ const ENOUGH_OF_A_REPLY: usize = 4_096;
 /// meets, a second agent started while the first is up, and not that one.
 #[must_use]
 pub fn an_agent_answers(endpoint: &Endpoint) -> bool {
+    // Parsed rather than resolved. An agent writes a number and a port, so a name in the file was not
+    // written by one, and looking a name up is a wait with no ceiling of ours on it.
     let Some(address) = endpoint
         .address
-        .to_socket_addrs()
+        .parse::<SocketAddr>()
         .ok()
-        .and_then(|mut all| all.next())
         .filter(|address| address.ip().is_loopback())
     else {
         return false;
@@ -317,18 +322,29 @@ pub fn an_agent_answers(endpoint: &Endpoint) -> bool {
     let Ok(mut stream) = TcpStream::connect_timeout(&address, PATIENCE) else {
         return false;
     };
-    stream.set_read_timeout(Some(PATIENCE)).ok();
     stream.set_write_timeout(Some(PATIENCE)).ok();
     if stream.write_all(&endpoint.token).is_err() {
         return false;
     }
     stream.shutdown(Shutdown::Write).ok();
-    // Whatever arrived before the wait ran out is enough. A reading is known by its first byte and
-    // a refusal is a sentence, so the first few thousand bytes of any reply say which it is.
+
+    // One wait for the whole reply rather than one per read. A party that sent a byte a second would
+    // otherwise hold every start on this file for as long as it liked, with nothing printed. Whatever
+    // has arrived by then is enough: a reading is known by its first byte and a refusal is a
+    // sentence, so the first few thousand bytes of any reply say which it is.
+    let deadline = Instant::now() + PATIENCE;
     let mut reply = Vec::with_capacity(ENOUGH_OF_A_REPLY);
-    let _ = stream
-        .take(ENOUGH_OF_A_REPLY as u64)
-        .read_to_end(&mut reply);
+    let mut chunk = [0u8; 512];
+    while reply.len() < ENOUGH_OF_A_REPLY {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() || stream.set_read_timeout(Some(left)).is_err() {
+            break;
+        }
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => reply.extend_from_slice(&chunk[..n]),
+        }
+    }
     is_an_agents_answer(&reply)
 }
 
@@ -585,9 +601,6 @@ mod tests {
         assert_eq!(after.claim.breakdown, before.claim.breakdown);
     }
 
-    /// A party that takes the connection and then behaves as `then` says, for long enough that the
-    /// caller's patience runs out. It hands back what `ask` said, so a test reads the refusal a
-    /// person would be shown.
     #[test]
     fn a_file_is_live_only_while_its_own_agent_answers_it() {
         use crate::wire::{encode_refusal, NOT_THIS_TOKEN};
@@ -626,6 +639,9 @@ mod tests {
         assert!(!an_agent_answers(&Endpoint::fresh("192.0.2.1:9").unwrap()));
     }
 
+    /// A party that takes the connection and then behaves as `then` says, for long enough that the
+    /// caller's patience runs out. It hands back what `ask` said, so a test reads the refusal a
+    /// person would be shown.
     fn ran_out_of_patience_on(then: fn(&mut std::net::TcpStream)) -> String {
         use std::net::TcpListener;
         let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");

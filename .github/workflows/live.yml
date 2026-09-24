@@ -23,6 +23,10 @@ name: Live
 # the clock could be, from 2026-09-24. The README states that time, and a stated time is a claim
 # about a machine that can reach the servers, which is this job and no other in this repository.
 #
+# It stamps through an agent of its own, from 2026-09-24, and checks the receipt verifies, that a
+# second agent on the same endpoint refuses and leaves the first reachable, and that a stopped agent
+# lets no stamp through. That is acceptance item A-10, and it needs a bound, so it needs the servers.
+#
 # What it does not run: the printer in the clock crate, which asserts nothing.
 #
 # A failure is visible without a log: the badge in the README turns red, and the run's summary is a
@@ -38,6 +42,7 @@ on:
       - 'scripts/live-summary.sh'
       - 'scripts/our-servers.py'
       - 'scripts/status-from-cold.py'
+      - 'scripts/a-stamp-through-the-agent.py'
 
 permissions:
   contents: read
@@ -122,6 +127,27 @@ jobs:
           {
             printf '\n### A fresh agent, ten starts from cold\n\n```\n'
             tail -n 18 "$RUNNER_TEMP/cold.txt"
+            printf '```\n'
+          } >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      # One agent of its own, stamped through until a stamp is signed, then a second agent started on
+      # the same endpoint file, then the first stopped and stamped through again. It fails if the
+      # receipt does not verify as read from a resident agent, if the second agent starts or does not
+      # say why in words, if the first is not still the one reached, or if a stopped agent lets a
+      # stamp through. It needs the public servers for the same reason the step above does: a stamp
+      # needs a bound.
+      - name: A stamp through the agent verifies, a stopped one refuses, and a second leaves the first alone
+        if: ${{ !cancelled() }}
+        run: |
+          python3 scripts/a-stamp-through-the-agent.py --self-test
+          cargo build --locked --release -p timewitness-cli
+          status=0
+          python3 scripts/a-stamp-through-the-agent.py >"$RUNNER_TEMP/through.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/through.txt"
+          {
+            printf '\n### A stamp through the agent\n\n```\n'
+            cat "$RUNNER_TEMP/through.txt"
             printf '```\n'
           } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"

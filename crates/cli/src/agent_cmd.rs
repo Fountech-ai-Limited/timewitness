@@ -86,7 +86,8 @@ pub fn run(args: &Args) -> Outcome {
             "an agent is already answering on {endpoint_path}, at {address}, so this one has not \
              started. A second agent there would take the file over and leave the first running \
              with nothing to find it by. Stop the first one, or give this one a file of its own \
-             with --endpoint"
+             with --endpoint. If no agent of yours is running, something else has taken that \
+             address, and deleting {endpoint_path} lets this one start"
         ));
     }
 
