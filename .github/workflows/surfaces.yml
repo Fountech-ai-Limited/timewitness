@@ -91,3 +91,8 @@ jobs:
           TW_SURFACES_SITE: wire
           TW_SURFACES_WAIT: '300'
         run: bash scripts/three-surfaces.sh
+
+      # The served key log against the served page and this tree. The build job reads the log in the
+      # commit, and the one a reader fetches is the one this reads.
+      - name: No surface says our servers are not there, against the served key log
+        run: python3 scripts/our-servers.py --key-log https://timewitness.dev/key-log.txt --site https://timewitness.dev/

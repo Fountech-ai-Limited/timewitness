@@ -239,6 +239,8 @@ step "The wire route tells the holding page from a page carrying its tag" python
 step "The newest release against its own limitation list" bash -c "bash scripts/the-order-item-matches-the-release.sh --self-test && bash scripts/the-order-item-matches-the-release.sh"
 # Here the site copy is beside this tree, so its sentences are held to the policy as well.
 step "Every sentence agrees with the shipped policy" bash -c "python3 scripts/policy-sentences.py && python3 scripts/policy-sentences.py --self-test"
+# And the deployment off the key log, with the site beside this tree read as well.
+step "No surface says our servers are not there" bash -c "python3 scripts/our-servers.py && python3 scripts/our-servers.py --self-test"
 # Here the site repository is usually beside this one, so this run also holds the two copies of the
 # rules to each other, which CI cannot.
 step "No surface sells precision or prices a receipt" node scripts/no-price-on-evidence.mjs

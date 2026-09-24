@@ -12,9 +12,14 @@ name: Live
 # reason. The run takes about a minute. It also runs on a pull request that changes this file, so a
 # change to it is watched working before it merges rather than after.
 #
-# What it does not run: the three command-line tests that need a Roughtime server of ours, because
-# none is deployed, and the printer in the clock crate that asserts nothing. Both are named in the
-# README beside the badge this workflow drives.
+# It asks our own two Roughtime servers too, with the three command-line tests that need a server of
+# ours. Until 2026-09-24 this comment and the README said none was deployed and the run skipped them,
+# while both had answered since 2026-09-12 and the served key log had named both since 2026-09-15.
+# So a stopped server of ours would have gone unnoticed. The servers are read out of the served key
+# log at run time by `scripts/our-servers.py --list`, which is the same reader that holds every
+# surface to that log, so a server added to it is asked the next morning and nothing here names one.
+#
+# What it does not run: the printer in the clock crate, which asserts nothing.
 #
 # A failure is visible without a log: the badge in the README turns red, and the run's summary is a
 # table naming each test and whether it answered.
@@ -27,6 +32,7 @@ on:
     paths:
       - '.github/workflows/live.yml'
       - 'scripts/live-summary.sh'
+      - 'scripts/our-servers.py'
 
 permissions:
   contents: read
@@ -59,3 +65,37 @@ jobs:
           bash scripts/live-summary.sh <"$RUNNER_TEMP/live.txt" >>"$GITHUB_STEP_SUMMARY"
           summary=$?
           [ "$status" -eq 0 ] && [ "$summary" -eq 0 ]
+
+      # Our own servers, under the keys the served log names. It runs whatever the step above said,
+      # because a public server being down says nothing about ours. The log is the served one rather
+      # than the copy in this tree, since the served one is what a reader checks a receipt against.
+      # Each test line is renamed with the address it asked, so the summary says which server failed
+      # without anybody opening the log. The failures are collected rather than left to stop the
+      # step, so the summary is written on the run that most needs it.
+      - name: Our own Roughtime servers, under the keys the served log names
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/key-log.txt"
+          out="$RUNNER_TEMP/ours.txt"
+          if ! curl -fsS --max-time 30 https://timewitness.dev/key-log.txt -o "$log"; then
+            echo "The served key log at timewitness.dev/key-log.txt could not be fetched, so none of our servers was asked." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          servers="$(python3 scripts/our-servers.py --list "$log")"
+          if [ -z "$servers" ]; then
+            echo "The served key log names no server of ours in use, so there is nothing to ask." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          status=0
+          TIMEWITNESS_PROBE_KEY_LOG="$log" cargo test --locked -p timewitness-cli --test against_a_running_server -- --ignored --test-threads 1 every_server 2>&1 \
+            | tee "$RUNNER_TEMP/one.txt" || status=1
+          sed -E 's/^test ([^ ]+) \.\.\. /test \1, every server in the served key log ... /' "$RUNNER_TEMP/one.txt" >"$out"
+          while read -r address key; do
+            TIMEWITNESS_PROBE_ADDRESS="$address" TIMEWITNESS_PROBE_KEY="$key" cargo test --locked -p timewitness-cli --test against_a_running_server -- --ignored --test-threads 1 --skip every_server </dev/null 2>&1 \
+              | tee "$RUNNER_TEMP/one.txt" || status=1
+            sed -E "s/^test ([^ ]+) \.\.\. /test \1, against $address ... /" "$RUNNER_TEMP/one.txt" >>"$out"
+          done <<<"$servers"
+          printf '\n### Our own Roughtime servers\n\n' >>"$GITHUB_STEP_SUMMARY"
+          bash scripts/live-summary.sh <"$out" >>"$GITHUB_STEP_SUMMARY" || status=1
+          exit "$status"
