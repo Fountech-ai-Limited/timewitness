@@ -27,18 +27,18 @@ This repository is early and it says so rather than describing a finished produc
 | A continuously running agent | built as a foreground process, `timewitness agent`. It holds one clock model, disciplines it on a schedule and answers a reading to `timewitness stamp --agent` with no network call in the reading. It installs no service and starts at no boot, so it runs only while somebody keeps it running, and the Action below does not use it |
 | Four to six independent sources | built, on the count this product defines and enforces. Independent is the operator: a source names who runs it, the selection counts operators rather than names, a majority resting on a minority of operators is refused, and the shipped floor is four, so a round short of it declines to sign rather than widening. Nine servers reach six operators, so two can go dark and the agent carries on. Two things the count cannot see, both on the limitation list: it is an upper bound, since a shared upstream, path, constellation or implementation is one fault however many companies it is; and three programs stand behind the nine names, so a defect in one of them is one fault across three at once. The fourth source kind, local hardware, has no client and needs a receiver this product cannot assume anybody has |
 | Clock model: selection, weighting, regression, holdover | built |
-| Receipt format | version 0 built and frozen, and it is what the `v0` and `v0.1` releases write, `docs/receipt-format-v0.md`. Version 1 is what the `v0.2` release writes: it states the three terms that set a receipt's width, the part of the holdover covering a rate the agent is not correcting for, and which path the reading came by, and it can carry a witness over the receipt's own signature. `v0.2` reads both versions and `v0.1` refuses version 1 by name, `docs/receipt-format-v1.md` |
+| Receipt format | version 0 built and frozen, and it is what the `v0` and `v0.1` releases write, `docs/receipt-format-v0.md`. Version 1 is what the `v0.2` and `v0.3` releases write: it states the three terms that set a receipt's width, the part of the holdover covering a rate the agent is not correcting for, and which path the reading came by, and it can carry a witness over the receipt's own signature. `v0.2` and `v0.3` read both versions and `v0.1` refuses version 1 by name, `docs/receipt-format-v1.md` |
 | Roughtime client, the authenticated corridor | built, proved against three public servers |
 | NTS client, an authenticated source that is never evidence | built, proved against three public servers. Its keys are symmetric, so it improves the clock and can never be shown to a stranger |
 | Freshness beacon client, not-earlier-than | built for drand, one beacon of the two the design asks for |
 | Final witness client, not-later-than | built for RFC 3161, proved against two free authorities. No OpenTimestamps anchor |
 | Public verifier | built, as a command line tool and as one HTML page that runs from a local disk with no network. `docs/verifier.md` |
-| GitHub Action | built. One line in a workflow, and the receipt goes into the SLSA provenance and the container image labels that already ship |
+| GitHub Action | built. One line in a workflow, and the receipt goes into the SLSA provenance and the container image labels that already ship. From `v0.3` the provenance names the format the receipt is written in, read off the receipt; the `v0.2` Action labelled every receipt `timewitness-receipt-v0`, which is wrong for the version 1 receipts it writes |
 | A bound resting on outside evidence | not built. Every receipt says its bound rests on the agent's own model. The outside signatures it carries are checked, and on both timestamp authorities that ship the token states no accuracy of its own, so it bounds nothing in UTC and the receipt is left with one edge rather than two. Nothing issues a receipt whose width rests on outside signatures. The format can say so, the verifier refuses the claim unless all three roles check out, and a reader who has read an authority's published practice can allow for that authority's clock in their own anchors, which gives the edge back as the reader's own figure and never as the authority's |
 | Order within a chain | built two receipts at a time, from the `v0.2` release. `timewitness order` reads two receipts offline and keeps two answers apart: the intervals say which moment came first, and a hash link says which of two receipts of one chain was signed first. Nothing walks a whole chain |
 | A public log of agent keys | not built. A receipt proves whoever signed it held that key and nothing about who that was. A log of our two Roughtime server keys is served at `timewitness.dev/key-log.txt` and names no agent key, and the `v0` release cannot read it |
 
-`v0`, `v0.1` and `v0.2` are tagged and released as source, with no binary. Both halves are built from source in this
+`v0`, `v0.1`, `v0.2` and `v0.3` are tagged and released as source, with no binary. Both halves are built from source in this
 repository, so today a stranger compiles the verifier rather than downloading it.
 
 ## The two numbers, which are not the same number
@@ -261,7 +261,7 @@ before there is anything to count.
 One line in a workflow file:
 
 ```yaml
-- uses: Fountech-ai-Limited/timewitness@v0.2
+- uses: Fountech-ai-Limited/timewitness@v0.3
   with:
     subject: dist/widget.tar.gz
 ```
@@ -269,7 +269,7 @@ One line in a workflow file:
 There is no configuration file and no secret to set. The receipt lands beside the artefact, goes into
 the SLSA provenance and container image labels where those are named, and the workflow summary carries
 what the receipt does and does not establish. The inputs are the ones in `action.yml` at the tag you
-pin, so read that file at `v0.2` rather than here: an input added on `main` reaches a workflow only
+pin, so read that file at `v0.3` rather than here: an input added on `main` reaches a workflow only
 with the release after it. `deadline` arrived in `v0.2`, so a workflow pinned to `@v0.1` that sets it
 gets a warning from GitHub and no deadline.
 

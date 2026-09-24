@@ -7,7 +7,7 @@
 //!
 //! ## The boundary, and why there is no binding library behind it
 //!
-//! Four exported functions and a length-prefixed buffer. A binding generator would be a build step,
+//! Six exported functions and a length-prefixed buffer. A binding generator would be a build step,
 //! a code generator and a dependency tree, in a page whose whole argument is that a stranger can
 //! read what it does. This is thirty lines and the JavaScript side of it is twenty.
 //!
@@ -18,6 +18,7 @@
 //! - `tw_verify_with_key_log(receipt, subject, has_subject, key_log, has_key_log)` is the same with a
 //!   copy of the key log the reader holds, read here as text and never fetched.
 //! - `tw_cannot_prove()` returns the same shape, holding the list of what this product cannot prove.
+//! - `tw_formats()` returns the same shape, holding the receipt format versions this module reads.
 //!
 //! The caller frees everything it was given with `tw_free`. Nothing here dereferences a pointer,
 //! which is what keeps the crate free of `unsafe`; see [`BUFFERS`].
@@ -30,7 +31,7 @@
 //! somewhere to be checked would create a permanent address for whatever that receipt is about, and
 //! whoever found the link would learn it.
 
-// Every use of this is one of the four exported functions below, and each carries the attribute by
+// Every use of this is one of the six exported functions below, and each carries the attribute by
 // name. See the manifest for why `forbid` is not possible in a module a page can call.
 #![deny(unsafe_code)]
 
