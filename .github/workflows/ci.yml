@@ -151,6 +151,14 @@ jobs:
           node scripts/verifier-page-offline.mjs --self-test
           node scripts/verifier-page-in-a-browser.mjs
 
+      - name: The page as a host serves it
+        # The check a host is held to, `scripts/the-served-verifier-page.mjs <address>`, run on this
+        # tree's page served on the loopback address, and then on five seeds, each refused by its own
+        # part: a wrong verdict shown, a wrong width shown, the file sent on the click, the file sent
+        # as the page is left, and a page built from another commit. The two seeds that send the file
+        # have to reach the server with it, so each is seen connected.
+        run: node scripts/the-served-verifier-page.mjs --self-test
+
       - name: Repository hygiene
         run: bash scripts/repo-hygiene.sh
 

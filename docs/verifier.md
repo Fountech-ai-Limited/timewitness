@@ -27,6 +27,18 @@ works with the network off. It makes no request of any kind.
 
 Neither needs an account, a key from us, or a route to anything of ours.
 
+**The page as we host it.** The same file, served at an address of ours so a reader need not build
+it. It names the commit it was built from, in a `tw-built-from` meta tag and in its footer, and the
+command line built at that commit is the one it agrees with. Hosting it changes nothing about what it
+asks for, which is nothing: the receipt and the file are read and hashed in the browser and never
+sent. A host is handed the page by `bash scripts/page-for-a-host.sh <tag or commit> <folder>`, which
+builds it in a clean clone at that commit and writes a record of the commit and the page's sha256
+beside it. `node scripts/the-served-verifier-page.mjs <address>`, run from a checkout at the commit the
+page names, holds a host to that. It reads the served page for any way it could ask a network for
+something, puts the committed receipt and one stamped on the spot through both the page's own code
+and the command line, then opens the address in a headless Chrome, chooses the files, and requires
+the verdict and width the command line gives and no request at all once the page is open.
+
 ## What it checks, in the order it checks it
 
 1. **Is this a receipt or an unbounded file.** Size first, because everything after it allocates from
