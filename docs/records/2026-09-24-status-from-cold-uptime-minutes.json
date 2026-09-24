@@ -1,0 +1,15 @@
+{
+ "machine": "an ordinary desktop",
+ "path": "the resident agent",
+ "date": "2026-09-24",
+ "cadenceSeconds": 32,
+ "how": "Ten resident agents started from cold one after another from 11:59:55 UTC on 2026-09-24 on an ordinary Windows desktop with 32 processors and other builds running on it, against the nine published servers, thirty-two second cadence, 250 ms ceiling, each asked with timewitness status twice a second for five minutes and stopped by its process number, by scripts/status-from-cold.py --starts 10 --watch 300. The binary was the tree at 915c99f with this change on top. Every answer, with its uptime, its kind and its width, is on the desktop that took it, under the product's tests/build-checks/2026-09-24-351/.",
+ "figures": [
+  "2",
+  "3",
+  "5"
+ ],
+ "unit": "minutes",
+ "of": "a setting or a condition",
+ "what": "The uptime windows the refusals were counted over: 1224 of 1809 answers refused in the first two minutes, 38 of 1810 from three minutes to five, over the five minutes each agent was asked"
+}

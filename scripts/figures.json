@@ -1381,6 +1381,110 @@
     "cadenceSeconds": 32,
     "uptimeMinutes": 36
    }
+  },
+  {
+   "figure": "30",
+   "unit": "s",
+   "precision": "1 s",
+   "whose": "ours, a setting",
+   "conditions": "how soon a fresh agent's status gives the width and the plain sentence, a stated time rather than a measurement, held by scripts/status-from-cold.py to ten measured starts that took 1.9 s to 6.6 s. The same two characters are the one-shot ceiling until 2026-09-15, which is its own entry",
+   "evidence": {
+    "kind": "code",
+    "artefact": "crates/cli/src/status_cmd.rs",
+    "note": "FIRST_BOUND_WITHIN, whose documentation states 30 s"
+   },
+   "of": "a setting or a condition",
+   "saidWith": [
+    "fresh agent starting"
+   ]
+  },
+  {
+   "figure": [
+    "1.9",
+    "6.6",
+    "15"
+   ],
+   "unit": "s",
+   "precision": "0.1 s",
+   "whose": "ours",
+   "conditions": "the uptime at which status first gave the width and the plain sentence, and the last fifteen seconds of five minutes in which four of the ten refused; ten fresh resident agents started one after another on an ordinary Windows desktop, 2026-09-24 from 11:59:55 UTC, nine published servers, thirty-two second cadence, 250 ms ceiling, each asked with timewitness status twice a second for five minutes",
+   "evidence": {
+    "kind": "record",
+    "artefact": "docs/records/2026-09-24-status-from-cold-uptime-marks.json"
+   },
+   "of": "a setting or a condition",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   },
+   "setup": {
+    "date": "2026-09-24",
+    "cadenceSeconds": 32
+   }
+  },
+  {
+   "figure": [
+    "2",
+    "3",
+    "5"
+   ],
+   "unit": "minutes",
+   "precision": "1 minutes",
+   "whose": "ours",
+   "conditions": "the uptime windows over which refusals were counted; ten fresh resident agents started one after another on an ordinary Windows desktop, 2026-09-24 from 11:59:55 UTC, nine published servers, thirty-two second cadence, 250 ms ceiling, each asked with timewitness status twice a second for five minutes",
+   "evidence": {
+    "kind": "record",
+    "artefact": "docs/records/2026-09-24-status-from-cold-uptime-minutes.json"
+   },
+   "of": "a setting or a condition",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   },
+   "setup": {
+    "date": "2026-09-24",
+    "cadenceSeconds": 32
+   }
+  },
+  {
+   "figure": "250.007",
+   "unit": "ms",
+   "precision": "0.001 ms",
+   "whose": "ours",
+   "conditions": "the narrowest width status stated while a stamp would have been refused; ten fresh resident agents started one after another on an ordinary Windows desktop, 2026-09-24 from 11:59:55 UTC, nine published servers, thirty-two second cadence, 250 ms ceiling, each asked with timewitness status twice a second for five minutes",
+   "evidence": {
+    "kind": "record",
+    "artefact": "docs/records/2026-09-24-status-from-cold-widths-ms.json"
+   },
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   },
+   "setup": {
+    "date": "2026-09-24",
+    "cadenceSeconds": 32
+   }
+  },
+  {
+   "figure": "4.873",
+   "unit": "s",
+   "precision": "0.001 s",
+   "whose": "ours",
+   "conditions": "the widest width status stated while a stamp would have been refused; ten fresh resident agents started one after another on an ordinary Windows desktop, 2026-09-24 from 11:59:55 UTC, nine published servers, thirty-two second cadence, 250 ms ceiling, each asked with timewitness status twice a second for five minutes",
+   "evidence": {
+    "kind": "record",
+    "artefact": "docs/records/2026-09-24-status-from-cold-widths-s.json"
+   },
+   "of": "the whole interval",
+   "owner": {
+    "machine": "an ordinary desktop",
+    "path": "the resident agent"
+   },
+   "setup": {
+    "date": "2026-09-24",
+    "cadenceSeconds": 32
+   }
   }
  ]
 }
