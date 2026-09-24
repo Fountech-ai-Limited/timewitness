@@ -34,6 +34,7 @@ import argparse
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -158,6 +159,18 @@ def check_tree():
     return judge_tree(version, first_line(built_binary()), here, elsewhere)
 
 
+def remove(path):
+    """A clone's objects are read-only on Windows, and rmtree gives up on them unless told to make
+    each one writable first."""
+    def writable(func, target, _):
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+    try:
+        shutil.rmtree(path, onexc=writable)
+    except TypeError:
+        shutil.rmtree(path, onerror=writable)
+
+
 def check_release(tag, at, source, work):
     scratch = tempfile.mkdtemp(prefix="tw-version-", dir=work)
     try:
@@ -178,7 +191,7 @@ def check_release(tag, at, source, work):
             binary += ".exe"
         return judge_release(tag, first_line(binary))
     finally:
-        shutil.rmtree(scratch, ignore_errors=True)
+        remove(scratch)
 
 
 def self_test():
