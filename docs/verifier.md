@@ -60,12 +60,19 @@ the verdict and width the command line gives and no request at all once the page
    log with no head is signed by nobody and answers nothing either.
 
    Under a head of ours the step reads the entries that name agent keys. Held where one names the
-   receipt's key over a window the reading falls in. Refused where the key was retired before the
-   reading, where every window naming it falls elsewhere, where the log names it as a server key,
-   or where the log names agent keys and not this one. Not checked, and not refused, where the log
-   holds no agent entry at all, which is what the log we serve first looks like: it carries the keys
-   of our two Roughtime servers, and a list of server keys has nothing to say about the key that
-   signed a receipt.
+   receipt's key over a window the reading falls in, and the answer names that entry by its place
+   in the log and its label, and the window by both ends in nanoseconds. Refused where the key was
+   retired before the reading, where every window naming it falls elsewhere, where the log names it
+   as a server key, or where the log names agent keys and not this one. A refusal for the window
+   names the reading and every window it fell outside. Not checked, and not refused, where the log
+   holds no agent entry at all, which is what the log we served until 2026-09-24 looked like. The
+   log we serve now names the one agent key we vouch for, so a receipt signed by any other key is
+   refused against it as not ours, the receipt committed at `crates/verify/tests/data/a-real-stamp`
+   among them: its key's private half cannot be accounted for, and an entry for it would vouch for
+   anything it signs. `--fields` carries the same answer as
+   `key_log_entry`, the place of the entry that vouches for the key or `none`, and
+   `key_log_windows`, every window the log names for the key as `entry:from..until`, with `open`
+   where no end is stated.
 
    **The answer is worth what a list we signed is worth**, and the step says so in the words it
    gives back. What a log buys is that a key we published is one we cannot quietly unpublish,
@@ -270,8 +277,9 @@ where the command line itself was wrong.
 - It does not check that the agent's key belongs to anybody. It can check a key against a log a
   reader was handed, `--key-log`, and that is a list we signed rather than anybody else's word for
   it: our own word, checked under our own key, and never third-party evidence. A log signed by
-  anybody else answers nothing, and a log holding no agent key, which is the log we serve first,
-  answers nothing about a receipt and does not refuse it.
+  anybody else answers nothing, and a log holding no agent key answers nothing about a receipt and
+  does not refuse it. The log we serve names only our own agent keys, so it says whether a key was
+  ours and never whose a key is otherwise.
 - It does not catch a stolen key by the window in that log. The window is compared with the
   receipt's own reading, which whoever holds the key wrote. What the log's window does catch is a
   receipt that says it was signed after the key was retired.

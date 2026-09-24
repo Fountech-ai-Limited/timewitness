@@ -487,3 +487,97 @@ fn a_kept_log_pins_nothing_unless_we_signed_it() {
         state.detail()
     );
 }
+
+/// The whole run against a log, for the tests that read the report as well as the words.
+fn against(signed: &[u8], log: &KeyLog) -> timewitness_verify::Assessment {
+    verify_with_key_log(
+        signed,
+        Subject::Digest(&common::SUBJECT),
+        &anchors(),
+        &Floor::default(),
+        Some(log),
+    )
+}
+
+#[test]
+fn a_key_that_was_ours_at_the_reading_is_answered_with_the_entry_and_its_window() {
+    let (signed, key, at) = the_receipt();
+    let from = at.0 - 1_000_000_000;
+    let until = at.0 + 1_000_000_000;
+    let log = our_log(vec![
+        server([9u8; 32]),
+        entry(key, UnixNanos(from), Some(UnixNanos(until))),
+    ]);
+
+    let assessment = against(&signed, &log);
+    let state = assessment
+        .step(KEY_LOG_QUESTION)
+        .expect("asked of every receipt")
+        .state
+        .clone();
+    assert!(matches!(state, State::Held(_)), "{state:?}");
+
+    // A reader told only `held` cannot go and look. The entry is named by its place in the log and
+    // by its label, and the window by both of its ends, so the answer can be found in the file.
+    let detail = state.detail();
+    assert!(detail.contains("Entry 2 of 2"), "{detail}");
+    assert!(detail.contains("\"a build runner\""), "{detail}");
+    assert!(
+        detail.contains(&format!("from {from} ns to {until} ns")),
+        "{detail}"
+    );
+    assert!(detail.contains("not third-party evidence"), "{detail}");
+
+    let report = assessment.key_log.expect("a log was supplied");
+    assert_eq!(report.entry, Some(2));
+    assert_eq!(
+        report.windows,
+        vec![timewitness_verify::Window {
+            entry: 2,
+            from: UnixNanos(from),
+            until: Some(UnixNanos(until)),
+        }]
+    );
+}
+
+#[test]
+fn a_key_of_ours_outside_its_window_is_refused_as_not_ours_then_and_the_window_is_named() {
+    let (signed, key, at) = the_receipt();
+    let from = at.0 + 1;
+    let log = our_log(vec![entry(key, UnixNanos(from), None)]);
+
+    let assessment = against(&signed, &log);
+    assert!(
+        !assessment.accepted(),
+        "a key outside its window must refuse"
+    );
+    let state = assessment
+        .step(KEY_LOG_QUESTION)
+        .expect("asked of every receipt")
+        .state
+        .clone();
+    assert!(matches!(state, State::Failed(_)), "{state:?}");
+
+    let detail = state.detail();
+    assert!(detail.contains("entry 1 of 1"), "{detail}");
+    assert!(
+        detail.contains(&format!("from {from} ns, with no end stated")),
+        "{detail}"
+    );
+    assert!(
+        detail.contains(&format!("the reading at {} ns", at.0)),
+        "{detail}"
+    );
+    assert!(detail.contains("not ours at that moment"), "{detail}");
+
+    let report = assessment.key_log.expect("a log was supplied");
+    assert_eq!(report.entry, None);
+    assert_eq!(
+        report.windows,
+        vec![timewitness_verify::Window {
+            entry: 1,
+            from: UnixNanos(from),
+            until: None,
+        }]
+    );
+}

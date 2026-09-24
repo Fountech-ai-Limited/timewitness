@@ -5,7 +5,7 @@
 #
 # `deploy/key-log/entries.txt` is the log with no head, and it is the only place an entry is ever
 # written. This signs it with `timewitness key-log --sign`, reads the result back through
-# `timewitness verify --key-log` on the committed receipt, holds it to the copy last served, and
+# `timewitness verify --key-log` on a receipt signed by our own key, holds it to the copy last served, and
 # only then puts it at `<out>`. Anybody with this tree and the signing key gets the same entries and
 # the same root, so the served copy is something a reader can check came from here rather than
 # something somebody typed.
@@ -27,10 +27,13 @@
 #    There is no copy last served only once, before the first head, and that run says so with
 #    `--first`; without it a missing `<out>` is a refusal and not a first run. Until 2026-09-15 the
 #    check was skipped whenever `<out>` was absent, which was every CI run and every fresh machine.
-# 3. The verifier has to read the new log and check its head. For the committed receipt the answer
-#    to `is that key one of ours` is not checked, because that receipt was signed by an agent key
-#    and this log holds server keys, and not checked is the right answer. What this asks is that the
-#    answer comes from the log, under a head the verifier checked against a key it holds for us.
+# 3. The verifier has to read the new log and check its head, and it has to answer `is that key one
+#    of ours` with held for `crates/verify/tests/data/our-agent-key/inside-its-window.hex`, which
+#    was signed by the agent key this log vouches for, inside the window it names. A log of ours that
+#    does not vouch for our own receipt is a log that lost an entry. Until 2026-09-24 the log held
+#    server keys only, this read the receipt in `a-real-stamp`, and it asked no more than an answer
+#    that was not a refusal. That receipt's key is not in the log, so against it that receipt is now
+#    refused as not ours, which is the right answer for it.
 #
 # Set TIMEWITNESS_BIN to a built binary to skip the build.
 
@@ -96,8 +99,9 @@ trap 'rm -rf "$work"' EXIT
 cp deploy/key-log/entries.txt "$work/log.txt"
 "$bin" key-log --log "$work/log.txt" --sign "$signing_key" >/dev/null
 
-verify=("$bin" verify crates/verify/tests/data/a-real-stamp/receipt.cbor
-  --subject crates/verify/tests/data/a-real-stamp/subject.bin
+python3 -c 'import sys; open(sys.argv[2], "wb").write(bytes.fromhex(open(sys.argv[1]).read()))' crates/verify/tests/data/our-agent-key/inside-its-window.hex "$work/ours.cbor"
+verify=("$bin" verify "$work/ours.cbor"
+  --subject crates/verify/tests/data/our-agent-key/subject.txt
   --key-log "$work/log.txt" --fields)
 if [ -n "$signer" ]; then
   verify+=(--key-log-signer "$signer")
@@ -135,7 +139,7 @@ if [ -n "$signer" ] && [ "$signed_by" != "$signer" ]; then
 fi
 entries="$(field key_log_entries)" || refuse "the verifier counted no entries"
 step="$(field key_log_step)" || refuse "the verifier did not answer the key step"
-[ "$step" != failed ] || refuse "the log refuses the committed receipt, which a log of ours must not"
+[ "$step" = held ] || refuse "the log answers $step for a receipt signed by our own key inside its window, which a log of ours vouches for"
 
 if [ "$first" = no ]; then
   kept="$(field kept_log)" || refuse "the verifier did not hold the new log to the copy at $out"

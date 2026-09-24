@@ -46,7 +46,9 @@ inputs:
       A 32 byte agent key. One is generated on the runner where this file does not exist, which is
       what keeps the install to one line. A generated key proves that one agent signed this receipt
       and nothing about who that agent was. The log of our keys served at
-      timewitness.dev/key-log.txt names no agent key, so there is nothing yet to check it against.
+      timewitness.dev/key-log.txt names our own agent key and not a generated one, so checked
+      against that log a receipt signed with a generated key is refused as not ours. Checked without
+      it, the receipt verifies on its own evidence as it always did.
       Supply your own, from a secret, where you want a key that persists across runs.
     required: false
     default: timewitness-agent.key

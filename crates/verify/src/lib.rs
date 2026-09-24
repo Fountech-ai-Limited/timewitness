@@ -178,6 +178,78 @@ pub struct KeyLogReport {
     pub agent_entries: usize,
     /// What was established about the head.
     pub head: HeadCheck,
+    /// The place of the entry that says the key which signed the receipt was an agent key of ours
+    /// at its reading, counted from one in the order the log holds its entries. `None` wherever no
+    /// entry says so, and wherever the head was not checked under a key this reader holds for us,
+    /// because an entry in a log nobody we hold signed names nothing worth a script's time.
+    pub entry: Option<usize>,
+    /// Every window the log names for that key as an agent key, first to last, under the same
+    /// condition. A refusal for a reading outside them is only useful to a reader who is told what
+    /// they were.
+    pub windows: Vec<Window>,
+}
+
+/// One window a key log names for an agent key, and where in the log it is named.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Window {
+    /// The place of the entry naming it, counted from one in the order the log holds its entries.
+    pub entry: usize,
+    /// The first moment the entry says the key was ours.
+    pub from: timewitness_core::UnixNanos,
+    /// The last, where the entry states one.
+    pub until: Option<timewitness_core::UnixNanos>,
+}
+
+impl Window {
+    /// Both ends in words, each as the nanoseconds the log itself writes, so a reader can find the
+    /// line.
+    fn span(&self) -> String {
+        match self.until {
+            Some(until) => format!(
+                "from {} ns to {} ns",
+                self.from.as_nanos(),
+                until.as_nanos()
+            ),
+            None => format!("from {} ns, with no end stated", self.from.as_nanos()),
+        }
+    }
+}
+
+/// The agent entries naming a key, each with its window and its label, first to last.
+fn agent_windows<'a>(log: &'a KeyLog, key: &[u8; 32]) -> Vec<(Window, &'a str)> {
+    log.entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.public_key == *key && e.role == timewitness_core::keylog::Role::Agent)
+        .map(|(index, e)| {
+            (
+                Window {
+                    entry: index + 1,
+                    from: e.valid_from,
+                    until: e.valid_until,
+                },
+                e.deployment.as_str(),
+            )
+        })
+        .collect()
+}
+
+/// The entry that vouches for a key at a moment, where the log vouches for it at all.
+///
+/// Read after [`KeyLog::standing`] has said yes, and never instead of it, because a retirement
+/// further down answers before any window. The first covering window is the one `standing` stopped
+/// at.
+fn the_vouching_entry<'a>(
+    log: &'a KeyLog,
+    key: &[u8; 32],
+    at: timewitness_core::UnixNanos,
+) -> Option<(Window, &'a str)> {
+    if log.standing(key, at) != Standing::Published {
+        return None;
+    }
+    agent_windows(log, key)
+        .into_iter()
+        .find(|(w, _)| at >= w.from && !w.until.is_some_and(|until| at > until))
 }
 
 /// The question the key log step answers.
@@ -466,6 +538,8 @@ fn assess(
             entries: log.entries.len(),
             agent_entries: log.agent_entries(),
             head: log.check_head(&held),
+            entry: None,
+            windows: Vec::new(),
         }),
         certificate: None,
     };
@@ -509,7 +583,20 @@ fn assess(
         ),
     ));
     match anchors.certification_began {
-        None => steps.push(against_the_key_log(&receipt, key_log, &held)),
+        None => {
+            steps.push(against_the_key_log(&receipt, key_log, &held));
+            if let (Some(report), Some(log)) = (assessment.key_log.as_mut(), key_log) {
+                let key = <[u8; 32]>::try_from(receipt.agent_public_key.as_slice());
+                if let (HeadCheck::Checked(_), Ok(key)) = (&report.head, key) {
+                    report.windows = agent_windows(log, &key)
+                        .into_iter()
+                        .map(|(w, _)| w)
+                        .collect();
+                    report.entry =
+                        the_vouching_entry(log, &key, receipt.utc_estimate).map(|(w, _)| w.entry);
+                }
+            }
+        }
         Some(began) => steps.push(the_log_for_certificates(key_log, anchors, &held, began)),
     }
     if let (Some(log), Some(kept)) = (key_log, kept) {
@@ -649,15 +736,41 @@ fn against_the_key_log(receipt: &Receipt, key_log: Option<&KeyLog>, held: &[[u8;
                   wrote, so it catches a receipt that says it was signed outside the window and \
                   not one that lies about when";
 
-    match log.standing(&key, receipt.utc_estimate) {
+    // The entry is named by its place and its label, and the window by both ends as the log writes
+    // them, so a reader told `held` or `refused` can find the line in the file and read it. Until
+    // 2026-09-24 the step said only that some entry did or did not cover the reading.
+    let reading = receipt.utc_estimate;
+    let of = log.entries.len();
+    let named = |(window, label): &(Window, &str)| {
+        format!(
+            "entry {} of {of}, \"{label}\", {}",
+            window.entry,
+            window.span()
+        )
+    };
+
+    match log.standing(&key, reading) {
         Standing::Published => Step::held(
             question,
             format!(
-                "{head}, and one of them names this key as an agent key over a window the reading \
-                 falls in. **This is a list we signed and not third-party evidence.** It makes a \
+                "{head}. {} **This is a list we signed and not third-party evidence.** It makes a \
                  key we published one we cannot quietly unpublish, to a reader who kept an earlier \
                  head; it does not make us trustworthy to a stranger, and the weight of this receipt \
-                 still rests on the third-party signatures in it. {judged}"
+                 still rests on the third-party signatures in it. {judged}",
+                match the_vouching_entry(log, &key, reading) {
+                    Some((window, label)) => format!(
+                        "Entry {} of {of}, \"{label}\", names this key as an agent key {}, and the \
+                         reading at {} ns falls in that window.",
+                        window.entry,
+                        window.span(),
+                        reading.as_nanos()
+                    ),
+                    None => format!(
+                        "One of them names this key as an agent key over a window the reading at \
+                         {} ns falls in.",
+                        reading.as_nanos()
+                    ),
+                }
             ),
         ),
         Standing::Retired(at) => Step::failed(
@@ -672,8 +785,15 @@ fn against_the_key_log(receipt: &Receipt, key_log: Option<&KeyLog>, held: &[[u8;
         Standing::OutsideItsWindow => Step::failed(
             question,
             format!(
-                "{head}, and the entries naming this key as an agent key all name a window this \
-                 reading falls outside. {judged}"
+                "{head}, and the reading at {} ns falls outside every window it names for this key \
+                 as an agent key: {}. So the log does not say this key was ours at that moment, and \
+                 the receipt is refused as not ours at that moment. {judged}",
+                reading.as_nanos(),
+                agent_windows(log, &key)
+                    .iter()
+                    .map(named)
+                    .collect::<Vec<_>>()
+                    .join("; ")
             ),
         ),
         Standing::AServerKey => Step::failed(

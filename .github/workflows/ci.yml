@@ -96,6 +96,14 @@ jobs:
           refuse "not signed by the key the verifier holds for us" "$RUNNER_TEMP/another-key" "$RUNNER_TEMP/key-log.txt" --signer "$signer"
           refuse "no copy last served" "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/nowhere/key-log.txt" --signer "$signer"
 
+      - name: The log answers for our keys
+        # The log built above, read the way a stranger reads the one we serve. The receipt signed by
+        # our key inside its window is held and names the entry and the window; the one signed by that
+        # key before its window opened is refused as not ours, and so is the committed receipt, whose
+        # key the log does not name. A reader checks
+        # the served copy with the same script and no arguments, under the key that ships for our head.
+        run: TIMEWITNESS_BIN=target/debug/timewitness bash scripts/our-key-in-the-log.sh "$RUNNER_TEMP/key-log.txt" --signer "$signer"
+
       - name: Verifying needs no account and no call to us
         # Two halves, and each catches what the other cannot. The test reads what the verifier links
         # and what its sources say, so it names the file and the line. The script takes the network
