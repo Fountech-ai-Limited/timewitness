@@ -273,6 +273,7 @@ count_refuses() {
 }
 step "  and that check still refuses a bare one" count_refuses
 step "The guard that reads the served page is still running" bash scripts/wire-guard-is-alive.sh
+step "Every version and format label is read off what it labels" bash -c "python3 scripts/the-version-is-the-tag.py --self-test && python3 scripts/the-version-is-the-tag.py && python3 scripts/the-format-labels-are-the-receipts.py --self-test && python3 scripts/the-format-labels-are-the-receipts.py"
 step "Dependency advisories" bash scripts/check-advisories.sh
 
 if [ ${#failed[@]} -ne 0 ]; then

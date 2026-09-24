@@ -124,6 +124,7 @@ and carries signed evidence from parties who have never heard of us. This page c
     <button type="submit" id="go" disabled>Check it</button>
   </fieldset>
 </form>
+<p class="detail" id="formats"></p>
 
 <!-- role="status" rather than role="alert", because a verdict is information and not an alarm,
      and tabindex="-1" so the handler can put the reader inside it once there is something to read. -->
@@ -163,7 +164,7 @@ and carries signed evidence from parties who have never heard of us. This page c
 </main>
 
 <script type="module">
-// The whole of the boundary between this page and the checking code. Four exported functions and a
+// The whole of the boundary between this page and the checking code. Six exported functions and a
 // length-prefixed buffer: the module hands out an address, this writes bytes there, the module reads
 // its own allocation back. No binding library, so what runs here is what is written here.
 
@@ -199,8 +200,15 @@ async function start() {
   wasm = module.instance.exports;
   document.getElementById("go").disabled = false;
   renderLimits(take(wasm.tw_cannot_prove()));
+  // The formats come from the checking code rather than from this file. This line said "Receipt
+  // format v0" as a constant until 2026-09-24, over a module that had read version 1 since v0.2.
+  const reads = (take(wasm.tw_formats()) || {}).reads || [];
+  document.getElementById("formats").textContent = reads.length === 0
+    ? "The checking code in this page named no receipt format it reads."
+    : "The checking code in this page reads receipt format" + (reads.length === 1 ? " " : "s ") +
+      reads.map((version) => "v" + version).join(" and ") + ".";
   document.getElementById("build").textContent =
-    "Receipt format v0. This page carries the verifier as " +
+    "This page carries the verifier as " +
     Math.round(WASM_BASE64.length * 3 / 4 / 1024) +
     " kilobytes of WebAssembly and needs nothing else.";
 }
@@ -300,7 +308,14 @@ function renderResult(result) {
     }
     claim.append(element("h3", null, "Where the width comes from"), table);
     const v1 = c.version_1 || {};
-    if (v1.format_version >= 1) {
+    // The version is the one written in this receipt's own bytes, as the checking code read it.
+    const version = v1.format_version;
+    claim.append(element("p", "detail", typeof version === "number"
+      ? "This receipt is format version " + version + ", read off its own bytes, and " +
+        (version >= 1 ? "that format states" : "that format does not state") +
+        " the terms that set its width."
+      : "The checking code gave no format version for this receipt."));
+    if (version >= 1) {
       claim.append(element("p", "detail",
         (v1.taken_by === "resident-agent"
           ? "The reading was read from a resident agent on the signing machine, so it rests on " +
@@ -312,9 +327,6 @@ function renderResult(result) {
         "at most " + v1.frequency_slew_ppb_per_s + " parts per billion a second inside a band " +
         v1.frequency_span_ppb + " parts per billion wide. Those are the agent's assumptions, " +
         "stated so they can be checked, and nothing on this page measured them."));
-    } else {
-      claim.append(element("p", "detail",
-        "This receipt is format version 0, which does not state the terms that set its width."));
     }
     claim.append(element("p", "detail mono", "This receipt is " + result.receipt_bytes +
       " bytes and hashes to " + result.receipt_sha256 + "."));

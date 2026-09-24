@@ -10,7 +10,8 @@ the release it installed in its job names, so this reads the answer from outside
 
 It reads the latest release of this repository, then the most recent scheduled or dispatched run of
 the install check that has finished, and passes only when that run was green, is under a day old,
-and installed and checked that same release. It prints what it read and exits 0 or 1, so the answer
+installed and checked that same release, and ran the four steps that read the receipt out of the
+provenance, each of them green. It prints what it read and exits 0 or 1, so the answer
 is an exit status rather than a reading somebody takes by eye.
 
 The failure it exists for is a check that was green on one release and stays green after the next
@@ -41,6 +42,18 @@ FIND = "Find the latest release"
 INSTALL = re.compile(r"^Install (\S+) in one line and stamp a build$")
 VERIFY = re.compile(r"^Check what (\S+) made, as a stranger$")
 
+# The steps of the stranger's job that read the receipt the provenance carries, each of which has to
+# be there and green. A run from before 2026-09-24 has none of them and a job can pass with a step
+# taken out of it, so the job going green is not enough on its own. These are what acceptance item
+# A-07 reads: the receipt taken out of the provenance, verified, refused with one bit changed, and
+# its label held to the format in its own bytes.
+PROVENANCE_STEPS = (
+    "Take the receipt out of the provenance",
+    "Verify the receipt the provenance carries",
+    "Refuse that receipt with one bit changed",
+    "The provenance names the receipt's own format",
+)
+
 
 def gh(args):
     out = subprocess.run(["gh"] + args, capture_output=True, text=True)
@@ -57,7 +70,7 @@ def when(stamp):
 
 def judge(latest, runs, jobs_of, now):
     """Return (passed, lines). `runs` is newest first, as GitHub lists them; `jobs_of(id)` gives a
-    run's jobs as name and conclusion."""
+    run's jobs as name, conclusion and steps, each step a name and a conclusion."""
     lines = ["latest release of %s: %s" % (REPO, latest)]
     chosen = None
     for run in runs:
@@ -116,6 +129,18 @@ def judge(latest, runs, jobs_of, now):
             lines.append("refused: the job that %s names %s and the latest release is %s" % (
                 what, named, latest))
             passed = False
+        if pattern is VERIFY:
+            steps = job.get("steps") or []
+            for step in PROVENANCE_STEPS:
+                found = [s for s in steps if s["name"] == step]
+                if len(found) != 1:
+                    lines.append("refused: found %d steps called %r in the job that checks what "
+                                 "it made" % (len(found), step))
+                    passed = False
+                elif found[0]["conclusion"] != "success":
+                    lines.append("refused: the step %r did not pass, it was %s" % (
+                        step, found[0]["conclusion"]))
+                    passed = False
 
     lines.append("PASS: the install check installed %s and passed within %d hours" % (
         latest, MAX_AGE.total_seconds() / 3600) if passed else "FAIL")
@@ -129,7 +154,10 @@ def from_github():
 
     def jobs_of(run_id):
         data = json.loads(gh(["api", "repos/%s/actions/runs/%s/jobs?per_page=100" % (CHECK, run_id)]))
-        return [{"name": j["name"], "conclusion": j["conclusion"]} for j in data["jobs"]]
+        return [{"name": j["name"], "conclusion": j["conclusion"],
+                 "steps": [{"name": s["name"], "conclusion": s["conclusion"]}
+                           for s in j.get("steps") or []]}
+                for j in data["jobs"]]
 
     return latest, runs, jobs_of
 
@@ -142,13 +170,17 @@ def self_test():
         return {"id": i, "event": event, "status": status, "conclusion": conclusion,
                 "run_started_at": started}
 
-    def jobs(install="v0.3", verify="v0.3", find="success", inst="success", ver="success"):
+    def jobs(install="v0.3", verify="v0.3", find="success", inst="success", ver="success",
+             steps=PROVENANCE_STEPS, step_says=None):
         out = [{"name": FIND, "conclusion": find}]
         if install is not None:
             out.append({"name": "Install %s in one line and stamp a build" % install,
                         "conclusion": inst})
         if verify is not None:
-            out.append({"name": "Check what %s made, as a stranger" % verify, "conclusion": ver})
+            said = step_says or {}
+            out.append({"name": "Check what %s made, as a stranger" % verify, "conclusion": ver,
+                        "steps": [{"name": "Verify the receipt", "conclusion": "success"}] +
+                                 [{"name": s, "conclusion": said.get(s, "success")} for s in steps]})
         return out
 
     good = jobs()
@@ -174,6 +206,16 @@ def self_test():
         ("the finding job failed", False, [run(1)], {1: jobs(find="failure")}),
         ("a newest failed run behind an older green one", False,
          [run(2, conclusion="failure"), run(1)], {1: good, 2: good}),
+        ("a stranger's job from before the provenance steps", False, [run(1)],
+         {1: jobs(steps=())}),
+        ("the label step taken out of the stranger's job", False, [run(1)],
+         {1: jobs(steps=PROVENANCE_STEPS[:3])}),
+        ("the one-bit refusal of the provenance receipt skipped", False, [run(1)],
+         {1: jobs(step_says={PROVENANCE_STEPS[2]: "skipped"})}),
+        ("the label step failed, as v0.2 fails it", False, [run(1)],
+         {1: jobs(step_says={PROVENANCE_STEPS[3]: "failure"})}),
+        ("the label step twice", False, [run(1)],
+         {1: jobs(steps=PROVENANCE_STEPS + PROVENANCE_STEPS[3:])}),
     ]
     wrong = 0
     for name, want, runs, table in shapes:

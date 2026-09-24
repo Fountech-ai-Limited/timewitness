@@ -250,6 +250,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/wire-guard-is-alive.sh
 
+      - name: Every version and format label is read off what it labels
+        # Acceptance items A-02 and A-07. A build from the `v0.2` tag printed `timewitness 0.1.0`, the
+        # page printed "Receipt format v0" and the provenance labelled every receipt v0, while every
+        # receipt that release writes is version 1. The first script holds the first line of
+        # --version to the tags, and refuses a commit other than a release's saying it is that
+        # release. The second holds the page and the provenance writer to the version in a receipt's
+        # own bytes. Each runs backwards first, over the shapes it has to refuse.
+        run: |
+          python3 scripts/the-version-is-the-tag.py --self-test
+          python3 scripts/the-version-is-the-tag.py
+          python3 scripts/the-format-labels-are-the-receipts.py --self-test
+          python3 scripts/the-format-labels-are-the-receipts.py
+
       # Its own cache, keyed on the version rather than on the lockfile. Sharing the cache above
       # would mean a build whose Cargo.lock has not moved restores a cache saved before this step
       # existed, finds no reader, and compiles one from source every run.

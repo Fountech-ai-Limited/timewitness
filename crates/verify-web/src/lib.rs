@@ -7,7 +7,7 @@
 //!
 //! ## The boundary, and why there is no binding library behind it
 //!
-//! Four exported functions and a length-prefixed buffer. A binding generator would be a build step,
+//! Six exported functions and a length-prefixed buffer. A binding generator would be a build step,
 //! a code generator and a dependency tree, in a page whose whole argument is that a stranger can
 //! read what it does. This is thirty lines and the JavaScript side of it is twenty.
 //!
@@ -18,6 +18,7 @@
 //! - `tw_verify_with_key_log(receipt, subject, has_subject, key_log, has_key_log)` is the same with a
 //!   copy of the key log the reader holds, read here as text and never fetched.
 //! - `tw_cannot_prove()` returns the same shape, holding the list of what this product cannot prove.
+//! - `tw_formats()` returns the same shape, holding the receipt format versions this module reads.
 //!
 //! The caller frees everything it was given with `tw_free`. Nothing here dereferences a pointer,
 //! which is what keeps the crate free of `unsafe`; see [`BUFFERS`].
@@ -30,7 +31,7 @@
 //! somewhere to be checked would create a permanent address for whatever that receipt is about, and
 //! whoever found the link would learn it.
 
-// Every use of this is one of the four exported functions below, and each carries the attribute by
+// Every use of this is one of the six exported functions below, and each carries the attribute by
 // name. See the manifest for why `forbid` is not possible in a module a page can call.
 #![deny(unsafe_code)]
 
@@ -248,6 +249,34 @@ pub extern "C" fn tw_cannot_prove() -> usize {
         })
         .collect();
     answer(&json::render(&Value::Array(items)))
+}
+
+/// Which receipt format versions this module reads, as JSON.
+#[allow(
+    unsafe_code,
+    reason = "exporting a function to WebAssembly is what this crate is for"
+)]
+#[no_mangle]
+pub extern "C" fn tw_formats() -> usize {
+    answer(&formats_json())
+}
+
+/// [`tw_formats`] with no address in the way, for the tests.
+///
+/// The page prints this list under its form rather than a number of its own. It printed "Receipt
+/// format v0" as a constant until 2026-09-24, above a module that had read version 1 since `v0.2`.
+/// Read from here, the line cannot say anything the checking code does not do.
+#[must_use]
+pub fn formats_json() -> String {
+    json::render(&Value::map([(
+        "reads",
+        Value::Array(
+            timewitness_receipt::READS
+                .iter()
+                .map(|v| Value::Int(*v))
+                .collect(),
+        ),
+    )]))
 }
 
 /// One of this module's own buffers, by the address it was handed out under.

@@ -46,6 +46,28 @@ fn every_way_of_asking_for_help_prints_the_usage_and_succeeds() {
     }
 }
 
+/// The tag a manifest version is released under, worked out here from the string rather than with
+/// the binary's own function, so a mistake in one is not repeated in the other.
+fn tag_of(version: &str) -> String {
+    let (core, pre) = match version.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (version, None),
+    };
+    let core = core.strip_suffix(".0").unwrap_or(core);
+    match pre {
+        Some(pre) => format!("v{core}-{pre}"),
+        None => format!("v{core}"),
+    }
+}
+
+#[test]
+fn a_manifest_version_is_spelled_as_its_tag() {
+    assert_eq!(tag_of("0.3.0"), "v0.3");
+    assert_eq!(tag_of("0.3.1"), "v0.3.1");
+    assert_eq!(tag_of("1.0.0"), "v1.0");
+    assert_eq!(tag_of("0.4.0-rc.1"), "v0.4-rc.1");
+}
+
 #[test]
 fn asking_which_version_names_the_build_and_the_format_it_reads() {
     for asked in [&["--version"][..], &["version"]] {
@@ -58,9 +80,10 @@ fn asking_which_version_names_the_build_and_the_format_it_reads() {
             out.status.code(),
             text(&out.stderr)
         );
-        assert!(
-            said.contains(&format!("timewitness {}", env!("CARGO_PKG_VERSION"))),
-            "{asked:?} did not name the build: {said}"
+        assert_eq!(
+            said.lines().next(),
+            Some(format!("timewitness {}", tag_of(env!("CARGO_PKG_VERSION"))).as_str()),
+            "{asked:?} did not name the release the way its tag does: {said}"
         );
         assert!(
             said.contains(&format!("receipt format v{FORMAT_VERSION}")),
