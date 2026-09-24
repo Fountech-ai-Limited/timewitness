@@ -34,10 +34,10 @@
 // repository's `npm run wall-check` prints one.
 //
 // `--self-test` serves the page this tree built on the loopback address, runs the whole check on it,
-// and then runs it on five seeds, each of which has to be refused by the part written for it: a page
+// and then runs it on six seeds, each of which has to be refused by the part written for it: a page
 // that shows the wrong verdict, one that shows the wrong width, one that sends the file it was given
-// when the button is clicked, one that sends it as the page is left, and one built from another
-// commit. The two that send are written so the page check's spellings cannot see them and the policy
+// when the button is clicked, one that sends it as the page is left, one that runs a module other
+// than the one it carries, and one built from another commit. The two that send are written so the page check's spellings cannot see them and the policy
 // is taken out so the browser lets them go, and the server has to receive the file, so each is shown
 // connected before its refusal is believed. A guard nobody has seen fail is not evidence.
 //
@@ -160,7 +160,8 @@ async function theModuleIn(page, problems) {
     problems.push(`the served page carries ${found.length} modules where the build embeds exactly one`);
     return null;
   }
-  const instance = (await WebAssembly.instantiate(Buffer.from(found[0][1], "base64"), {})).instance.exports;
+  const bytes = Buffer.from(found[0][1], "base64");
+  const instance = (await WebAssembly.instantiate(bytes, {})).instance.exports;
   const put = (bytes) => {
     const address = instance.tw_alloc(bytes.length);
     new Uint8Array(instance.memory.buffer, address, bytes.length).set(bytes);
@@ -173,7 +174,7 @@ async function theModuleIn(page, problems) {
     instance.tw_free(address);
     return JSON.parse(text);
   };
-  return (receiptFile, subjectFile) => {
+  const run = (receiptFile, subjectFile) => {
     const receiptAt = put(readFileSync(receiptFile));
     const subjectAt = put(readFileSync(subjectFile));
     const result = take(instance.tw_verify(receiptAt, subjectAt, 1));
@@ -181,6 +182,8 @@ async function theModuleIn(page, problems) {
     instance.tw_free(subjectAt);
     return result;
   };
+  run.sha256 = createHash("sha256").update(bytes).digest("hex");
+  return run;
 }
 
 function agree(problems, what, page, commandLine) {
@@ -189,9 +192,27 @@ function agree(problems, what, page, commandLine) {
   }
 }
 
-// The fields a verdict turns on. Each has to be on both sides or on neither, because a field one
-// side drops is the quietest way for the two to disagree.
-const ON_BOTH = ["accepted", "verdict", "bracket", "steps", "certificate", "receipt_sha256", "claim"];
+// The fields only one shell carries, because each adds words of its own for its reader: the page its
+// widths in words, its floor and each check's own lines, the command line its limitation list and
+// two labels on the claim. Read off both on 2026-09-24 over the committed receipts and a fresh one.
+// Any other field on one side and not the other is a disagreement, because a field one side drops is
+// the quietest way for the two to differ.
+const PAGE_ONLY = [".claim.breakdown", ".claim.width_in_words", ".floor", ".evidence[].checks", ".evidence[].detail"];
+const COMMAND_LINE_ONLY = [".claim.kind", ".claim.reading_is_display_only", ".cannot_prove"];
+
+function fieldsOf(value, path = "", into = new Set()) {
+  if (Array.isArray(value)) {
+    for (const item of value) fieldsOf(item, `${path}[]`, into);
+  } else if (value !== null && typeof value === "object") {
+    for (const key of Object.keys(value)) {
+      into.add(`${path}.${key}`);
+      fieldsOf(value[key], `${path}.${key}`, into);
+    }
+  }
+  return into;
+}
+
+const under = (field, allowed) => allowed.some((a) => field === a || field.startsWith(`${a}.`) || field.startsWith(`${a}[]`));
 
 // Every field the two both carry, all the way down. The two are one core behind two shells, and each
 // shell adds words of its own for its reader, the page its widths in words and the command line its
@@ -221,10 +242,13 @@ function theModuleAgrees(problems, what, fromPage, cli) {
     problems.push(`${what}: the checking code in the served page returned nothing`);
     return;
   }
-  for (const field of ON_BOTH) {
-    if (field in fromPage !== field in cli) {
-      problems.push(`${what}, ${field}: ${field in fromPage ? "the served page" : "the command line"} carries it and the other does not`);
-    }
+  const onThePage = fieldsOf(fromPage);
+  const onTheCommandLine = fieldsOf(cli);
+  for (const field of onThePage) {
+    if (!onTheCommandLine.has(field) && !under(field, PAGE_ONLY)) problems.push(`${what}, ${field}: the served page carries it and the command line does not`);
+  }
+  for (const field of onTheCommandLine) {
+    if (!onThePage.has(field) && !under(field, COMMAND_LINE_ONLY)) problems.push(`${what}, ${field}: the command line carries it and the served page does not`);
   }
   sharedFieldsAgree(problems, what, fromPage, cli);
 }
@@ -271,7 +295,7 @@ async function until(what, test, seconds = 30) {
 // Headless, in a profile of its own under `target/` that is thrown away afterwards, driven over its own
 // debugging protocol. No window opens. Whatever goes wrong on the way up, the browser is stopped and
 // its profile taken away before the failure is reported.
-async function aBrowser() {
+async function aBrowser(address) {
   if (typeof WebSocket === "undefined") throw new CouldNotRun(`this Node, ${process.version}, has no WebSocket to drive a browser with. Use 22 or later`);
   const browser = chrome();
   if (!browser) throw new CouldNotRun("no Chrome was found to drive. Name one with CHROME");
@@ -291,6 +315,10 @@ async function aBrowser() {
       "--disable-sync",
       `--user-data-dir=${profile}`,
       "--remote-debugging-port=0",
+      // Only the address's own host resolves, so nothing the page names by another name is looked up,
+      // and no peer connection goes out except through a proxy, which there is none of.
+      `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE ${new URL(address).hostname}`,
+      "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
       "about:blank",
     ],
     { stdio: "ignore" },
@@ -384,8 +412,51 @@ async function aBrowser() {
   }
 }
 
-// One receipt, in a tab of its own. What the page shows, the bytes the browser was handed, and
-// everything the tab reached for, with the moment it reached for it.
+// Put into every document the tab opens, before the page's own scripts run. It keeps a copy of every
+// module the page hands WebAssembly, so the one the browser ran can be held to the one step 3 checked,
+// and it notes every peer connection or transport the page makes, which no request list shows.
+const WATCH = `(() => {
+  const modules = [];
+  const reached = [];
+  Object.defineProperty(window, "__twWatched", { value: { modules, reached } });
+  const copy = (source) => {
+    if (source instanceof ArrayBuffer) return new Uint8Array(source.slice(0));
+    if (ArrayBuffer.isView(source)) return new Uint8Array(source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength));
+    return null;
+  };
+  const note = (source) => modules.push(source instanceof WebAssembly.Module ? "an already compiled module" : copy(source) || "something that is not bytes");
+  const wrap = (name) => {
+    const original = WebAssembly[name];
+    WebAssembly[name] = function (source, ...rest) { note(source); return original.call(this, source, ...rest); };
+  };
+  wrap("instantiate");
+  wrap("compile");
+  for (const name of ["instantiateStreaming", "compileStreaming"]) {
+    const original = WebAssembly[name];
+    if (original) WebAssembly[name] = function (...args) { modules.push("a module streamed from an address"); return original.apply(this, args); };
+  }
+  const Module = WebAssembly.Module;
+  WebAssembly.Module = new Proxy(Module, { construct(target, args) { note(args[0]); return new target(...args); } });
+  for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection", "WebTransport"]) {
+    const original = window[name];
+    if (original) window[name] = new Proxy(original, { construct(target, args) { reached.push(name); return new target(...args); } });
+  }
+})();`;
+
+// What the watcher saw, with each module as its sha256.
+const WATCHED = `(async () => {
+  const watched = window.__twWatched || { modules: [], reached: [] };
+  const modules = [];
+  for (const m of watched.modules) {
+    if (typeof m === "string") { modules.push(m); continue; }
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", m));
+    modules.push(Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join(""));
+  }
+  return JSON.stringify({ modules, reached: watched.reached });
+})()`;
+
+// One receipt, in a tab of its own. What the page shows, the bytes the browser was handed, the module
+// it ran, and everything the tab reached for, with the moment it reached for it.
 async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile) {
   const { targetId } = await browser.send("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await browser.send("Target.attachToTarget", { targetId, flatten: true });
@@ -394,6 +465,7 @@ async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile) 
   const others = [];
   let phase = "while the page was loading";
   let loaded = false;
+  let left = false;
   let documentId = null;
   const listener = (message) => {
     const { method, params } = message;
@@ -403,9 +475,16 @@ async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile) 
     }
     if (message.sessionId !== sessionId) return;
     if (method === "Page.loadEventFired") loaded = true;
-    // The tab's own list is read for one thing only, which request brought the document, so the bytes
-    // the browser was handed can be read back.
-    if (method === "Network.requestWillBeSent" && params.type === "Document" && documentId === null) documentId = params.requestId;
+    if (method === "Page.frameNavigated" && !params.frame.parentId && params.frame.url === "about:blank" && phase === "while the page was being left") left = true;
+    // A page that asks to stay open, or asks anything at all, is holding the reader rather than
+    // checking a receipt. It is answered so the tab can go, and it is counted.
+    if (method === "Page.javascriptDialogOpening") {
+      others.push({ kind: `a ${params.type} dialog`, url: params.url, phase });
+      tab("Page.handleJavaScriptDialog", { accept: true }).catch(() => {});
+    }
+    // The tab's own list is read for one thing only, which request brought the document the tab ended
+    // up showing, so the bytes it was handed can be read back. The last one is that document.
+    if (method === "Network.requestWillBeSent" && params.type === "Document" && phase === "while the page was loading") documentId = params.requestId;
     if (method === "Network.webSocketCreated") requests.push({ phase, type: "WebSocket", method: "WEBSOCKET", url: params.url });
     // A worker, a shared worker, a service worker or a frame in a process of its own: each runs code
     // the tab's own request list cannot see, and the page has none of them.
@@ -422,6 +501,7 @@ async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile) 
     await tab("Page.enable");
     await tab("DOM.enable");
     await tab("Runtime.enable");
+    await tab("Page.addScriptToEvaluateOnNewDocument", { source: WATCH });
     await tab("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
     await tab("Network.setUserAgentOverride", { userAgent: browser.ordinary });
     if (cookie) {
@@ -436,7 +516,8 @@ async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile) 
       });
       if (!success) throw new CouldNotRun("the browser would not take the wall's check for that host");
     }
-    const evaluate = async (expression) => (await tab("Runtime.evaluate", { expression, returnByValue: true })).result.value;
+    const evaluate = async (expression) =>
+      (await tab("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true })).result.value;
 
     await tab("Page.navigate", { url: address });
     await until("the page loading", () => loaded);
@@ -471,21 +552,31 @@ async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile) 
         '!document.getElementById("result").hidden && document.getElementById("go").textContent !== "Checking" && document.getElementById("verdict").textContent !== ""',
       ),
     );
-    const shown = JSON.parse(
-      await evaluate(`JSON.stringify({
-        verdict: document.getElementById("verdict").textContent,
-        state: document.getElementById("verdict").className.replace("verdict", "").trim(),
-        bracket: document.getElementById("verdict-bracket").textContent,
-        claim: (document.querySelector("#claim p") || { textContent: "" }).textContent,
-      })`),
-    );
-    // A page that waits before it sends is given the time to, and then it is left, which is when a
-    // page that sends on the way out would.
+    const read = async () =>
+      JSON.parse(
+        await evaluate(`JSON.stringify({
+          verdict: document.getElementById("verdict").textContent,
+          state: document.getElementById("verdict").className.replace("verdict", "").trim(),
+          bracket: document.getElementById("verdict-bracket").textContent,
+          claim: (document.querySelector("#claim p") || { textContent: "" }).textContent,
+        })`),
+      );
+    const shown = await read();
+    // A page that waits before it sends is given the time to, and what it shows is read again, so a
+    // verdict that changes after the first look is not taken at the first look.
     await sleep(3000);
+    const shownLater = await read();
+    const watched = JSON.parse(await evaluate(WATCHED));
+
+    // Then the page is left, which is when a page that sends on the way out would, and the tab is
+    // only let go once the browser has really moved on and closed it.
     phase = "while the page was being left";
     await tab("Page.navigate", { url: "about:blank" });
+    await until("leaving the page", () => left, 15);
     await sleep(1500);
-    return { shown, requests, others, loadedBytes };
+    await browser.send("Target.closeTarget", { targetId }).catch(() => {});
+    await sleep(1000);
+    return { shown, shownLater, watched, requests, others, loadedBytes };
   } finally {
     browser.listeners.delete(listener);
     browser.requestListeners.delete(recorder);
@@ -517,11 +608,18 @@ function widthAgrees(claimLine, widthNs) {
   return Math.abs(Number(said[1]) * 1000 - (widthNs / per) * 1000) <= 0.5 + 1e-9;
 }
 
-function whatTheBrowserShowed(problems, what, seen, cli, fetched) {
+function whatTheBrowserShowed(problems, what, seen, cli, fetched, run) {
   if (seen.loadedBytes === null) {
     problems.push(`${what}: the browser's copy of the page could not be read back, so what it ran is not known to be what this read`);
   } else if (!seen.loadedBytes.equals(fetched)) {
     problems.push(`${what}: the browser was handed ${seen.loadedBytes.length} bytes that are not the ${fetched.length} this check read and held to the rules above`);
+  }
+  // The module the browser ran is the one step 3 checked, and it ran exactly one.
+  if (run && JSON.stringify(seen.watched.modules) !== JSON.stringify([run.sha256])) {
+    problems.push(`${what}: the browser ran ${JSON.stringify(seen.watched.modules)} where the page's own module is ${run.sha256}`);
+  }
+  if (JSON.stringify(seen.shownLater) !== JSON.stringify(seen.shown)) {
+    problems.push(`${what}: the page showed ${JSON.stringify(seen.shown)} and three seconds later ${JSON.stringify(seen.shownLater)}`);
   }
   const expected = whatThePageShouldShow(cli);
   agree(problems, `${what}, the verdict shown in the browser`, seen.shown.verdict, expected.verdict);
@@ -552,6 +650,7 @@ function carries(request, subject) {
 // address carries its own bytes and reaches nobody, which is how the page carries its lockup, so the
 // browser reading one is not a request of anybody. Leaving for `about:blank` is this check's own act.
 function whatTheBrowserSent(problems, what, seen, address, subject) {
+  const asked = new Set();
   for (const request of seen.requests) {
     const shown = request.url.length > 120 ? `${request.url.slice(0, 120)}...` : request.url;
     if (carries(request, subject)) {
@@ -561,9 +660,17 @@ function whatTheBrowserSent(problems, what, seen, address, subject) {
     if (request.url.startsWith("data:") && request.method === "GET") continue;
     // The browser's own parts, which reach no network and are none of the page's doing.
     if (/^(chrome|chrome-extension|devtools):/.test(request.url)) continue;
-    if (request.phase === "while the page was loading" && request.type === "Document" && sameAddress(request.url, address)) continue;
+    // The page itself, once for each address on the way to it, so a host's slash is allowed and a
+    // page that loads itself a second time is not: the second load is one this check never read.
+    if (request.phase === "while the page was loading" && request.type === "Document" && sameAddress(request.url, address) && !asked.has(request.url)) {
+      asked.add(request.url);
+      continue;
+    }
     if (request.phase === "while the page was being left" && request.type === "Document" && request.url === "about:blank") continue;
     problems.push(`${what}: the page asked for ${request.method} ${shown} ${request.phase}, and it asks for nothing but itself`);
+  }
+  for (const name of seen.watched.reached) {
+    problems.push(`${what}: the page made a ${name}, which reaches another machine without a request any list shows`);
   }
   for (const other of seen.others) {
     problems.push(`${what}: the page started ${other.kind} at ${other.url || "no address"} ${other.phase}, and it starts nothing`);
@@ -620,13 +727,13 @@ async function check(address, options) {
 
   // 3 and 4. The receipts.
   const run = await theModuleIn(page, problems);
-  const browser = await aBrowser();
+  const browser = await aBrowser(address);
   try {
     for (const { what, receipt, subject } of options.cases) {
       const cli = fromCommandLine(options.cli, receipt, subject);
       if (run) theModuleAgrees(problems, what, run(receipt, subject), cli);
       const seen = await inTheBrowser(browser, address, cookie, receipt, subject);
-      whatTheBrowserShowed(problems, what, seen, cli, fetched);
+      whatTheBrowserShowed(problems, what, seen, cli, fetched, run);
       whatTheBrowserSent(problems, what, seen, address, readFileSync(subject));
       options.said?.(what, cli, seen);
     }
@@ -656,6 +763,12 @@ async function selfTest(cli) {
     "/wrong-width/": page.replace('"UTC was somewhere in an interval " + c.width_in_words', '"UTC was somewhere in an interval 1" + c.width_in_words'),
     "/sends-on-click/": page.replace(POLICY, "").replace("</body>", `${SENDS_ON_CLICK}\n</body>`),
     "/sends-on-leaving/": page.replace(POLICY, "").replace("</body>", `${SENDS_ON_LEAVING}\n</body>`),
+    // The same checking code with an empty custom section on the end, so it answers exactly as the
+    // page's own does and only the module's identity differs.
+    "/runs-another-module/": page.replace(
+      "WebAssembly.instantiate(bytesFromBase64(WASM_BASE64), {})",
+      "WebAssembly.instantiate((() => { const b = bytesFromBase64(WASM_BASE64); const c = new Uint8Array(b.length + 3); c.set(b); c.set([0, 1, 0], b.length); return c; })(), {})",
+    ),
     "/another-commit/": page.replace(BUILT_FROM, `<meta name="tw-built-from" content="${"0".repeat(40)}">`),
   };
   for (const [path, text] of Object.entries(seeds)) {
@@ -690,7 +803,8 @@ async function selfTest(cli) {
       ["/wrong-verdict/", "a page showing the wrong verdict", (p) => p.includes("the verdict shown in the browser")],
       ["/wrong-width/", "a page showing the wrong width", (p) => p.includes("the browser shows") && p.includes("width is")],
       ["/sends-on-click/", "a page sending the file when the button is clicked", (p) => p.includes("the page sent the file it was given") && p.includes("after the files were chosen")],
-      ["/sends-on-leaving/", "a page sending the file as it is left", (p) => p.includes("while the page was being left")],
+      ["/sends-on-leaving/", "a page sending the file as it is left", (p) => p.includes("the page sent the file it was given") && p.includes("while the page was being left")],
+      ["/runs-another-module/", "a page running a module other than the one it carries", (p) => p.includes("the browser ran")],
       ["/another-commit/", "a page built from another commit", (p) => p.includes(`built from ${"0".repeat(40)}`)],
     ];
     for (const [path, what, caught] of expectations) {
@@ -720,16 +834,20 @@ async function selfTest(cli) {
     theModuleAgrees(found, "an answer moved by one character", moved, cli0);
     if (found.length !== 1) failures.push(`an answer moved by one character in ${where} was read as ${found.length} differences rather than one`);
   }
+  const added = [];
+  theModuleAgrees(added, "an answer with a field added", { ...cli0, certificate: { holds: true } }, cli0);
+  if (added.length === 0) failures.push("a certificate on one side and not the other was not read as a difference");
+  const { width_ns: _, ...narrower } = cli0.claim;
   const dropped = [];
-  theModuleAgrees(dropped, "an answer with a field dropped", { ...cli0, certificate: { holds: true } }, cli0);
-  if (dropped.length === 0) failures.push("a certificate on one side and not the other was not read as a difference");
+  theModuleAgrees(dropped, "an answer with a field dropped", { ...cli0, claim: narrower }, cli0);
+  if (!dropped.some((d) => d.includes(".claim.width_ns"))) failures.push("a width on one side and not the other was not read as a difference");
 
   if (failures.length) {
     for (const f of failures) console.error(`  ${f}`);
     console.error("the served page check is not connected the way it says");
     return 1;
   }
-  console.log(`the served page check passed this tree's page on ${cases.length} receipts and refused all five seeds, each by its own part`);
+  console.log(`the served page check passed this tree's page on ${cases.length} receipts and refused all six seeds, each by its own part`);
   return 0;
 }
 
