@@ -27,9 +27,11 @@
 
 use std::collections::BTreeSet;
 use std::net::TcpListener;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use timewitness_agent::crossing::an_agent_answers;
 use timewitness_agent::resident::{Resident, SystemSurroundings};
 use timewitness_agent::serve::{serve, Cadence, Reporter};
 use timewitness_agent::wire::Endpoint;
@@ -76,6 +78,18 @@ pub fn run(args: &Args) -> Outcome {
         ..Policy::default()
     };
 
+    // Asked before anything is bound or written, so a refused start leaves the file and the agent
+    // it names exactly as they were. Writing over a live file is what orphaned the first agent in
+    // RC-349: it went on polling other people's servers with nothing left to find it by.
+    if let Some(address) = already_answering(Path::new(endpoint_path)) {
+        return fail(&format!(
+            "an agent is already answering on {endpoint_path}, at {address}, so this one has not \
+             started. A second agent there would take the file over and leave the first running \
+             with nothing to find it by. Stop the first one, or give this one a file of its own \
+             with --endpoint"
+        ));
+    }
+
     // The port is the operating system's to choose. A fixed one would collide with whatever else is
     // on this machine and would have to be configured, and there is nothing here for a stranger to
     // find: the address is written into a file only this account can read, beside the token.
@@ -95,7 +109,7 @@ pub fn run(args: &Args) -> Outcome {
         Ok(endpoint) => endpoint,
         Err(e) => return fail(&format!("{e}")),
     };
-    if let Err(e) = endpoint.write(std::path::Path::new(endpoint_path)) {
+    if let Err(e) = endpoint.write(Path::new(endpoint_path)) {
         return fail(&format!("{endpoint_path} could not be written: {e}"));
     }
 
@@ -170,6 +184,16 @@ pub fn run(args: &Args) -> Outcome {
     // rather than a way of stopping the agent. Stopping it is a signal, and a signal does not come
     // back here.
     fail("this machine stopped accepting connections on the loopback interface")
+}
+
+/// The address of an agent still answering on the file at `path`, if one is.
+///
+/// A file that is not there, or is not an endpoint, has nobody behind it, and neither has one whose
+/// agent was stopped: that one is written over, as it always was, because a killed agent leaves its
+/// file behind and the next one has to be able to start.
+fn already_answering(path: &Path) -> Option<String> {
+    let existing = Endpoint::read(path).ok()?;
+    an_agent_answers(&existing).then_some(existing.address)
 }
 
 /// How many distinct operators a list of sources reaches.
