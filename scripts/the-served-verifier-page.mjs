@@ -7,57 +7,70 @@
 // Every other check of the verifier page reads the file this tree builds. A host can serve something
 // else: an older build, a build of another commit, a page with a line added in front of it. So this
 // asks the host for the page and reads what comes back, the way somebody would who had only the
-// address. Four things have to hold, and every one is read, so a run names all that is wrong rather
+// address. Five things have to hold, and every one is read, so a run names all that is wrong rather
 // than the first thing:
 //
-//   1. The page says which commit it was built from, and it is the commit this checkout is at. The
-//      command line built here is the one the page has to agree with, so a page built anywhere else
-//      is not the page under test, and a page built from a tree with changes nobody committed is a
-//      page nobody else can reproduce.
-//   2. The page as served passes `verifier-page-offline.mjs`, which reads it for any way it could ask
+//   1. The page says which commit it was built from, and it is a commit. A page built from a tree
+//      with changes nobody committed is a page nobody else can build, so there is nothing to hold it
+//      to.
+//   2. The page as served is, byte for byte, the page that commit builds. This builds it, in a clone
+//      of this repository at that commit, the way `page-for-a-host.sh` built it for the host, with
+//      the compiler the page's own module says built it, and builds that commit's command line beside
+//      it. Nothing is normalised. The build writes the same bytes every time for one commit and one
+//      compiler, so a changed word fails whatever it says. Where the two differ, the lines are named,
+//      or the module is, and so is the one thing the build takes from the machine it runs on, which
+//      is where cargo keeps the libraries' sources, when that is part of what differs.
+//   3. The page as served passes `verifier-page-offline.mjs`, which reads it for any way it could ask
 //      a network for something.
-//   3. The checking code inside the served page, run on its own, gives the command line's answer on
-//      every receipt below, in every field the two both carry.
-//   4. In a real browser at that address, handed the same bytes this read, choosing the receipt and
+//   4. The checking code inside the served page, run on its own, gives the answer of the command line
+//      built at the same commit on every receipt below, in every field the two both carry.
+//   5. In a real browser at that address, handed the same bytes this read, choosing the receipt and
 //      the file it stamps and clicking the button shows the command line's verdict and width, and
 //      the page asks for nothing at all once it is open: no request, no socket, no worker, no window,
 //      while it checks and while it is left. A request carrying the file is named as that.
 //
-// The receipts are the one committed in this repository, the same receipt against a file it does not
-// stamp, which has to be refused, and one stamped here and now with the command line, which needs the
-// network the way stamping always does. `--no-fresh` leaves the last one out, and `--fresh <receipt>
-// <subject>` hands one in rather than taking one.
+// So it runs from any checkout of this repository that carries it, and not only from the commit the
+// page names. The receipts are this checkout's: the one committed in this repository, the same
+// receipt against a file it does not stamp, which has to be refused, and one stamped here and now
+// with the command line, which needs the network the way stamping always does. `--no-fresh` leaves
+// the last one out, and `--fresh <receipt> <subject>` hands one in rather than taking one.
 //
 // A walled host answers its own sign-in page rather than this one. Where the host is walled, put the
 // wall's read-only check in TIMEWITNESS_APP_WALL_COOKIE, as `name=value`. It is sent with this
 // script's own request for the page and set in the browser for that host alone. The app
 // repository's `npm run wall-check` prints one.
 //
-// `--self-test` serves the page this tree built on the loopback address, runs the whole check on it,
-// and then runs it on six seeds, each of which has to be refused by the part written for it: a page
-// that shows the wrong verdict, one that shows the wrong width, one that sends the file it was given
-// when the button is clicked, one that sends it as the page is left, one that runs a module other
-// than the one it carries, and one built from another commit. The two that send are written so the page check's spellings cannot see them and the policy
+// `--self-test` serves the page this tree built on the loopback address, holds it to that same file
+// and to the command line built here, runs the whole check on it, and then runs it on eight seeds,
+// each of which has to be refused by the part written for it: a page that shows the wrong verdict,
+// one that shows the wrong width, one that sends the file it was given when the button is clicked,
+// one that sends it as the page is left, one that runs a module other than the one it carries, one
+// built from another commit, one with a line of words its build never had, and one carrying a module
+// its build never made. The two that send are written so the page check's spellings cannot see them and the policy
 // is taken out so the browser lets them go, and the server has to receive the file, so each is shown
 // connected before its refusal is believed. A guard nobody has seen fail is not evidence.
 //
 // Exit 0 when everything holds, 1 when something does not, 2 when the check could not run: no browser,
-// no command line, a host that would not answer, or no fresh receipt. Never a pass.
+// a commit that would not build, a compiler this machine does not have, a host that would not answer,
+// or no fresh receipt. Never a pass.
 
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const work = join(root, "target", "served-verifier-page");
-const binary = join(root, "target", "release", process.platform === "win32" ? "timewitness.exe" : "timewitness");
+const executable = process.platform === "win32" ? "timewitness.exe" : "timewitness";
+const binary = join(root, "target", "release", executable);
 const fixture = join(root, "crates", "verify", "tests", "data", "a-real-stamp");
 const versionOne = join(root, "crates", "verify", "tests", "data", "a-version-1-stamp");
 const BUILT_FROM = /<meta name="tw-built-from" content="([^"]*)">/;
 const MODULE = /const WASM_BASE64 = "([A-Za-z0-9+/=]+)";/g;
+const MODULE_LINE = /^const WASM_BASE64 = "([A-Za-z0-9+/=]+)";$/;
 const POLICY = /<meta http-equiv="Content-Security-Policy" content="[^"]*">\n/;
 
 class CouldNotRun extends Error {}
@@ -100,6 +113,153 @@ function fromCommandLine(cli, receiptFile, subjectFile) {
   } catch {
     throw new CouldNotRun(`the command line gave no answer to read on ${receiptFile}: ${String(printed).slice(0, 200)}`);
   }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The page the named commit builds, and the command line built beside it.
+
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+
+// The compiler a module names in its own producers section, the way rustc writes it there:
+// "1.98.1 (48a229cea 2026-09-01)". Null where it names none.
+function theCompilerOf(module) {
+  try {
+    const [section] = WebAssembly.Module.customSections(new WebAssembly.Module(module), "producers");
+    if (!section) return null;
+    return Buffer.from(section).toString("latin1").match(/rustc[\s\S]([0-9]+\.[0-9]+\.[0-9]+ \([0-9a-f]+ [0-9-]+\))/)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function theOnlyModuleIn(page) {
+  const found = [...page.matchAll(MODULE)];
+  return found.length === 1 ? Buffer.from(found[0][1], "base64") : null;
+}
+
+// Where cargo keeps the libraries' sources on this machine. The build writes that folder into the
+// module wherever a library can panic, so it is the one part of the page the machine decides.
+function theLibrariesHere() {
+  return join(process.env.CARGO_HOME || join(homedir(), ".cargo"), "registry", "src") + sep;
+}
+
+// Built in a clone of this repository at the commit, kept under `target/` so the next run builds only
+// what moved, and cleaned of everything but its own `target/` before every build, so nothing left from
+// another commit is in what comes out. The commit's own build script does the building, the one
+// `page-for-a-host.sh` runs, and it builds the command line too.
+function theBuildAt(commit, compiler) {
+  const has = () => {
+    try {
+      git("cat-file", "-e", `${commit}^{commit}`);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!has()) {
+    try {
+      execFileSync("git", ["-C", root, "fetch", "--quiet", "origin", commit], { stdio: "ignore" });
+    } catch {
+      // A commit nobody has is answered below.
+    }
+  }
+  if (!has()) return null;
+
+  const at = join(work, "the-build");
+  if (!existsSync(join(at, ".git"))) {
+    rmSync(at, { recursive: true, force: true });
+    execFileSync("git", ["clone", "--quiet", "--shared", "--no-checkout", root, at]);
+  }
+  execFileSync("git", ["-C", at, "checkout", "--quiet", "--force", "--detach", commit]);
+  execFileSync("git", ["-C", at, "clean", "-dfxq", "-e", "target"]);
+
+  const env = { ...process.env };
+  // The build script reads the module from `target/` whatever this says, so it is not passed on.
+  delete env.CARGO_TARGET_DIR;
+  if (compiler) {
+    const toolchain = compiler.split(" ")[0];
+    const version = (extra) => {
+      try {
+        return execFileSync("rustc", ["--version"], { cwd: at, env: { ...env, ...extra }, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      } catch {
+        return null;
+      }
+    };
+    // The compiler the commit asks for is used when it is the one the module names. Otherwise that
+    // exact release is asked for by name.
+    if (version({}) !== `rustc ${compiler}`) {
+      if (version({ RUSTUP_TOOLCHAIN: toolchain }) !== `rustc ${compiler}`) {
+        throw new CouldNotRun(
+          `the page's module was built by rustc ${compiler}, which this machine does not have. ` +
+            `rustup toolchain install ${toolchain} --profile minimal --target wasm32-unknown-unknown`,
+        );
+      }
+      env.RUSTUP_TOOLCHAIN = toolchain;
+    }
+  }
+  try {
+    execFileSync("bash", ["scripts/build-verifier-page.sh"], { cwd: at, env, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1 << 28 });
+  } catch (e) {
+    const said = `${e.stdout || ""}${e.stderr || ""}`.trim().split("\n").slice(-4).join(" / ");
+    throw new CouldNotRun(`the page would not build at ${commit}${compiler ? ` with rustc ${compiler}` : ""}: ${said}`);
+  }
+  const page = join(at, "verifier-page", "verifier.html");
+  const cli = join(at, "target", "release", executable);
+  if (!existsSync(page) || !existsSync(cli)) throw new CouldNotRun(`the build at ${commit} left no page or no command line`);
+  return { page: readFileSync(page), cli, compiler };
+}
+
+// Where the page as served and the page as built part company, said so somebody can see it without
+// either file open: the lines, or the module when that is all that differs.
+function whereTheyDiffer(served, built, commit) {
+  if (served.equals(built)) return null;
+  const opening =
+    `the served page is not the page ${commit} builds: ${served.length} bytes, sha256 ${sha256(served)}, ` +
+    `where the build is ${built.length} bytes, sha256 ${sha256(built)}`;
+  // Read as latin1 so every byte is one character and nothing is lost to decoding on the way.
+  const ours = served.toString("latin1").split("\n");
+  const theirs = built.toString("latin1").split("\n");
+  let first = 0;
+  while (first < ours.length && first < theirs.length && ours[first] === theirs[first]) first += 1;
+  let endOurs = ours.length;
+  let endTheirs = theirs.length;
+  while (endOurs > first && endTheirs > first && ours[endOurs - 1] === theirs[endTheirs - 1]) {
+    endOurs -= 1;
+    endTheirs -= 1;
+  }
+  const onlyOurs = ours.slice(first, endOurs);
+  const onlyTheirs = theirs.slice(first, endTheirs);
+  const show = (line) => {
+    const text = Buffer.from(line, "latin1").toString("utf8").trim();
+    return JSON.stringify(text.length > 160 ? `${text.slice(0, 160)}...` : text);
+  };
+  const lines = (n) => (n === 1 ? "1 line" : `${n} lines`);
+
+  if (onlyOurs.length === 1 && onlyTheirs.length === 1 && MODULE_LINE.test(onlyOurs[0]) && MODULE_LINE.test(onlyTheirs[0])) {
+    const a = Buffer.from(onlyOurs[0].match(MODULE_LINE)[1], "base64");
+    const b = Buffer.from(onlyTheirs[0].match(MODULE_LINE)[1], "base64");
+    let same = 0;
+    while (same < a.length && same < b.length && a[same] === b[same]) same += 1;
+    let said =
+      `${opening}. Only the module differs: the module in the served page is ${a.length} bytes, sha256 ${sha256(a)}, ` +
+      `and the build's is ${b.length} bytes, sha256 ${sha256(b)}, the two the same for their first ${same} bytes`;
+    const [compilerA, compilerB] = [theCompilerOf(a), theCompilerOf(b)];
+    if (compilerA !== compilerB) said += `. The served module names rustc ${compilerA ?? "nowhere"} and the build's rustc ${compilerB ?? "nowhere"}`;
+    const here = theLibrariesHere();
+    const text = a.toString("latin1");
+    if (/registry[\\/]src[\\/]/.test(text) && !text.includes(here)) {
+      said +=
+        `. The served module names its libraries' sources somewhere other than ${here}, where this machine keeps them, ` +
+        "and that folder is written into the module, so a build here cannot give its bytes. Run this where they are kept in the same place";
+    }
+    return said;
+  }
+  if (onlyTheirs.length === 0) return `${opening}. It has ${lines(onlyOurs.length)} the build does not, from line ${first + 1}: ${show(onlyOurs[0])}`;
+  if (onlyOurs.length === 0) return `${opening}. The build has ${lines(onlyTheirs.length)} it does not, from line ${first + 1}: ${show(onlyTheirs[0])}`;
+  return (
+    `${opening}. From line ${first + 1}, ${lines(onlyOurs.length)} of it stand where the build has ${lines(onlyTheirs.length)}: ` +
+    `it says ${show(onlyOurs[0])} where the build says ${show(onlyTheirs[0])}`
+  );
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -707,30 +867,51 @@ async function check(address, options) {
   const saved = join(work, "served.html");
   writeFileSync(saved, fetched);
 
-  // 1. Which commit.
+  // 1. Which commit. The self-test serves this tree's own page, which names this tree, changes and all.
   const builtFrom = page.match(BUILT_FROM)?.[1];
-  const here = builtFromHere();
+  let commit = null;
   if (!builtFrom) {
-    problems.push("the served page names no commit it was built from, so there is no command line to hold it to");
-  } else if (builtFrom.endsWith("-modified") && !options.selfTest) {
+    problems.push("the served page names no commit it was built from, so there is nothing to build it again from");
+  } else if (options.selfTest) {
+    const here = builtFromHere();
+    if (builtFrom !== here) problems.push(`the served page was built from ${builtFrom} and this checkout is ${here}`);
+  } else if (builtFrom.endsWith("-modified")) {
     problems.push(`the served page was built from ${builtFrom}, a tree with changes nobody committed, so nobody else can build it`);
-  } else if (builtFrom !== here) {
-    problems.push(`the served page was built from ${builtFrom} and this checkout is ${here}. Run this at the commit the page names`);
+  } else if (!/^[0-9a-f]{40}$/.test(builtFrom)) {
+    problems.push(`the served page says it was built from ${JSON.stringify(builtFrom)}, which is not a commit`);
+  } else {
+    commit = builtFrom;
   }
 
-  // 2. Nothing in it could ask a network for anything.
+  // 2. The page that commit builds, byte for byte. The self-test hands in this tree's own build.
+  let build = options.build ?? null;
+  if (!build && commit) {
+    build = theBuildAt(commit, theCompilerOf(theOnlyModuleIn(page) ?? Buffer.alloc(0)));
+    if (!build) problems.push(`the served page was built from ${commit}, which this repository does not have, so nobody can build it`);
+  }
+  if (build) {
+    const differs = whereTheyDiffer(fetched, build.page, builtFrom);
+    if (differs) problems.push(differs);
+  }
+  if (!build) {
+    problems.push("with no build to hold it to there is no command line either, so the receipts were not put to it");
+    return { problems, builtFrom, cases: [] };
+  }
+
+  // 3. Nothing in it could ask a network for anything.
   try {
     execFileSync(process.execPath, [join(root, "scripts", "verifier-page-offline.mjs"), saved], { stdio: ["ignore", "pipe", "pipe"] });
   } catch (e) {
     problems.push(`the served page does not pass verifier-page-offline.mjs: ${String(e.stderr || "").trim().split("\n").join(" / ")}`);
   }
 
-  // 3 and 4. The receipts.
+  // 4 and 5. The receipts, held to the command line built at the same commit as the page.
+  const cases = options.casesFor(build.cli);
   const run = await theModuleIn(page, problems);
   const browser = await aBrowser(address);
   try {
-    for (const { what, receipt, subject } of options.cases) {
-      const cli = fromCommandLine(options.cli, receipt, subject);
+    for (const { what, receipt, subject } of cases) {
+      const cli = fromCommandLine(build.cli, receipt, subject);
       if (run) theModuleAgrees(problems, what, run(receipt, subject), cli);
       const seen = await inTheBrowser(browser, address, cookie, receipt, subject);
       whatTheBrowserShowed(problems, what, seen, cli, fetched, run);
@@ -740,7 +921,7 @@ async function check(address, options) {
   } finally {
     await browser.close();
   }
-  return { problems, builtFrom };
+  return { problems, builtFrom, cases };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -752,6 +933,8 @@ const SENDS_ON_CLICK =
 // holds the bytes until then.
 const SENDS_ON_LEAVING =
   '<script>let held = null; document.getElementById("form").addEventListener("submit", async () => { const f = document.getElementById("subject").files[0]; if (f) held = await f.arrayBuffer(); }); addEventListener("pagehide", () => { if (held) navigator["send" + "Beacon"]("/collect/", held); });</script>';
+
+const CHANGED_WORDS = '<p class="mono">Certified exact to the nanosecond. This page proves the precise time.</p>';
 
 async function selfTest(cli) {
   const built = join(root, "verifier-page", "verifier.html");
@@ -770,6 +953,15 @@ async function selfTest(cli) {
       "WebAssembly.instantiate((() => { const b = bytesFromBase64(WASM_BASE64); const c = new Uint8Array(b.length + 3); c.set(b); c.set([0, 1, 0], b.length); return c; })(), {})",
     ),
     "/another-commit/": page.replace(BUILT_FROM, `<meta name="tw-built-from" content="${"0".repeat(40)}">`),
+    // A claim the page was never built to make, in words, with the module, the policy and the commit
+    // it names all left as they were.
+    "/changed-words/": page.replace("<footer>", `<footer>\n  ${CHANGED_WORDS}`),
+    // The module with an empty custom section on the end, carried in the page itself this time, so the
+    // page runs it, the check runs it and the two agree. Only the bytes say it is not the build's.
+    "/another-build-of-the-module/": page.replace(MODULE, (_, encoded) => {
+      const bytes = Buffer.from(encoded, "base64");
+      return `const WASM_BASE64 = "${Buffer.concat([bytes, Buffer.from([0, 1, 0])]).toString("base64")}";`;
+    }),
   };
   for (const [path, text] of Object.entries(seeds)) {
     if (path !== "/verify/" && text === page) throw new CouldNotRun(`the seed at ${path} found nowhere to go in the page`);
@@ -792,21 +984,24 @@ async function selfTest(cli) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const at = (path) => `http://127.0.0.1:${server.address().port}${path}`;
   const cases = theCases({ selfTest: true });
-  const options = { cli, cases, selfTest: true };
+  // The build every seed is held to is the file this tree built, and the command line built beside it.
+  const options = { build: { page: readFileSync(built), cli }, casesFor: () => cases, selfTest: true };
   const subjects = cases.map((c) => readFileSync(c.subject));
   const failures = [];
+  const expectations = [
+    ["/wrong-verdict/", "a page showing the wrong verdict", (p) => p.includes("the verdict shown in the browser")],
+    ["/wrong-width/", "a page showing the wrong width", (p) => p.includes("the browser shows") && p.includes("width is")],
+    ["/sends-on-click/", "a page sending the file when the button is clicked", (p) => p.includes("the page sent the file it was given") && p.includes("after the files were chosen")],
+    ["/sends-on-leaving/", "a page sending the file as it is left", (p) => p.includes("the page sent the file it was given") && p.includes("while the page was being left")],
+    ["/runs-another-module/", "a page running a module other than the one it carries", (p) => p.includes("the browser ran")],
+    ["/another-commit/", "a page built from another commit", (p) => p.includes(`built from ${"0".repeat(40)}`)],
+    ["/changed-words/", "a page with words its build never had", (p) => p.includes("is not the page") && p.includes("Certified exact")],
+    ["/another-build-of-the-module/", "a page carrying a module its build never made", (p) => p.includes("the module in the served page is")],
+  ];
   try {
     const clean = await check(at("/verify/"), options);
     if (clean.problems.length) failures.push(...clean.problems.map((p) => `the page as built was refused: ${p}`));
 
-    const expectations = [
-      ["/wrong-verdict/", "a page showing the wrong verdict", (p) => p.includes("the verdict shown in the browser")],
-      ["/wrong-width/", "a page showing the wrong width", (p) => p.includes("the browser shows") && p.includes("width is")],
-      ["/sends-on-click/", "a page sending the file when the button is clicked", (p) => p.includes("the page sent the file it was given") && p.includes("after the files were chosen")],
-      ["/sends-on-leaving/", "a page sending the file as it is left", (p) => p.includes("the page sent the file it was given") && p.includes("while the page was being left")],
-      ["/runs-another-module/", "a page running a module other than the one it carries", (p) => p.includes("the browser ran")],
-      ["/another-commit/", "a page built from another commit", (p) => p.includes(`built from ${"0".repeat(40)}`)],
-    ];
     for (const [path, what, caught] of expectations) {
       const before = received.length;
       const seeded = await check(at(path), options);
@@ -847,7 +1042,7 @@ async function selfTest(cli) {
     console.error("the served page check is not connected the way it says");
     return 1;
   }
-  console.log(`the served page check passed this tree's page on ${cases.length} receipts and refused all six seeds, each by its own part`);
+  console.log(`the served page check passed this tree's page on ${cases.length} receipts and refused all ${expectations.length} seeds, each by its own part`);
   return 0;
 }
 
@@ -855,8 +1050,7 @@ async function selfTest(cli) {
 
 async function main() {
   const args = process.argv.slice(2);
-  const cli = theCommandLine();
-  if (args[0] === "--self-test") return selfTest(cli);
+  if (args[0] === "--self-test") return selfTest(theCommandLine());
 
   const address = args.find((a) => !a.startsWith("--") && /^https?:\/\//.test(a));
   if (!address) {
@@ -869,10 +1063,8 @@ async function main() {
     console.error("--fresh takes a receipt and the file it stamps, both on disk");
     return 2;
   }
-  const cases = theCases({ cli, fresh, takeFresh: !args.includes("--no-fresh") });
-  const { problems, builtFrom } = await check(address, {
-    cli,
-    cases,
+  const { problems, builtFrom, cases } = await check(address, {
+    casesFor: (cli) => theCases({ cli, fresh, takeFresh: !args.includes("--no-fresh") }),
     cookie: process.env.TIMEWITNESS_APP_WALL_COOKIE || null,
     said: (what, cli, seen) =>
       console.log(
@@ -890,8 +1082,9 @@ async function main() {
     return 1;
   }
   console.log(
-    `the page served at ${address}, built from ${builtFrom}, asks for nothing, and gives the command line's verdict and width ` +
-      `on ${cases.length} receipts in a browser, never sending the file`,
+    `the page served at ${address} is byte for byte the page ${builtFrom} builds, asks for nothing, and gives the verdict and width ` +
+      `of the command line built beside it` +
+      ` on ${cases.length} receipts in a browser, never sending the file`,
   );
   return 0;
 }

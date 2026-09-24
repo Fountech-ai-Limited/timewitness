@@ -33,11 +33,14 @@ command line built at that commit is the one it agrees with. Hosting it changes 
 asks for, which is nothing: the receipt and the file are read and hashed in the browser and never
 sent. A host is handed the page by `bash scripts/page-for-a-host.sh <tag or commit> <folder>`, which
 builds it in a clean clone at that commit and writes a record of the commit and the page's sha256
-beside it. `node scripts/the-served-verifier-page.mjs <address>`, run from a checkout at the commit the
-page names, holds a host to that. It reads the served page for any way it could ask a network for
+beside it. `node scripts/the-served-verifier-page.mjs <address>`, run from any checkout that carries
+it, holds a host to that. It builds the page again in a clone at the commit the page names, with the
+compiler its module names, and requires the served bytes to be the built bytes, naming the lines or
+the module where they are not. It reads the served page for any way it could ask a network for
 something, puts the committed receipt and one stamped on the spot through both the page's own code
-and the command line, then opens the address in a headless Chrome, chooses the files, and requires
-the verdict and width the command line gives and no request at all once the page is open.
+and the command line built at the same commit, then opens the address in a headless Chrome, chooses
+the files, and requires the verdict and width the command line gives and no request at all once the
+page is open.
 
 ## What it checks, in the order it checks it
 
