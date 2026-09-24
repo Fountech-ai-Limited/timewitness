@@ -9,7 +9,7 @@ after another on one agent of its own:
    agent.
 2. A second `agent` started on the same endpoint file refuses in a plain sentence, leaves the file as
    it was, and the first is still the one `status` reaches. Until 2026-09-24 the second one took the
-   file over and the first ran on with nothing left to find it by (RC-349).
+   file over and the first ran on with nothing left to find it by.
 3. With the agent stopped, `stamp --agent` exits non-zero and writes no receipt.
 
     python scripts/a-stamp-through-the-agent.py

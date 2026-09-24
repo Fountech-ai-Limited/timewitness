@@ -291,7 +291,7 @@ const ENOUGH_OF_A_REPLY: usize = 4_096;
 /// Asked by an agent about to start, before it writes its own address over a file somebody else may
 /// be using. Until 2026-09-24 it did not ask: a second agent on a live endpoint took the file over,
 /// and once it stopped the first was still running and polling other people's time servers with
-/// nothing left to find it by (RC-349).
+/// nothing left to find it by.
 ///
 /// Only a loopback address is asked. An agent only ever writes one, so a file naming anywhere else
 /// was not written by an agent, and a file is not a reason to send a token off this machine.

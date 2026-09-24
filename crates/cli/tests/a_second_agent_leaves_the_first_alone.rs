@@ -3,7 +3,7 @@
 //! Until 2026-09-24 the second one started, wrote its own address over the file and ran. Once it was
 //! stopped, `status` said no agent was answering and to start one, while the first was still running
 //! and still polling other people's time servers with nothing left to find it by. Seen 4 of 4 times
-//! by the test pass that found it (RC-349).
+//! by the test pass that found it.
 //!
 //! These run the real binary. The first agent polls the published servers as it always does, and
 //! nothing here needs them to answer: an agent that has not synchronised still answers its token with
