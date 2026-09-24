@@ -57,6 +57,7 @@ use timewitness_clock::monotonic::SystemMonotonic;
 use timewitness_clock::{
     Applied, ClockModel, Discipline, MonotonicClock, Policy, ShadowDiscipline,
 };
+use timewitness_core::evidence::rfc3161::in_one_spelling;
 use timewitness_core::evidence::roughtime::MIN_RADIUS_SECONDS;
 use timewitness_core::time::{Nanos, NANOS_PER_SEC};
 use timewitness_core::{Attestation, UnixNanos};
@@ -834,7 +835,12 @@ fn witness_the_signature(signed: Vec<u8>, deadline: Deadline) -> (Vec<u8>, Strin
         Ok(signature) => signature,
         Err(e) => return (signed, format!("no witness over the signature: {e}")),
     };
-    let digest = sha256_payload(&signature).hash;
+    let Ok(digest) = <[u8; 32]>::try_from(sha256_payload(&signature).hash) else {
+        return (
+            signed,
+            "no witness over the signature: its hash is not 32 bytes".into(),
+        );
+    };
     let mut refusals = Vec::new();
     for authority in published_authorities() {
         if deadline.left().is_none() {
@@ -845,8 +851,17 @@ fn witness_the_signature(signed: Vec<u8>, deadline: Deadline) -> (Vec<u8>, Strin
             break;
         }
         let name = authority.name.clone();
-        match TimestampClient::new(authority).witness(&digest) {
-            Ok(attestation) => match with_signature_witness(&signed, &attestation.blob) {
+        // Stored in the one spelling a reader accepts, which drops any certificate the token's
+        // signature does not name, DigiCert's two beside its pinned signer apart. Both authorities
+        // already answer in that spelling, and nothing signed changes either way.
+        let respelled = TimestampClient::new(authority)
+            .witness(&digest)
+            .map_err(|e| e.to_string())
+            .and_then(|attestation| {
+                in_one_spelling(&attestation.blob, &digest).map_err(|e| e.to_string())
+            });
+        match respelled {
+            Ok(blob) => match with_signature_witness(&signed, &blob) {
                 Ok(witnessed) => {
                     return (
                         witnessed,

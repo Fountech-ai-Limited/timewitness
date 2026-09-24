@@ -89,21 +89,63 @@ witness dated before that beacon is refused.
 **The unprotected header.** A version 1 header holds the key identifier and at most this one entry.
 Anything else is refused, as in version 0.
 
+**The witness has one spelling, from 2026-09-24.** A token's own signature covers the token's
+information and its signed attributes and nothing else, and the witness sits outside the receipt's
+signature too, so until that day every other byte of it was free: the status, the version numbers, the
+names of algorithms, the signer's identifier, the certificates and the stored request. A sweep of a
+fresh receipt that day found 5,078 of 16,012 one-bit changes still verifying, all of them inside the
+witness. So a reader now takes the parts that are bound, writes the witness out again around them in
+one fixed form, and refuses the receipt unless the two are the same bytes. What binds each part:
+
+- The token's information, by the digest in the signed attributes.
+- The signed attributes, by the token's signature, which the reader checks under the certificate
+  those attributes name, whether or not it holds a pin for it. That is the token held to itself and
+  not trust in the authority; trust is still the pin's question.
+- Every certificate, by its hash in the signed attributes, which name the signer first and may name
+  the rest of the chain, carried in the order they are named. A certificate they do not name is
+  refused, and so is one they name that is missing. Sectigo names the three it sends, by SHA-1.
+  DigiCert names only its signer and sends two more, its issuing authority and a cross-signed root.
+  Every DigiCert witness so far came from the one DigiCert signing certificate this code pins, with
+  those two beside it, so for that signer, and no other, the two are part of the one spelling, by
+  SHA-256 and in that order after the signer. A witness it signed carries both, and one from any
+  other signer carries only what its signature names.
+- The signer's identifier, written from the named certificate's issuer and serial.
+- The stored request, written from the hash it has to ask about and the nonce inside the signed
+  token, in the form this code sends.
+- The status, which is a plain grant, the versions, the algorithm names and every length, by each
+  having one allowed value.
+
+This is a rule a reader applies and not a new version. It is what DigiCert and Sectigo send, read
+off the committed receipt and off live replies from both on 2026-09-24, so a receipt already issued
+with either one's witness verifies as it did, and a reader from before the change accepts every
+receipt written after it. The stamp stores the witness in this form, which from both authorities is
+the reply as it came back.
+
+The form has room for what those two send and no more. A witness signed with a key that is not RSA,
+one whose signer is named by key identifier, one that names no certificate in its signed attributes,
+or one that states a signature algorithm other than plain RSA, refuses the whole receipt, where
+before it was reported as not checked. No witness issued so far is any of those. An authority
+answering that way would get no witness from the stamp, which says why, rather than one a reader
+refuses.
+
 **The hash of a version 1 receipt is of the receipt as its agent signed it.** The witness sits
 outside the signature, so a holder can drop it, or swap in a later genuine token over the same
 signature, without the agent's key. A timestamp token also carries plenty its own signature does not
 cover: the request stored beside it, certificates besides the one a reader pins, fields nobody reads.
 Until 2026-09-23 the chain link was the SHA-256 of the whole file, and on that day a third of the
 single-bit flips inside the committed receipt's witness still verified, each as a file with a hash of
-its own, so a holder with no key could fork or break a chain.
+its own, so a holder with no key could fork or break a chain. Those flips are refused from
+2026-09-24, by the paragraph above. Dropping the witness, or putting another whole token in its
+place, is not, because nothing can stop either; a token from an authority the reader holds no pin
+for is reported as not checked, whoever made it.
 
 So the chain link, the next receipt's `prev` and the hash the verifier prints are the SHA-256 of the
 file with the `signature_witness` entry taken out of the unprotected header, which is the file the
 agent wrote before the witness came back. Every other byte of that form is covered by the signature
 or is canonical CBOR the decoder re-encodes and compares, so it has exactly one spelling, as version 0
-does. Dropping the witness, swapping it or respelling it changes what the verifier reports about the
-signing and never which receipt it is. None of them can move the signing earlier, since a token
-cannot be dated before the signature it is over existed.
+does. Dropping the witness or swapping it changes what the verifier reports about the signing and
+never which receipt it is. Neither can move the signing earlier, since a token cannot be dated before
+the signature it is over existed.
 
 What this gives up is the property version 0 chose its link for: for a version 1 receipt carrying a
 witness, the hash is not what `sha256sum` prints of the file, and the verifier says so on the line
