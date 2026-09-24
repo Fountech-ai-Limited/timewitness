@@ -250,6 +250,34 @@ pub extern "C" fn tw_cannot_prove() -> usize {
     answer(&json::render(&Value::Array(items)))
 }
 
+/// Which receipt format versions this module reads, as JSON.
+#[allow(
+    unsafe_code,
+    reason = "exporting a function to WebAssembly is what this crate is for"
+)]
+#[no_mangle]
+pub extern "C" fn tw_formats() -> usize {
+    answer(&formats_json())
+}
+
+/// [`tw_formats`] with no address in the way, for the tests.
+///
+/// The page prints this list under its form rather than a number of its own. It printed "Receipt
+/// format v0" as a constant until 2026-09-24, above a module that had read version 1 since `v0.2`.
+/// Read from here, the line cannot say anything the checking code does not do.
+#[must_use]
+pub fn formats_json() -> String {
+    json::render(&Value::map([(
+        "reads",
+        Value::Array(
+            timewitness_receipt::READS
+                .iter()
+                .map(|v| Value::Int(*v))
+                .collect(),
+        ),
+    )]))
+}
+
 /// One of this module's own buffers, by the address it was handed out under.
 ///
 /// Cut to the length that was asked for, never to the length of the store behind it.

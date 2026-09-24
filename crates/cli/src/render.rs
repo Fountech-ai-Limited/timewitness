@@ -287,13 +287,16 @@ pub fn usage() -> String {
     out.push_str("      What this product cannot prove, in full. It ships with the claim rather\n");
     out.push_str("      than under it.\n\n");
     out.push_str("  timewitness --version\n");
-    out.push_str("      Which build this is, and the receipt format it reads.\n\n");
+    out.push_str(
+        "      Which release this is, the receipt format it writes and the ones it reads.\n\n",
+    );
     out.push_str("  timewitness --help\n");
     out.push_str("      This, which is also what the tool prints with nothing after it.\n");
     out
 }
 
-/// What `timewitness --version` prints: the build, and the one receipt format it reads.
+/// What `timewitness --version` prints: the release, the receipt format it writes and the ones it
+/// reads.
 ///
 /// Cargo writes the version from the manifest, which is in the tree the verify-path check reads, so
 /// nothing of the building machine's own environment comes in through it.
@@ -305,10 +308,37 @@ pub fn version() -> String {
         .collect();
     format!(
         "timewitness {}\nwrites receipt format v{} and reads {}",
-        env!("CARGO_PKG_VERSION"),
+        release(),
         timewitness_receipt::FORMAT_VERSION,
         reads.join(" and ")
     )
+}
+
+/// The release this source is, spelled the way its tag is spelled.
+///
+/// A tag here leaves off a patch number of nought, so version 0.3.0 in the manifest is the tag
+/// `v0.3`, and that is what a stranger who built from `v0.3` is shown. Until 2026-09-24 this printed
+/// the manifest's version as it stood, which was 0.1.0 at `v0.1` and still 0.1.0 at `v0.2`, so a
+/// build from the `v0.2` tag named a release it was not. `scripts/the-version-is-the-tag.py` holds
+/// the two to each other on every commit a release tag names.
+#[must_use]
+pub fn release() -> String {
+    let (major, minor, patch, pre) = (
+        env!("CARGO_PKG_VERSION_MAJOR"),
+        env!("CARGO_PKG_VERSION_MINOR"),
+        env!("CARGO_PKG_VERSION_PATCH"),
+        env!("CARGO_PKG_VERSION_PRE"),
+    );
+    let mut name = if patch == "0" {
+        format!("v{major}.{minor}")
+    } else {
+        format!("v{major}.{minor}.{patch}")
+    };
+    if !pre.is_empty() {
+        name.push('-');
+        name.push_str(pre);
+    }
+    name
 }
 
 /// The whole of what a verifier found, as a person reads it.
