@@ -1,5 +1,12 @@
 # What TimeWitness cannot prove
 
+Version 23, 2026-09-24. Supersedes version 22 of the same day, which it keeps whole and corrects in
+one item. The key log we serve named no agent key until this version, and it now names the one we
+vouch for, which signs our own receipts from 2026-09-24, so the item on keys says what that log
+vouches for, why the key of the receipt committed in this repository is not in it, that any key it
+does not name is refused against it as not ours, and that the window is judged on the receipt's own
+reading. The list still runs to 61 items.
+
 Version 22, 2026-09-24. Supersedes version 21 of 2026-09-23, which it keeps whole and corrects in
 three places, all of them about what the `v0.2` release ships. The item saying nothing verifies order
 said so of every release until this one, and `v0.2` carries `timewitness order`, so the item now says
@@ -671,9 +678,14 @@ command line tool and as one HTML page that runs from a local disk with no netwo
 from source in this repository. The `v0` release carries no binary and there is no published page,
 so today a stranger compiles it rather than downloading it.
 
-**Nothing links an agent's key to anybody.** A receipt proves that whoever signed it held that key.
-A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and no agent key. So a reader who does not already recognise an agent key learns only that one key
-signed this. The `v0` release refuses that log's format by name, so reading it takes a verifier built
+**Nothing links an agent's key to anybody, except our own.** A receipt proves that whoever signed it
+held that key. A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and the one agent key we vouch for, which signs our own receipts from 2026-09-24, with the window it is ours in. That is our own word about our own key and it is not third-party evidence. The receipt committed in
+this repository was signed on 2026-09-09 by an earlier key whose private half cannot be accounted for,
+so the log does not name it. Any key the log does not name, that one included, is refused against it
+as not ours, and a reader who does not already recognise that key learns only that one key signed
+this. The window is judged on
+the receipt's own reading, so it catches a receipt that says it was signed outside the window and not
+one that lies about when. The `v0` release refuses that log's format by name, so reading it takes a verifier built
 from `main` until a later release. The Action generates a key on the runner where none is
 supplied, which is what keeps the install to one line and is exactly as meaningful as that sounds.
 

@@ -179,7 +179,8 @@ sentences=(
   # command signed up to 30 s whether or not it ran inside the Action.
   "The resident agent refuses any interval wider than 250 ms, and the one-shot command, which the GitHub Action runs, refuses one wider than 2 s."
   # Added 2026-09-15. A log of our keys has been served since that afternoon and no surface said so.
-  "A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and no agent key."
+  # Rewritten 2026-09-24, when the log came to name the agent keys our own receipts are signed with.
+  "A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and the one agent key we vouch for, which signs our own receipts from 2026-09-24, with the window it is ours in."
   # Added 2026-09-10. All three are refusals the agent makes that no surface said it made, and
   # every claim ships beside what it cannot prove: a refusal a reader has not been told about is a
   # surprise, and this list exists so that nothing about this product is a surprise.

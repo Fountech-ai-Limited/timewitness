@@ -423,7 +423,7 @@ pub fn run(args: &Args) -> Outcome {
         text.push_str(&format!("  {note}\n"));
     }
     text.push_str(&format!(
-        "  The agent's public key is {}. Nothing links it to anybody yet. A log of our keys is\n  served at timewitness.dev/key-log.txt and names our two Roughtime servers and no agent\n  key, and the verifier says so rather than implying otherwise.\n",
+        "  The agent's public key is {}. Nothing links it to anybody but a log that names it. A log\n  of our keys is served at timewitness.dev/key-log.txt and names our two Roughtime servers\n  and the one agent key we vouch for, which signs our own receipts from 2026-09-24. \n  `timewitness verify --key-log` says whether this key is that one.\n",
         render::hex(&receipt.agent_public_key)
     ));
 
