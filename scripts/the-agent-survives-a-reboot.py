@@ -459,7 +459,9 @@ def on_this_runner(binary):
 
     if windows:
         code, text = run(['schtasks', '/Query', '/TN', r'\TimeWitness\Agent', '/XML'])
-        at_boot = code == 0 and '<BootTrigger>' in text and '<LogonType>S4U' in text
+        # Task Scheduler hands the definition back in its own spelling: an enabled trigger with
+        # nothing else in it comes back as `<BootTrigger />`.
+        at_boot = code == 0 and '<BootTrigger' in text and '<LogonType>S4U' in text
     elif mac:
         code, text = run(['sudo', 'launchctl', 'print', 'system/dev.timewitness.agent'])
         plist = pathlib.Path('/Library/LaunchDaemons/dev.timewitness.agent.plist').read_text()
