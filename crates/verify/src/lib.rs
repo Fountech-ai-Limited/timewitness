@@ -148,8 +148,8 @@ pub struct Assessment {
     ///
     /// It is the hash of the bytes as handed over unless they carry a witness over the signature,
     /// and then it is the hash of the same bytes with that witness taken out. The witness is outside
-    /// the signature and can be respelled by anybody holding the file, so a hash that moved with it
-    /// would let one receipt be many. See [`timewitness_receipt::chain_link`].
+    /// the signature and anybody holding the file can drop it or put another token in its place, so
+    /// a hash that moved with it would let one receipt be many. See [`timewitness_receipt::chain_link`].
     pub link: Vec<u8>,
     /// Whether the bytes carried a witness over the signature, which the link is taken without.
     pub witness_set_aside: bool,

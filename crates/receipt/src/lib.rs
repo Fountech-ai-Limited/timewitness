@@ -72,11 +72,11 @@ pub fn sha256_payload(bytes: &[u8]) -> Payload {
 /// For every version 0 receipt, and every version 1 receipt with no witness over its signature, that
 /// is the hash of the file. Where the unprotected header carries the witness, it is the hash of the
 /// file with that entry taken out, which is the file the agent wrote before the witness came back.
-/// The witness is outside the signature, and a timestamp token carries plenty its own signature does
-/// not cover either, so a holder with no key can respell it: on 2026-09-23 a third of the single-bit
-/// flips inside the committed witness still verified. A hash of the file would make each of those a
-/// receipt of its own and let a holder fork or break a chain. A hash of what was signed cannot move
-/// without the agent's key.
+/// The witness is outside the signature, so a holder with no key can drop it or put another token in
+/// its place, and until 2026-09-24 could change bits of it too: on 2026-09-23 a third of the
+/// single-bit flips inside the committed witness still verified. A hash of the file would make each
+/// of those a receipt of its own and let a holder fork or break a chain. A hash of what was signed
+/// cannot move without the agent's key.
 ///
 /// Bytes that are not an envelope of that shape are hashed as they are. Nothing here decides whether
 /// they are a receipt; [`open`] does, and it refuses anything else in that header.

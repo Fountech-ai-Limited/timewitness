@@ -268,3 +268,45 @@ jobs:
       # read by `.github/workflows/advisories.yml`, weekly and on its own.
       - name: Dependency advisories
         run: bash scripts/check-advisories.sh
+
+  every-bit:
+    # Acceptance item A-01 on the binary a consumer runs: every single-bit change to every committed
+    # receipt is refused, one process per change, inside a network namespace with nothing in it. Its
+    # own job, because it is several hundred thousand runs of the verifier and the rest of the checks
+    # need not wait for it.
+    name: every bit of every receipt, with no network
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install the toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-every-bit-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-every-bit-
+
+      - name: Build the command line
+        run: cargo build --release -p timewitness-cli
+
+      - name: Every single-bit change to a receipt is refused, with no network
+        run: bash scripts/every-bit-refused.sh
+
+      - name: That check still stops where the network is in reach
+        run: |
+          if said="$(TW_EVERY_BIT_PROVE=leaky bash scripts/every-bit-refused.sh 2>&1)"; then
+            printf '%s\n' "$said"; echo "the sweep ran with the network in reach"; exit 1
+          fi
+          printf '%s\n' "$said"
+          printf '%s\n' "$said" | grep -qF "would prove nothing" || { echo "it stopped, and not because the network was there"; exit 1; }
