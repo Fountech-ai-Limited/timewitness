@@ -23,8 +23,8 @@ fn text(bytes: &[u8]) -> String {
 fn the_usage_says_how_to_install_and_uninstall_the_agent() {
     let usage = text(&run(&["--help"]).stdout);
     for line in [
-        "timewitness agent install [--user <name>] [--endpoint <file>] [options]",
-        "timewitness agent uninstall [--endpoint <file>]",
+        "timewitness agent install [--user <name>] [options]",
+        "timewitness agent uninstall\n",
         "never sets the clock",
     ] {
         assert!(usage.contains(line), "no {line:?} in the usage");
@@ -53,6 +53,26 @@ fn a_second_word_after_install_is_refused() {
     assert_eq!(out.status.code(), Some(2));
     assert!(
         text(&out.stderr).contains("\"now\""),
+        "{}",
+        text(&out.stderr)
+    );
+}
+
+#[test]
+fn a_service_takes_no_endpoint_and_uninstall_takes_nothing() {
+    let out = run(&["agent", "install", "--endpoint", "somewhere.endpoint"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("a service writes its endpoint to a folder of its own"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(!std::path::Path::new("somewhere.endpoint").exists());
+
+    let out = run(&["agent", "uninstall", "--user", "nobody"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("uninstall takes nothing after it"),
         "{}",
         text(&out.stderr)
     );

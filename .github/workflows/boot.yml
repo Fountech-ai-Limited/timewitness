@@ -18,6 +18,9 @@ on:
     paths:
       - 'crates/cli/src/service_cmd.rs'
       - 'crates/cli/src/agent_cmd.rs'
+      - 'crates/cli/src/args.rs'
+      - 'crates/cli/src/render.rs'
+      - 'crates/agent/**'
       - 'scripts/the-agent-survives-a-reboot.py'
       - '.github/workflows/boot.yml'
 

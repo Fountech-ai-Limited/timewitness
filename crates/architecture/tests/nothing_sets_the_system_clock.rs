@@ -46,6 +46,15 @@ const SETTERS: &[(&str, &str)] = &[
     ("'set-time'", "systemd, with the words apart"),
     ("\"-settime\"", "macOS, with the words apart"),
     ("\"-setdate\"", "macOS, with the words apart"),
+    ("'date', '-s'", "a shell's date, with the words apart"),
+    ("\"date\", \"-s\"", "a shell's date, with the words apart"),
+    ("bin/date\")", "a shell's date, named by its path"),
+    (
+        "set-ntp",
+        "systemd, handing the clock to its own time service",
+    ),
+    ("ntpdate", "the old NTP client, which steps the clock"),
+    ("makestep", "chrony, told to step the clock"),
     (
         "Command::new(\"date\")",
         "a shell's date, which sets the clock when it is given one",
@@ -172,6 +181,11 @@ fn each_setter_is_refused_in_code_and_let_through_in_a_comment() {
         "Command::new(\"timedatectl\").args([\"set-time\", \"2026-09-22 12:00:00\"]).status()?;",
         "run(['timedatectl', 'set-time', when])",
         "Command::new(\"date\").arg(\"--set=12:00\").status()?;",
+        "subprocess.run(['date', '-s', when])",
+        "Command::new(\"/bin/date\").arg(when).status()?;",
+        "sudo timedatectl set-ntp true",
+        "sudo ntpdate pool.ntp.org",
+        "chronyc makestep",
     ];
     for seed in seeds {
         assert!(

@@ -13,7 +13,8 @@ seconds ahead of the host's through the emulated real-time clock. It installs th
 `sudo timewitness agent install`, waits for `status` to answer, restarts the guest and asks `status`
 again without starting anything. Then it watches the guest's clock against public NTP servers for
 an hour. It passes when the agent answers after the restart and the clock's offset moved by no more
-than TOLERANCE over the hour.
+than TOLERANCE over the hour, and by no more than that between the install and two minutes of the
+agent running before the restart.
 
 Why the clock starts seven seconds out. A guest whose clock already agrees with the servers to a
 millisecond would show nothing if something set it, because there would be nothing to set. Seven
@@ -347,9 +348,19 @@ def in_a_guest(binary, minutes, every, seed, cache):
             say('could not run: the guest has a time service of its own running')
             return 2
 
+        # The clock is watched on both sides of the restart. A restart reads the clock back from the
+        # emulated real-time clock, so a change the agent made before it would be gone afterwards,
+        # and only a look before it would see one.
+        before, _ = guest.offset()
+        if before is None:
+            say('could not run: fewer than three references answered the guest')
+            return 2
+        say(f'offset {before:+.4f} s before the install')
+
         guest.copy_in(binary, '/tmp/timewitness')
         guest.ssh('sudo install -m 0755 /tmp/timewitness /usr/local/bin/timewitness')
         installed = guest.ssh('sudo timewitness agent install')
+        installed_at = time.monotonic()
         say('sudo timewitness agent install exited ' + str(installed.returncode))
         print(installed.stdout + installed.stderr, flush=True)
         if installed.returncode != 0:
@@ -361,6 +372,14 @@ def in_a_guest(binary, minutes, every, seed, cache):
             print(text, flush=True)
             return 1
         say('the service answers before the restart')
+        # Two minutes of the agent running, which covers its settling rounds and the rounds after.
+        time.sleep(max(0, 120 - (time.monotonic() - installed_at)))
+        settled, _ = guest.offset()
+        code, words = clock_verdict([before] + ([settled] if settled is not None else []))
+        if settled is None or code != 0:
+            say(('FAIL' if code == 1 else 'could not tell') + ' before the restart: ' + words)
+            return code if settled is not None else 2
+        say(f'offset {settled:+.4f} s with the agent running two minutes: {words}')
 
         if seed == 'no-start-at-boot':
             guest.ssh('sudo systemctl disable timewitness-agent.service')
@@ -423,7 +442,9 @@ def in_a_guest(binary, minutes, every, seed, cache):
 # ---------------------------------------------------------------------------------------------------
 
 def on_this_runner(binary):
-    if os.environ.get('GITHUB_ACTIONS') != 'true':
+    # Both, because a runner somebody hosts on their own machine sets the first one too.
+    if (os.environ.get('GITHUB_ACTIONS') != 'true'
+            or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted'):
         say('could not run: --here installs a service, and does so only on a GitHub-hosted runner')
         return 2
     windows = os.name == 'nt'

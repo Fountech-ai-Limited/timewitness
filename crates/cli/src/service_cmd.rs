@@ -5,8 +5,13 @@
 //! reboot, and a stranger will not keep a terminal open for us. So this hands the agent to whatever
 //! starts things at boot on this machine: a systemd unit on Linux, a launchd daemon on macOS and a
 //! scheduled task with a boot trigger on Windows. What it starts is the same `timewitness agent` a
-//! person runs by hand, with the same options, writing its endpoint to a fixed place so that
+//! person runs by hand, with the same options, writing its endpoint to a folder of its own so that
 //! `timewitness status --agent` has something to be pointed at.
+//!
+//! The folder is fixed rather than chosen. A service that could be pointed anywhere would need the
+//! installer to make and hand over folders it did not own, and the uninstaller to delete a file it
+//! was only told the name of, both as an administrator. Somebody who wants the endpoint elsewhere
+//! runs `timewitness agent --endpoint` under whatever they already use to start things.
 //!
 //! ## It still never sets the clock
 //!
@@ -30,6 +35,8 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use timewitness_agent::wire::Endpoint;
 
 use crate::args::Args;
 use crate::render;
@@ -62,6 +69,12 @@ pub struct Service {
 
 /// `timewitness agent install`.
 pub fn install(args: &Args) -> Outcome {
+    if args.value("--endpoint").is_some() {
+        return fail(
+            "a service writes its endpoint to a folder of its own, and install says where. \
+             --endpoint is for running the agent by hand",
+        );
+    }
     let service = match plan(args) {
         Ok(service) => service,
         Err(e) => return fail(&e),
@@ -74,9 +87,16 @@ pub fn install(args: &Args) -> Outcome {
 
 /// `timewitness agent uninstall`.
 pub fn uninstall(args: &Args) -> Outcome {
-    let endpoint = args
-        .value("--endpoint")
-        .map_or_else(default_endpoint, PathBuf::from);
+    if let Some(given) = args.values.keys().chain(args.flags.iter()).next() {
+        return fail(&format!(
+            "uninstall takes nothing after it, and was given {given}. It takes away what install \
+             put in place, wherever that was"
+        ));
+    }
+    let endpoint = match service_endpoint() {
+        Ok(endpoint) => endpoint,
+        Err(e) => return fail(&e),
+    };
     match take_away(&endpoint) {
         Ok(text) => Outcome { text, code: 0 },
         Err(e) => fail(&e),
@@ -89,13 +109,20 @@ fn plan(args: &Args) -> Result<Service, String> {
         .and_then(|p| p.canonicalize())
         .map_err(|e| format!("this program cannot find its own file: {e}"))?;
     let program = plain_path(program);
-    let endpoint = args
-        .value("--endpoint")
-        .map_or_else(default_endpoint, PathBuf::from);
-    let account = match args.value("--user") {
-        Some(name) => name.to_string(),
-        None => default_account()?,
-    };
+    let endpoint = service_endpoint()?;
+    for path in [&program, &endpoint] {
+        path_is_plain(path)?;
+    }
+    let account =
+        match args.value("--user") {
+            Some(_) if cfg!(windows) => return Err(
+                "on Windows the task runs as the account installing it, so there is no --user. \
+                 Install it from the account the agent should run as"
+                    .to_string(),
+            ),
+            Some(name) => name.to_string(),
+            None => default_account()?,
+        };
     if !account_is_plain(&account) {
         return Err(format!(
             "{account:?} is not an account name this will write into a service definition"
@@ -138,6 +165,19 @@ fn plain_path(path: PathBuf) -> PathBuf {
         .map_or(path, |rest| PathBuf::from(rest.to_string()))
 }
 
+/// Refuses a path a service definition would read as something else: a control character anywhere,
+/// and on Windows a `%`, which Task Scheduler reads as the start of a variable.
+fn path_is_plain(path: &Path) -> Result<(), String> {
+    let text = path.display().to_string();
+    if text.chars().any(char::is_control) || (cfg!(windows) && text.contains('%')) {
+        return Err(format!(
+            "{text:?} is not a path this will write into a service definition. Move the binary \
+             somewhere plainer and install from there"
+        ));
+    }
+    Ok(())
+}
+
 /// An account name safe to write into a definition: letters, digits and `._-`, plus, on Windows, the
 /// backslash between a domain and a name and the spaces a Windows name may carry.
 fn account_is_plain(name: &str) -> bool {
@@ -165,14 +205,6 @@ pub fn systemd_unit(service: &Service) -> String {
         .map(|word| systemd_word(&word))
         .collect::<Vec<_>>()
         .join(" ");
-    let state = Path::new(LINUX_STATE);
-    let writable = match service.endpoint.parent() {
-        Some(parent) if parent != state => format!(
-            "ReadWritePaths={}\n",
-            systemd_word(&parent.display().to_string())
-        ),
-        _ => String::new(),
-    };
     format!(
         "[Unit]\n\
          Description=TimeWitness agent, which measures this machine's clock and never sets it\n\
@@ -188,7 +220,6 @@ pub fn systemd_unit(service: &Service) -> String {
          ExecStart={command}\n\
          StateDirectory=timewitness\n\
          StateDirectoryMode=0700\n\
-         {writable}\
          Restart=on-failure\n\
          RestartSec=32\n\
          ProtectClock=yes\n\
@@ -363,21 +394,30 @@ const LINUX_STATE: &str = "/var/lib/timewitness";
 /// The same folder on macOS, which the installer makes and gives to that account.
 const MACOS_STATE: &str = "/Library/Application Support/TimeWitness";
 
-/// Where a service's agent writes its endpoint when nobody names a file.
-fn default_endpoint() -> PathBuf {
+/// Where a service's agent writes its endpoint.
+///
+/// On Windows it is the installing account's own local application data, which only that account
+/// and the administrators can read, and never a shared folder: the file holds the token a caller
+/// presents. With no such folder named there is nowhere private to put it, so the install stops.
+fn service_endpoint() -> Result<PathBuf, String> {
     if cfg!(windows) {
-        let base = std::env::var_os("LOCALAPPDATA")
-            .map_or_else(|| PathBuf::from(r"C:\ProgramData"), PathBuf::from);
-        base.join("TimeWitness").join("agent.endpoint")
+        let base = std::env::var_os("LOCALAPPDATA").ok_or(
+            "this account has no local application data folder, so there is nowhere private for \
+             the agent's token",
+        )?;
+        Ok(PathBuf::from(base)
+            .join("TimeWitness")
+            .join("agent.endpoint"))
     } else if cfg!(target_os = "macos") {
-        Path::new(MACOS_STATE).join("agent.endpoint")
+        Ok(Path::new(MACOS_STATE).join("agent.endpoint"))
     } else {
-        Path::new(LINUX_STATE).join("agent.endpoint")
+        Ok(Path::new(LINUX_STATE).join("agent.endpoint"))
     }
 }
 
 /// The account a service runs as when nobody names one: whoever ran `sudo`, or on Windows whoever is
-/// running this. Root only where root is the one asking.
+/// running this. Never root unless root is named, because nothing the agent does needs it and root
+/// may set the clock.
 fn default_account() -> Result<String, String> {
     if cfg!(windows) {
         let name = std::env::var("USERNAME")
@@ -395,7 +435,15 @@ fn default_account() -> Result<String, String> {
     let out = Command::new("id").arg("-un").output().map_err(|e| {
         format!("this cannot tell which account is running it ({e}); name one with --user")
     })?;
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if name == "root" {
+        return Err(
+            "this is running as root with no sudo, so there is no account to run the agent as. \
+             Run it with sudo from the account the agent should run as, or name one with --user"
+                .to_string(),
+        );
+    }
+    Ok(name)
 }
 
 /// Runs a platform tool, and on failure says what it said.
@@ -439,9 +487,12 @@ fn write_as_administrator(path: &Path, bytes: &[u8]) -> Result<(), String> {
     })
 }
 
-/// Takes away an endpoint file and, if nothing else is in it, the folder it was in.
+/// Takes away the service's endpoint file, only if it is one, and its folder once nothing else is in
+/// it. The folder is the service's own, so nothing a person made is touched.
 fn clear_endpoint(endpoint: &Path) {
-    let _ = std::fs::remove_file(endpoint);
+    if Endpoint::read(endpoint).is_ok() {
+        let _ = std::fs::remove_file(endpoint);
+    }
     if let Some(parent) = endpoint.parent() {
         let _ = std::fs::remove_dir(parent);
     }
@@ -465,16 +516,6 @@ fn after_install(service: &Service, how: &str, output: &str, remove: &str) -> St
 #[cfg(target_os = "linux")]
 fn put_in_place(service: &Service) -> Result<String, String> {
     let unit_path = Path::new("/etc/systemd/system").join(UNIT);
-    if let Some(parent) = service.endpoint.parent() {
-        if parent != Path::new(LINUX_STATE) && !parent.is_dir() {
-            return Err(format!(
-                "{} is not a folder, so the agent would have nowhere to write its endpoint. Make \
-                 it, give it to {}, and run this again",
-                parent.display(),
-                service.account
-            ));
-        }
-    }
     write_as_administrator(&unit_path, systemd_unit(service).as_bytes())?;
     tool("systemctl", &["daemon-reload"])?;
     tool("systemctl", &["enable", UNIT])?;
@@ -514,10 +555,7 @@ fn take_away(endpoint: &Path) -> Result<String, String> {
 #[cfg(target_os = "macos")]
 fn put_in_place(service: &Service) -> Result<String, String> {
     let plist_path = Path::new("/Library/LaunchDaemons").join(format!("{LABEL}.plist"));
-    let folder = service
-        .endpoint
-        .parent()
-        .map_or_else(|| PathBuf::from(MACOS_STATE), Path::to_path_buf);
+    let folder = PathBuf::from(MACOS_STATE);
     let log = folder.join("agent.log");
     std::fs::create_dir_all(&folder).map_err(|e| {
         format!(
@@ -540,8 +578,13 @@ fn put_in_place(service: &Service) -> Result<String, String> {
         service,
         "The agent runs as the launchd daemon dev.timewitness.agent",
         &format!(
-            "It does not run as root, and only root may set the clock on macOS. If it fails to \
-             start, why is in {}.",
+            "{} If it fails to start, why is in {}.",
+            if service.account == "root" {
+                "It runs as root because root was named, and root may set the clock on macOS; \
+                 the agent's code never does."
+            } else {
+                "It does not run as root, and only root may set the clock on macOS."
+            },
             log.display()
         ),
         "sudo timewitness agent uninstall",
@@ -584,9 +627,7 @@ fn take_away(endpoint: &Path) -> Result<String, String> {
             plist_path.display()
         )
     })?;
-    if let Some(folder) = endpoint.parent() {
-        let _ = std::fs::remove_file(folder.join("agent.log"));
-    }
+    let _ = std::fs::remove_file(Path::new(MACOS_STATE).join("agent.log"));
     clear_endpoint(endpoint);
     Ok(
         "Uninstalled. The agent is stopped, the launchd daemon is gone and nothing of it starts \
@@ -606,6 +647,9 @@ fn put_in_place(service: &Service) -> Result<String, String> {
     for unit in task_xml(service).encode_utf16() {
         bytes.extend(unit.to_le_bytes());
     }
+    // An agent from an earlier install is still running with its old definition, and a new one
+    // would find it answering on the endpoint and not start.
+    let _ = tool("schtasks", &["/End", "/TN", TASK]);
     let file = std::env::temp_dir().join("timewitness-agent-task.xml");
     std::fs::write(&file, bytes)
         .map_err(|e| format!("{} could not be written: {e}", file.display()))?;
@@ -636,9 +680,12 @@ fn put_in_place(service: &Service) -> Result<String, String> {
 
 #[cfg(windows)]
 fn take_away(endpoint: &Path) -> Result<String, String> {
-    if tool("schtasks", &["/Query", "/TN", TASK]).is_err() {
+    if let Err(said) = tool("schtasks", &["/Query", "/TN", TASK]) {
         clear_endpoint(endpoint);
-        return Ok("There was no TimeWitness service here to take away.".to_string());
+        return Ok(format!(
+            "There was no TimeWitness service here to take away, or none this account can see: \
+             {said}"
+        ));
     }
     // Stopping first, because deleting a task leaves its running process alone.
     let _ = tool("schtasks", &["/End", "/TN", TASK]);
@@ -716,12 +763,11 @@ mod tests {
     }
 
     #[test]
-    fn an_endpoint_elsewhere_is_made_writable_and_nothing_in_a_path_is_read_as_systemd_syntax() {
+    fn nothing_in_a_path_is_read_as_systemd_syntax() {
         let unit = systemd_unit(&service(
             "/opt/time witness/100%/$HOME/timewitness",
-            "/srv/tw/agent.endpoint",
+            "/var/lib/timewitness/agent.endpoint",
         ));
-        assert!(unit.contains("\nReadWritePaths=\"/srv/tw\"\n"), "{unit}");
         assert!(
             unit.contains("ExecStart=\"/opt/time witness/100%%/$$HOME/timewitness\" "),
             "{unit}"

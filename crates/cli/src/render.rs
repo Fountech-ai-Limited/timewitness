@@ -157,16 +157,16 @@ pub fn usage() -> String {
     out.push_str("                          reading is extrapolated over the whole gap, and\n");
     out.push_str("                          shorter costs somebody else's public servers\n");
     out.push_str("      --max-width <ns>    the widest bound this agent will answer with\n\n");
-    out.push_str("  timewitness agent install [--user <name>] [--endpoint <file>] [options]\n");
+    out.push_str("  timewitness agent install [--user <name>] [options]\n");
     out.push_str("      Hand the agent to whatever starts things at boot: a systemd unit on\n");
     out.push_str("      Linux, a launchd daemon on macOS, a scheduled task on Windows. Run it\n");
     out.push_str("      as an administrator. The service runs as the account that ran sudo,\n");
     out.push_str("      or on Windows the one installing, and never sets the clock. It takes\n");
     out.push_str("      --interval and --max-width as the agent does.\n\n");
-    out.push_str("      --user <name>       the account to run as instead\n");
-    out.push_str("      --endpoint <file>   where the agent writes its endpoint, for `status`.\n");
-    out.push_str("                          Its own folder by default, and install says where\n\n");
-    out.push_str("  timewitness agent uninstall [--endpoint <file>]\n");
+    out.push_str("      The agent writes its endpoint to a folder of its own, and install\n");
+    out.push_str("      says where, for `status --agent`.\n\n");
+    out.push_str("      --user <name>       the account to run as instead, on Linux and macOS\n\n");
+    out.push_str("  timewitness agent uninstall\n");
     out.push_str("      Stop the service and take it away, so nothing starts at boot.\n\n");
     out.push_str("  timewitness roughtime-serve [options]\n");
     out.push_str(
