@@ -5,7 +5,7 @@ name: Release binaries
 # to the network, so an unsigned one is not a thing a stranger should be asked to run, and a release
 # gets binaries only when every one of them is signed.
 #
-# Two ways in, and neither is a pull request, so nothing from outside this repository ever runs with
+# Two ways in, and neither is a pull request, so no fork's code ever runs with
 # the signing secrets in reach:
 #
 # - pushing a release tag, `v0.4` or `v0.4.1`. A tag with a pre-release name, `v0.4-rc.1`, does not
