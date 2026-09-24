@@ -60,7 +60,7 @@ use timewitness_clock::{
 use timewitness_core::evidence::rfc3161::in_one_spelling;
 use timewitness_core::evidence::roughtime::MIN_RADIUS_SECONDS;
 use timewitness_core::time::{Nanos, NANOS_PER_SEC};
-use timewitness_core::{Attestation, UnixNanos};
+use timewitness_core::{Attestation, UnixNanos, Validity};
 use timewitness_platform::EnvironmentWatch;
 use timewitness_receipt::schema::{Evidence, Receipt, Role, Scheme, TakenBy};
 use timewitness_receipt::{
@@ -653,11 +653,10 @@ fn from_a_model_of_our_own(args: &Args, deadline: Deadline) -> Result<Reading, S
         }
         let validity = model.synchronise();
         if round + 1 == rounds && !validity.is_valid() {
-            return Err(format!(
-                "the model will not answer: {validity:?}. {} of {} polls came back. A receipt is \
-                 not issued from a model that cannot support one",
+            return Err(no_receipt_after_the_last_round(
+                &validity,
                 answered,
-                rounds * polls_per_round
+                rounds * polls_per_round,
             ));
         }
     }
@@ -970,9 +969,30 @@ impl MonotonicClock for Handle {
     }
 }
 
+/// What a stamp says when its last round leaves the model with nothing it can stand behind.
+fn no_receipt_after_the_last_round(validity: &Validity, answered: usize, polls: usize) -> String {
+    format!(
+        "the model will not answer: {validity}. {answered} of {polls} polls came back. A receipt \
+         is not issued from a model that cannot support one"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use timewitness_core::refusal::{insides_in, one_of_each};
+
+    #[test]
+    fn a_stamp_refused_on_its_last_round_says_why_in_plain_words() {
+        // With the network taken away, a stamp printed the refusal's debug form, which
+        // read `InsufficientSources { present: 0, required: 3 }` where a reason belonged.
+        for validity in one_of_each() {
+            let said = no_receipt_after_the_last_round(&validity, 0, 18);
+            assert_eq!(insides_in(&said), None, "{said}");
+            assert!(said.contains(&validity.to_string()), "{said}");
+            assert!(said.contains("0 of 18 polls came back"), "{said}");
+        }
+    }
 
     #[test]
     fn the_ceiling_this_raises_for_a_build_runner_is_wider_than_the_shipped_one_and_says_why() {

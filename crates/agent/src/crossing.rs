@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use timewitness_clock::policy::{ppm_over, Policy};
 use timewitness_clock::MonotonicClock;
-use timewitness_core::time::{Nanos, NANOS_PER_SEC};
+use timewitness_core::time::{nanos_as_millis_f64, Nanos, NANOS_PER_SEC};
 use timewitness_core::UnixNanos;
 use timewitness_receipt::schema::Receipt;
 
@@ -81,8 +81,10 @@ impl core::fmt::Display for CrossingError {
                 };
                 write!(
                     f,
-                    "the reading was {width} ns wide once the crossing was paid for and {owner} is \
-                     {ceiling} ns, so no receipt is issued"
+                    "the reading was {:.3} ms wide once the time spent asking the agent was added, \
+                     and {owner} is {:.3} ms, so no receipt is issued",
+                    nanos_as_millis_f64(*width),
+                    nanos_as_millis_f64(*ceiling)
                 )
             }
             CrossingError::WildlyApart {
@@ -596,6 +598,44 @@ mod tests {
                 said.contains("Nothing here says the agent stopped"),
                 "the refusal blames the agent: {said}"
             );
+        }
+    }
+
+    #[test]
+    fn every_way_a_crossing_refuses_says_why_in_plain_words() {
+        use timewitness_core::refusal::{insides_in, one_of_each};
+
+        let mut refused: Vec<CrossingError> = one_of_each()
+            .iter()
+            .map(|v| CrossingError::Wire(WireError::Refused(v.to_string())))
+            .collect();
+        refused.push(CrossingError::Wire(WireError::PastCeiling {
+            width: 1_203_645_522,
+            ceiling: 250 * NANOS_PER_MILLI,
+            why: "the bound has grown to 1203.645522 ms, past the 250 ms ceiling".into(),
+        }));
+        refused.push(CrossingError::Unreachable("no agent answered".into()));
+        for whose in [Whose::TheCaller, Whose::TheAnsweringParty] {
+            refused.push(CrossingError::TooWide {
+                width: 1_203_645_522,
+                ceiling: 250 * NANOS_PER_MILLI,
+                whose,
+            });
+        }
+        refused.push(CrossingError::WildlyApart {
+            reading: UnixNanos(1_757_000_000 * NANOS_PER_SEC),
+            local: UnixNanos(1_757_000_900 * NANOS_PER_SEC),
+            allowance: 600 * NANOS_PER_SEC,
+        });
+
+        for e in refused {
+            let said = e.to_string();
+            assert_eq!(insides_in(&said), None, "{said}");
+            if let CrossingError::TooWide { .. } = e {
+                // A ten-digit count of nanoseconds is a number nobody reads at a glance.
+                assert!(said.contains("1203.646 ms"), "{said}");
+                assert!(said.contains("250.000 ms"), "{said}");
+            }
         }
     }
 }
