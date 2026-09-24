@@ -65,10 +65,6 @@ TARGETS = {
 SUMS = "SHA256SUMS"
 BUNDLE = ".sigstore.json"
 
-# Who may have signed a Linux archive. Keyless signing binds the signature to the workflow that ran
-# and the ref it ran from, so this is a statement about where the file came from rather than about a
-# key somebody could copy. A release tag pushed, or the workflow dispatched from main.
-SIGNER = r"^https://github\.com/Fountech-ai-Limited/timewitness/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9].*)$"
 ISSUER = "https://token.actions.githubusercontent.com"
 
 
@@ -78,6 +74,14 @@ class CouldNotRun(Exception):
 
 def archive_name(tag, target):
     return "timewitness-%s-%s%s" % (tag, target, TARGETS[target][1])
+
+
+def signer(tag):
+    """Who may have signed a Linux archive of this tag. Keyless signing binds the signature to the
+    workflow that ran and the ref it ran from, so this is a statement about where the file came from
+    rather than about a key somebody could copy: this tag pushed, or the workflow run from main."""
+    return (r"^https://github\.com/Fountech-ai-Limited/timewitness/\.github/workflows/release\.yml"
+            r"@refs/(heads/main|tags/%s)$" % re.escape(tag))
 
 
 def required_assets(tag):
@@ -145,7 +149,8 @@ def verdict(results):
 
 def run(argv):
     try:
-        done = subprocess.run(argv, capture_output=True, text=True, timeout=600)
+        done = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=600)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise CouldNotRun("%s could not be run: %s" % (argv[0], e))
     return done.returncode, (done.stdout or "") + (done.stderr or "")
@@ -232,7 +237,11 @@ def check(tag, repo, work):
     files = {}
     for name in required_assets(tag):
         if name in assets:
-            body = fetch(assets[name])
+            try:
+                body = fetch(assets[name])
+            except CouldNotRun as e:
+                say("NOT RUN", "%s could not be downloaded: %s" % (name, e))
+                continue
             if body is None:
                 say("FAIL", "%s is listed and could not be downloaded" % name)
                 continue
@@ -263,12 +272,19 @@ def check(tag, repo, work):
     else:
         for name in sorted(signed_blobs):
             code, out = run([cosign, "verify-blob", files[name], "--bundle", files[name + BUNDLE],
-                             "--certificate-identity-regexp", SIGNER,
+                             "--certificate-identity-regexp", signer(tag),
                              "--certificate-oidc-issuer", ISSUER])
             if judge_cosign(code, out):
                 say("PASS", "%s is signed by this repository's release workflow (cosign)" % name)
             else:
                 say("FAIL", "%s did not verify against its bundle: %s" % (name, out.strip().splitlines()[-1:] or out))
+
+    def opened(name, into):
+        try:
+            return unpack(files[name], into)
+        except (CouldNotRun, OSError, tarfile.TarError, zipfile.BadZipFile) as e:
+            say("FAIL", "%s could not be unpacked: %s" % (name, e))
+            return None
 
     here = host_target()
     system = TARGETS[here][0] if here else None
@@ -277,7 +293,9 @@ def check(tag, repo, work):
         if name not in files:
             continue
         if os_name == "macos" and system == "macos":
-            binary = unpack(files[name], os.path.join(work, target))
+            binary = opened(name, os.path.join(work, target))
+            if binary is None:
+                continue
             code, out = run(["codesign", "--verify", "--strict", "--verbose=2", binary])
             code2, out2 = run(["codesign", "-dv", "--verbose=4", binary])
             if code == 0 and judge_codesign(code2, out2):
@@ -290,7 +308,9 @@ def check(tag, repo, work):
             else:
                 say("FAIL", "%s: spctl refuses it: %s" % (target, " ".join(out.split())[:200]))
         elif os_name == "windows" and system == "windows":
-            binary = unpack(files[name], os.path.join(work, target))
+            binary = opened(name, os.path.join(work, target))
+            if binary is None:
+                continue
             tool = signtool()
             if not tool:
                 say("NOT RUN", "%s: signtool is not on this machine, so the Windows signature was not checked here" % target)
@@ -307,7 +327,9 @@ def check(tag, repo, work):
     if here is None:
         say("NOT RUN", "this machine is none of the five targets, so no --version was read")
     elif archive_name(tag, here) in files:
-        binary = unpack(files[archive_name(tag, here)], os.path.join(work, here + "-run"))
+        binary = opened(archive_name(tag, here), os.path.join(work, here + "-run"))
+        if binary is None:
+            return results
         if system != "windows":
             os.chmod(binary, 0o755)
         code, out = run([binary, "--version"])
@@ -356,6 +378,12 @@ def self_test():
     expect("signtool passes", judge_signtool(0, "Successfully verified: x.exe\n"), True)
     expect("signtool, no signature", judge_signtool(1, "SignTool Error: No signature found.\n"), False)
     expect("signtool, exit 0 and no verdict", judge_signtool(0, ""), False)
+    base = "https://github.com/Fountech-ai-Limited/timewitness/.github/workflows/release.yml@refs/"
+    expect("signed by this tag's run", bool(re.match(signer("v0.4"), base + "tags/v0.4")), True)
+    expect("signed by a run from main", bool(re.match(signer("v0.4"), base + "heads/main")), True)
+    expect("signed by another tag's run", bool(re.match(signer("v0.4"), base + "tags/v0.4.1")), False)
+    expect("signed by a run from a branch", bool(re.match(signer("v0.4"), base + "heads/other")), False)
+    expect("signed by another workflow", bool(re.match(signer("v0.4"), base.replace("release.yml", "ci.yml") + "tags/v0.4")), False)
     expect("cosign passes", judge_cosign(0, "Verified OK\n"), True)
     expect("cosign refuses", judge_cosign(1, "Error: none of the expected identities matched\n"), False)
 
