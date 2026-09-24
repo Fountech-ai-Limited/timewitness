@@ -1,0 +1,460 @@
+name: Release binaries
+
+# Builds `timewitness` from a release tag for five targets, signs each one, and attaches them to the
+# release with a list of their digests. A time agent runs with the rights to read the clock and talk
+# to the network, so an unsigned one is not a thing a stranger should be asked to run, and a release
+# gets binaries only when every one of them is signed.
+#
+# Two ways in, and neither is a pull request, so nothing from outside this repository ever runs with
+# the signing secrets in reach:
+#
+# - pushing a release tag, `v0.4` or `v0.4.1`. A tag with a pre-release name, `v0.4-rc.1`, does not
+#   start it on its own.
+# - running it by hand on a tag that already exists. With `rehearsal` set, and only on a tag with a
+#   pre-release name, it attaches whatever it built to a pre-release even where signing was skipped,
+#   so the whole route can be watched end to end before the signing identities exist. A rehearsal
+#   never touches a release that is not a pre-release, and never becomes the latest release.
+#
+# Signing, per system, runs only when its secrets are set, and says so loudly when they are not:
+#
+# - macOS: `codesign` with the Developer ID Application certificate, hardened runtime and a secure
+#   timestamp, then `notarytool` with an App Store Connect API key. APPLE_CERTIFICATE_P12 (the
+#   .p12, base64), APPLE_CERTIFICATE_PASSWORD, APPLE_TEAM_ID, APPLE_API_KEY_P8 (the .p8, as text
+#   or base64), APPLE_API_KEY_ID and APPLE_API_ISSUER_ID.
+# - Windows: Azure Trusted Signing, now called Artifact Signing. AZURE_TENANT_ID, AZURE_CLIENT_ID,
+#   AZURE_CLIENT_SECRET, AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT and AZURE_SIGNING_PROFILE.
+# - Linux: Sigstore keyless signing with cosign, which needs no secret. The signature is bound to
+#   this workflow, this repository and the ref it ran from by GitHub's own token, and recorded in the
+#   public Rekor transparency log, so a stranger checks it against where the file came from rather
+#   than against a key we hold and could lose. There is no platform authority for Linux binaries to
+#   defer to, and a key of our own would be one more thing to trust us about.
+#
+# The signing secrets belong to the `release` environment, which only `main` and `v*` tags may use,
+# so a workflow changed on any other branch cannot reach them.
+#
+# `scripts/the-binaries-are-signed.py` is the check, and `binaries-check.yml` runs it on all three
+# systems once the assets are attached.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+      - '!v*-*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The release tag to build, which has to exist already'
+        required: true
+        type: string
+      rehearsal:
+        description: 'Attach even unsigned binaries, to a pre-release, for a tag with a pre-release name only'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-binaries-${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  tag:
+    name: which tag, and what can be signed
+    runs-on: ubuntu-latest
+    environment: release
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+      rehearsal: ${{ steps.tag.outputs.rehearsal }}
+      apple: ${{ steps.secrets.outputs.apple }}
+      azure: ${{ steps.secrets.outputs.azure }}
+    steps:
+      - id: tag
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSHED: ${{ github.ref_name }}
+          ASKED: ${{ inputs.tag }}
+          REHEARSAL: ${{ inputs.rehearsal }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = push ]; then tag="$PUSHED"; rehearsal=false; else tag="$ASKED"; rehearsal="${REHEARSAL:-false}"; fi
+          if ! [[ "$tag" =~ ^v[0-9]+(\.[0-9]+){0,2}(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::the tag asked for is not a release tag"
+            exit 1
+          fi
+          found="$(git ls-remote --tags "https://github.com/$REPO.git" "refs/tags/$tag")"
+          if [ -z "$found" ]; then
+            echo "::error::there is no tag called $tag"
+            exit 1
+          fi
+          prerelease=false
+          case "$tag" in *-*) prerelease=true ;; esac
+          if [ "$rehearsal" = true ] && [ "$prerelease" != true ]; then
+            echo "::error::a rehearsal attaches unsigned binaries, so it runs only on a tag with a pre-release name, and $tag is not one"
+            exit 1
+          fi
+          {
+            echo "tag=$tag"
+            echo "prerelease=$prerelease"
+            echo "rehearsal=$rehearsal"
+          } >> "$GITHUB_OUTPUT"
+      - id: secrets
+        # Only whether each set is complete leaves this step, never a value.
+        env:
+          A1: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          A2: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          A3: ${{ secrets.APPLE_TEAM_ID }}
+          A4: ${{ secrets.APPLE_API_KEY_P8 }}
+          A5: ${{ secrets.APPLE_API_KEY_ID }}
+          A6: ${{ secrets.APPLE_API_ISSUER_ID }}
+          Z1: ${{ secrets.AZURE_TENANT_ID }}
+          Z2: ${{ secrets.AZURE_CLIENT_ID }}
+          Z3: ${{ secrets.AZURE_CLIENT_SECRET }}
+          Z4: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          Z5: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          Z6: ${{ secrets.AZURE_SIGNING_PROFILE }}
+        run: |
+          set -euo pipefail
+          apple=true
+          for v in "$A1" "$A2" "$A3" "$A4" "$A5" "$A6"; do [ -n "$v" ] || apple=false; done
+          azure=true
+          for v in "$Z1" "$Z2" "$Z3" "$Z4" "$Z5" "$Z6"; do [ -n "$v" ] || azure=false; done
+          echo "apple=$apple" >> "$GITHUB_OUTPUT"
+          echo "azure=$azure" >> "$GITHUB_OUTPUT"
+          echo "macOS signing secrets complete: $apple. Windows signing secrets complete: $azure."
+
+  build:
+    name: build ${{ matrix.target }}
+    needs: tag
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-22.04, exe: timewitness }
+          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-22.04-arm, exe: timewitness }
+          - { target: x86_64-apple-darwin, runner: macos-15-intel, exe: timewitness }
+          - { target: aarch64-apple-darwin, runner: macos-15, exe: timewitness }
+          - { target: x86_64-pc-windows-msvc, runner: windows-2022, exe: timewitness.exe }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.tag.outputs.tag }}
+          persist-credentials: false
+      - name: Build
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          # A Windows binary that carries its own C runtime, so a stranger's machine needs nothing
+          # installed beside it.
+          RUSTFLAGS: ${{ matrix.target == 'x86_64-pc-windows-msvc' && '-C target-feature=+crt-static' || '' }}
+        run: |
+          set -euo pipefail
+          rustup target add "$TARGET"
+          cargo build --release --locked --bin timewitness --target "$TARGET"
+      - name: The binary says it is the tag
+        shell: bash
+        env:
+          TAG: ${{ needs.tag.outputs.tag }}
+          BIN: target/${{ matrix.target }}/release/${{ matrix.exe }}
+        run: |
+          set -euo pipefail
+          printed="$("$BIN" --version)"
+          first="${printed%%$'\n'*}"
+          first="${first%$'\r'}"
+          echo "a build from $TAG says [$first]"
+          if [ "$first" != "timewitness $TAG" ]; then
+            echo "::error::a build from $TAG says [$first], not [timewitness $TAG]"
+            exit 1
+          fi
+      - name: Stage
+        shell: bash
+        env:
+          BIN: target/${{ matrix.target }}/release/${{ matrix.exe }}
+        run: |
+          set -euo pipefail
+          mkdir -p staged
+          cp "$BIN" LICENSE NOTICE staged/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-${{ matrix.target }}
+          path: staged/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Signing runs in jobs of its own that download what was built and never build anything, so no
+  # build script or dependency ever runs in a job with a signing secret in its environment.
+
+  sign-macos:
+    name: sign and notarise macOS
+    needs: [tag, build]
+    runs-on: macos-15
+    environment: release
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: unsigned-*-apple-darwin
+          path: in
+      - id: sign
+        env:
+          HAVE: ${{ needs.tag.outputs.apple }}
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          chmod +x in/*/timewitness
+          if [ "$HAVE" != true ]; then
+            echo "::warning title=macOS binaries NOT SIGNED::The Apple signing secrets are not all set, so the macOS binaries are not signed or notarised, and no release will carry them."
+            echo "### macOS binaries NOT SIGNED: the Apple signing secrets are not all set" >> "$GITHUB_STEP_SUMMARY"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          work="$RUNNER_TEMP/signing"
+          mkdir -p "$work"
+          chmod 700 "$work"
+          trap 'security delete-keychain "$work/signing.keychain-db" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
+          keychain="$work/signing.keychain-db"
+          pass="$(openssl rand -hex 24)"
+          printf '%s' "$APPLE_CERTIFICATE_P12" | base64 --decode > "$work/cert.p12"
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          security import "$work/cert.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign >/dev/null
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" >/dev/null
+          existing="$(security list-keychains -d user | tr -d '"')"
+          # shellcheck disable=SC2086
+          security list-keychains -d user -s "$keychain" $existing
+          identities="$(security find-identity -v -p codesigning "$keychain")"
+          identity="$(printf '%s\n' "$identities" | awk -v team="($APPLE_TEAM_ID)" 'index($0, "Developer ID Application") && index($0, team) { print $2; exit }')"
+          if [ -z "$identity" ]; then
+            echo "::error::the certificate holds no Developer ID Application identity for team $APPLE_TEAM_ID"
+            exit 1
+          fi
+          for bin in in/*/timewitness; do
+            codesign --force --options runtime --timestamp --sign "$identity" "$bin"
+            codesign --verify --strict --verbose=2 "$bin"
+          done
+          case "$APPLE_API_KEY_P8" in
+            -----BEGIN*) printf '%s\n' "$APPLE_API_KEY_P8" > "$work/key.p8" ;;
+            *) printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$work/key.p8" ;;
+          esac
+          mkdir -p "$work/submit"
+          for dir in in/*/; do
+            t="$(basename "$dir")"
+            cp "$dir/timewitness" "$work/submit/timewitness-${t#unsigned-}"
+          done
+          ditto -c -k --keepParent "$work/submit" "$work/submit.zip"
+          xcrun notarytool submit "$work/submit.zip" --key "$work/key.p8" --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID" --wait --timeout 45m --output-format json > "$work/notary.json" || true
+          status="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("status", ""))' "$work/notary.json")"
+          id="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("id", ""))' "$work/notary.json")"
+          echo "notarisation $id: $status"
+          if [ "$status" != Accepted ]; then
+            xcrun notarytool log "$id" --key "$work/key.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" || true
+            echo "::error::Apple did not notarise the macOS binaries: $status"
+            exit 1
+          fi
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      - name: Pack
+        env:
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          for dir in in/*/; do
+            t="$(basename "$dir")"
+            t="${t#unsigned-}"
+            COPYFILE_DISABLE=1 tar -C "$dir" -czf "out/timewitness-$TAG-$t.tar.gz" timewitness LICENSE NOTICE
+          done
+          ls -l out
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: asset-macos
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  sign-windows:
+    name: sign Windows
+    needs: [tag, build]
+    runs-on: windows-2022
+    environment: release
+    outputs:
+      signed: ${{ steps.done.outputs.signed }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsigned-x86_64-pc-windows-msvc
+          path: in
+      - name: Say so when it cannot be signed
+        if: needs.tag.outputs.azure != 'true'
+        shell: bash
+        run: |
+          echo "::warning title=Windows binary NOT SIGNED::The Azure signing secrets are not all set, so the Windows binary is not signed, and no release will carry it."
+          echo "### Windows binary NOT SIGNED: the Azure signing secrets are not all set" >> "$GITHUB_STEP_SUMMARY"
+      - name: Sign
+        if: needs.tag.outputs.azure == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\in\timewitness.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - id: done
+        shell: pwsh
+        env:
+          HAVE: ${{ needs.tag.outputs.azure }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:HAVE -ne 'true') { "signed=false" >> $env:GITHUB_OUTPUT; exit 0 }
+          $tool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Sort-Object FullName | Select-Object -Last 1
+          & $tool.FullName verify /pa /v in\timewitness.exe
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error::the signed Windows binary does not verify"; exit 1 }
+          "signed=true" >> $env:GITHUB_OUTPUT
+      - name: Pack
+        shell: pwsh
+        env:
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force out | Out-Null
+          Compress-Archive -Path in\timewitness.exe, in\LICENSE, in\NOTICE -DestinationPath "out\timewitness-$env:TAG-x86_64-pc-windows-msvc.zip"
+          Get-ChildItem out
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: asset-windows
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  pack-linux:
+    name: pack Linux
+    needs: [tag, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: unsigned-*-linux-gnu
+          path: in
+      - name: Pack
+        env:
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          for dir in in/*/; do
+            t="$(basename "$dir")"
+            t="${t#unsigned-}"
+            chmod +x "$dir/timewitness"
+            tar -C "$dir" -czf "out/timewitness-$TAG-$t.tar.gz" timewitness LICENSE NOTICE
+          done
+          ls -l out
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: asset-linux
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: attach to the release
+    needs: [tag, sign-macos, sign-windows, pack-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    outputs:
+      published: ${{ steps.decide.outputs.published }}
+    steps:
+      - id: decide
+        env:
+          TAG: ${{ needs.tag.outputs.tag }}
+          REHEARSAL: ${{ needs.tag.outputs.rehearsal }}
+          MACOS: ${{ needs.sign-macos.outputs.signed }}
+          WINDOWS: ${{ needs.sign-windows.outputs.signed }}
+        run: |
+          set -euo pipefail
+          if [ "$MACOS" = true ] && [ "$WINDOWS" = true ]; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          elif [ "$REHEARSAL" = true ]; then
+            echo "::warning title=REHEARSAL with unsigned binaries::Signed on macOS: $MACOS. Signed on Windows: $WINDOWS. Attaching to the pre-release $TAG anyway, because this is a rehearsal, and the check that follows is expected to fail on the unsigned ones."
+            echo "### REHEARSAL: unsigned binaries attached to the pre-release $TAG, and the check is expected to fail on them" >> "$GITHUB_STEP_SUMMARY"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=No binaries attached to $TAG::Signed on macOS: $MACOS. Signed on Windows: $WINDOWS. A release gets binaries only when every one is signed, so $TAG stays a source release."
+            echo "### No binaries attached to $TAG: macOS signed $MACOS, Windows signed $WINDOWS" >> "$GITHUB_STEP_SUMMARY"
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.decide.outputs.published == 'true'
+        with:
+          pattern: asset-*
+          path: dist
+          merge-multiple: true
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        if: steps.decide.outputs.published == 'true'
+      # Signed here and not earlier, so nothing goes into the public transparency log for binaries
+      # that are never attached.
+      - name: Digests, and the Linux signatures
+        if: steps.decide.outputs.published == 'true'
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -- *.tar.gz *.zip > SHA256SUMS
+          cat SHA256SUMS
+          for blob in *-linux-gnu.tar.gz SHA256SUMS; do
+            cosign sign-blob --yes --bundle "$blob.sigstore.json" "$blob"
+          done
+      - name: Attach
+        if: steps.decide.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.tag.outputs.tag }}
+          PRERELEASE: ${{ needs.tag.outputs.prerelease }}
+          REHEARSAL: ${{ needs.tag.outputs.rehearsal }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$REPO" --json isPrerelease > release.json 2>/dev/null; then
+            is_pre="$(python3 -c 'import json; print(str(json.load(open("release.json"))["isPrerelease"]).lower())')"
+            if [ "$REHEARSAL" = true ] && [ "$is_pre" != true ]; then
+              echo "::error::$TAG is a release and not a pre-release, and a rehearsal never touches one"
+              exit 1
+            fi
+          else
+            if [ "$REHEARSAL" = true ]; then
+              notes="A rehearsal of the release route. The binaries attached here may not be signed, and nobody should run them."
+            else
+              notes="Signed binaries for Linux, macOS and Windows are attached. Check them with scripts/the-binaries-are-signed.py --release $TAG."
+            fi
+            flags=(--verify-tag --title "$TAG" --notes "$notes")
+            if [ "$PRERELEASE" = true ]; then flags+=(--prerelease --latest=false); fi
+            gh release create "$TAG" --repo "$REPO" "${flags[@]}"
+          fi
+          gh release upload "$TAG" --repo "$REPO" --clobber dist/*
+
+  check:
+    name: check what was attached
+    needs: [tag, publish]
+    if: needs.publish.outputs.published == 'true'
+    uses: ./.github/workflows/binaries-check.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
