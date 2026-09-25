@@ -362,6 +362,28 @@
    }
   },
   {
+   "figure": "222.628",
+   "unit": "ms",
+   "precision": "0.001 ms",
+   "whose": "ours",
+   "conditions": "a GitHub-hosted runner in the public repository Fountech-ai-Limited/timewitness-install-check, 2026-09-25 at 11:48 UTC, sixteen polling rounds, the Action at v0.4",
+   "evidence": {
+    "kind": "receipt",
+    "artefact": "crates/verify/tests/data/a-runner-receipt-2026-09-25/receipt.hex",
+    "note": "the receipt committed at crates/verify/tests/data/a-runner-receipt-2026-09-25/receipt.hex, the widget.tar.gz.receipt asset of release stamped-with-v0.4 of that repository as run 36131291725 wrote it, read through timewitness verify"
+   },
+   "servedOnSite": true,
+   "of": "the whole interval",
+   "owner": {
+    "machine": "a GitHub-hosted runner",
+    "path": "the one-shot command"
+   },
+   "setup": {
+    "date": "2026-09-25",
+    "rounds": 16
+   }
+  },
+  {
    "figure": "12.0",
    "unit": "s",
    "precision": "0.1 s",

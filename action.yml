@@ -15,15 +15,17 @@ license: Apache-2.0
 # generated on the runner where none is supplied, and the receipt says so rather than implying that
 # the key means something it does not.
 #
-# What it cannot do is in the workflow summary it writes, every run, in the same words the shipped
-# list of limitations uses. The most important of them here: the width a runner gets is set by which
+# What it cannot do is in the workflow summary it writes, every run, in words of its own that end by
+# naming the shipped list of limitations, `timewitness cannot-prove`, as the whole of it. The most
+# important of them here: the width a runner gets is set by which
 # time sources that runner can reach, and not by its hardware. A runner reaching only the public
 # Roughtime servers is seconds wide whatever else is done to it, because those state their own
 # uncertainty as a radius in whole seconds. One with ordinary NTP servers in the round is
-# milliseconds: ours read 211.3 ms on 2026-09-09 at sixteen rounds, and 16.219 s on 2026-09-08 at
-# the four rounds this file shipped that day, against Roughtime alone. Neither is a figure for
-# anybody else's runner, and this comment said the seconds one was the only outcome until
-# 2026-09-10, which was true when it was written and stopped being true on 2026-09-09.
+# milliseconds: ours read 222.628 ms on 2026-09-25 at sixteen rounds, in the public install check at
+# v0.4, and 16.219 s on 2026-09-08 at the four rounds this file shipped that day, against Roughtime
+# alone, a round the operator floor now refuses. Neither is a figure for anybody else's runner.
+# Until 2026-09-25 this comment led with 211.3 ms from 2026-09-09, a receipt taken before receipts
+# named their operators, which `timewitness verify` now refuses on the operator floor.
 
 inputs:
   subject:
@@ -114,11 +116,12 @@ inputs:
   send:
     description: >-
       Also give a copy of the receipt to the app that keeps an organisation's receipts, as a step
-      after the stamp. It reads a machine credential from the TIMEWITNESS_MACHINE_CREDENTIAL
-      environment variable, which the workflow sets from a secret, and sends the receipt and the
-      figures it states, never the file it stamps. A send that fails is reported as a warning and
-      never fails the job: the receipt is already written, and it checks the same with the free
-      verifier whether or not the app holds a copy.
+      after the stamp. The app is not open yet, and until it is every send to it is refused by
+      name, so this step warns and sends nothing. It reads a machine credential from the
+      TIMEWITNESS_MACHINE_CREDENTIAL environment variable, which the workflow sets from a secret,
+      and sends the receipt and the figures it states, never the file it stamps. A send that fails
+      is reported as a warning and never fails the job: the receipt is already written, and it
+      checks the same with the free verifier whether or not the app holds a copy.
     required: false
     default: "false"
 
