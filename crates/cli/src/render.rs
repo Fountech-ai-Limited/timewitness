@@ -265,7 +265,9 @@ pub fn usage() -> String {
     out.push_str("      TIMEWITNESS_MACHINE_CREDENTIAL and never from the command line. What\n");
     out.push_str("      travels is the receipt and the figures it states; the thing it stamps\n");
     out.push_str("      never does. Sending is separate from stamping, so a send that fails\n");
-    out.push_str("      leaves the receipt where it was and changes nothing about it.\n\n");
+    out.push_str("      leaves the receipt where it was and changes nothing about it. The app\n");
+    out.push_str("      is not open yet, and until it is a send to it is refused by name\n");
+    out.push_str("      before anything leaves this machine.\n\n");
     out.push_str("      --event <word>      what happened, such as build or test, to search by\n");
     out.push_str("      --repository <name> the repository it happened in, owner/name\n");
     out.push_str("      --to <address>      another address of the app, such as a test one\n\n");
@@ -274,13 +276,17 @@ pub fn usage() -> String {
     out.push_str("      is in TIMEWITNESS_MACHINE_CREDENTIAL, making the key where the file is\n");
     out.push_str("      absent. The app asks the key to sign a challenge, so only a machine\n");
     out.push_str("      holding the secret half can enrol it, and what is signed is built here\n");
-    out.push_str("      rather than taken from the app as text.\n\n");
+    out.push_str("      rather than taken from the app as text. The app is not open yet, and\n");
+    out.push_str("      until it is an enrolment asked of it is refused by name.\n\n");
     out.push_str("      --label <name>      what the organisation's people see the machine as\n");
     out.push_str("      --to <address>      another address of the app, such as a test one\n\n");
     out.push_str("  timewitness certificate --key <file> [options]\n");
     out.push_str("      Fetch a certificate for an enrolled key and keep it beside the key, for\n");
     out.push_str("      `stamp` to read. It is the one thing a machine asks the app for before\n");
-    out.push_str("      it stamps, and it is asked here, never during a stamp.\n\n");
+    out.push_str("      it stamps, and it is asked here, never during a stamp. The app is not\n");
+    out.push_str(
+        "      open yet, and until it is a certificate asked of it is refused by name.\n\n",
+    );
     out.push_str("      --kind <kind>       agent, for a week, or action, for a day; agent by\n");
     out.push_str("                          default\n");
     out.push_str("      --out <file>        where to keep it, beside the key by default\n");

@@ -116,11 +116,12 @@ inputs:
   send:
     description: >-
       Also give a copy of the receipt to the app that keeps an organisation's receipts, as a step
-      after the stamp. It reads a machine credential from the TIMEWITNESS_MACHINE_CREDENTIAL
-      environment variable, which the workflow sets from a secret, and sends the receipt and the
-      figures it states, never the file it stamps. A send that fails is reported as a warning and
-      never fails the job: the receipt is already written, and it checks the same with the free
-      verifier whether or not the app holds a copy.
+      after the stamp. The app is not open yet, and until it is every send to it is refused by
+      name, so this step warns and sends nothing. It reads a machine credential from the
+      TIMEWITNESS_MACHINE_CREDENTIAL environment variable, which the workflow sets from a secret,
+      and sends the receipt and the figures it states, never the file it stamps. A send that fails
+      is reported as a warning and never fails the job: the receipt is already written, and it
+      checks the same with the free verifier whether or not the app holds a copy.
     required: false
     default: "false"
 
