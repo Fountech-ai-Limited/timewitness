@@ -219,3 +219,62 @@ fn a_file_that_is_not_a_receipt_that_holds_is_not_sent() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The app is not open yet, and `app.timewitness.dev` answers every path with a redirect to the
+/// holding page. Until 2026-09-25 a send to it came back as a sentence about a 308, which tells a
+/// stranger nothing they can act on. It is refused by name now, before anything leaves the
+/// machine, and so are an enrolment and a certificate asked of it. An address given with `--to` is
+/// asked as always, which is how the tests above reach a stand-in.
+#[test]
+fn the_app_is_not_open_yet_and_a_send_to_it_is_refused_by_name() {
+    let receipt = real_receipt();
+    let path = receipt.to_str().unwrap();
+    let dir = std::env::temp_dir().join(format!("tw-not-open-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let key = dir.join("agent.key");
+    let key = key.to_str().unwrap();
+
+    for (what, output) in [
+        ("send", send(&[path], Some("twm_x"))),
+        (
+            "enrol",
+            Command::new(env!("CARGO_BIN_EXE_timewitness"))
+                .args(["enrol", "--key", key])
+                .env(CREDENTIAL, "twm_x")
+                .output()
+                .expect("the binary runs"),
+        ),
+        (
+            "certificate",
+            Command::new(env!("CARGO_BIN_EXE_timewitness"))
+                .args(["certificate", "--key", key])
+                .env(CREDENTIAL, "twm_x")
+                .output()
+                .expect("the binary runs"),
+        ),
+    ] {
+        let words = said(&output);
+        assert_eq!(output.status.code(), Some(1), "{what}: {words}");
+        assert!(
+            words.contains("https://app.timewitness.dev is not open yet"),
+            "{what}: {words}"
+        );
+        assert!(!words.contains("308"), "{what}: {words}");
+    }
+
+    let usage = String::from_utf8_lossy(
+        &Command::new(env!("CARGO_BIN_EXE_timewitness"))
+            .arg("--help")
+            .output()
+            .expect("the binary runs")
+            .stdout,
+    )
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join(" ");
+    assert_eq!(
+        usage.matches("The app is not open yet").count(),
+        3,
+        "send, enrol and certificate each say so: {usage}"
+    );
+}

@@ -80,6 +80,9 @@ pub fn run_enrol(args: &Args) -> Outcome {
     };
     let public = render::hex(&key.public_key_bytes());
     let address = args.value("--to").unwrap_or(app::APP);
+    if let Some(why) = app::not_open(address) {
+        return refuse(&format!("nothing was enrolled: {why}"), 1);
+    }
 
     let body = json::render(&Value::map(vec![(
         "publicKey",
@@ -188,6 +191,12 @@ pub fn run_certificate(args: &Args) -> Outcome {
         ("publicKey", Value::text(public.clone())),
         ("kind", Value::text(kind)),
     ]));
+    if let Some(why) = app::not_open(address) {
+        return refuse(
+            &format!("no certificate was issued: {why}. Nothing was written"),
+            1,
+        );
+    }
     let answer = match app::post_json(address, app::CERTIFICATES, &credential, &body) {
         Ok(answer) if answer.status == 201 => answer,
         Ok(answer) => {

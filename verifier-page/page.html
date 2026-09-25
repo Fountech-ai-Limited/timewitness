@@ -7,8 +7,10 @@
      built file for spellings, which a call assembled from two strings walked past. This is the same
      rule enforced by the thing that would make the request. The inline module and its WebAssembly
      are what is allowed, the lockup is carried as a data address, and everything else is refused:
-     no connection, no image from an address, no frame, no font, no form, no base. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+     no connection, no image from an address, no frame, no font, no form, no base. Refusing to be
+     framed is not here: a browser ignores frame-ancestors in a meta tag and says so in the console on
+     every load, so a host serving this page sends it as a header, beside X-Frame-Options. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- The commit this page was built from, filled in by the build. A reader who wants the command line
      that gives the same answers as this page builds it at this commit, and a check reading the page
@@ -128,6 +130,10 @@ and carries signed evidence from parties who have never heard of us. This page c
     <button type="submit" id="go" disabled>Check it</button>
   </fieldset>
 </form>
+<noscript><p class="notice">This page checks a receipt with a script, and scripts are turned off in
+this browser, so nothing can be checked here. The command line checks the same receipt with the same
+code: <code>timewitness verify &lt;receipt&gt;</code>.</p></noscript>
+<p class="notice" id="cannot-run" hidden></p>
 <p class="detail" id="formats"></p>
 
 <!-- role="status" rather than role="alert", because a verdict is information and not an alarm,
@@ -156,7 +162,7 @@ and carries signed evidence from parties who have never heard of us. This page c
   <h2>What TimeWitness cannot prove</h2>
   <p class="detail">This is a section of the page rather than a note at the foot of it. Every item is
   something somebody might reasonably expect and will not get.</p>
-  <div id="limits" class="limits"></div>
+  <div id="limits" class="limits"><!-- LIMITS --></div>
 </section>
 
 <footer>
@@ -491,7 +497,16 @@ document.getElementById("form").addEventListener("submit", async (event) => {
   result.focus({ preventScroll: true });
 });
 
-start();
+// A browser that will not run WebAssembly leaves the button dead, and until 2026-09-25 it did so
+// without a word. The list below is written into the page when it is built, so it is there whatever
+// this script manages; the reason the check cannot run is said here.
+start().catch((error) => {
+  const why = document.getElementById("cannot-run");
+  why.textContent = "This browser would not run the WebAssembly this page checks with (" +
+    String(error) + "), so nothing can be checked here. The command line checks the same receipt " +
+    "with the same code: timewitness verify <receipt>.";
+  why.hidden = false;
+});
 </script>
 </body>
 </html>

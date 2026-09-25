@@ -700,8 +700,8 @@ so the log does not name it. Any key the log does not name, that one included, i
 as not ours, and a reader who does not already recognise that key learns only that one key signed
 this. The window is judged on
 the receipt's own reading, so it catches a receipt that says it was signed outside the window and not
-one that lies about when. The `v0` release refuses that log's format by name, so reading it takes a verifier built
-from `main` until a later release. The Action generates a key on the runner where none is
+one that lies about when. The `v0` release refuses that log's format by name, and `v0.4` reads it.
+The Action generates a key on the runner where none is
 supplied, which is what keeps the install to one line and is exactly as meaningful as that sounds.
 
 **There is no first-run figure from anybody who is not us.** Nobody outside has run it.

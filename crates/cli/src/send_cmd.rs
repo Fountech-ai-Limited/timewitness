@@ -101,6 +101,15 @@ pub fn run(args: &Args) -> Outcome {
 
     let address = args.value("--to").unwrap_or(app::APP);
     let hash = render::hex(&chain_link(&bytes));
+    if let Some(why) = app::not_open(address) {
+        return refuse(
+            &format!(
+                "receipt {hash} was not sent: {why}. The receipt is unaffected and is still at \
+                 {receipt_path}"
+            ),
+            1,
+        );
+    }
     match app::post_json(address, app::RECEIPTS, credential, &body) {
         Ok(answer) if answer.status == 200 || answer.status == 201 => {
             let held = if answer.status == 200 {
