@@ -194,12 +194,12 @@ pub struct Policy {
     /// RFC 5905 does the same thing with `MINDISP`, at five milliseconds, inside the root distance,
     /// so no NTP server can present a zero-width correctness interval either. Ours is smaller,
     /// because five milliseconds is a figure for the public internet and the conditions this
-    /// product quotes are tighter than that: about a millisecond on a good local network and about
-    /// a hundred microseconds on a cloud instance with a hypervisor clock. Both of those are
-    /// quoted from public research and neither has been measured by this code, which reaches
-    /// neither today. A floor above either would become the answer rather than a backstop under it.
-    /// A hundred microseconds of half width sits below every condition the product quotes and four
-    /// orders of magnitude above a point.
+    /// product quotes are tighter than that: about a millisecond for a clock updated once a minute,
+    /// as primary reference clocks are, and about a hundred microseconds on a cloud instance with a
+    /// hypervisor clock. Both of those are quoted from public research and neither has been measured
+    /// by this code, which reaches neither today. A floor above either would become the answer
+    /// rather than a backstop under it. A hundred microseconds of half width sits below every
+    /// condition the product quotes and four orders of magnitude above a point.
     ///
     /// A choice, not a measurement, and it only ever widens.
     pub source_interval_floor: Nanos,
