@@ -198,7 +198,8 @@ something did not happen.
 **About what it does when something is wrong.** It does not prevent anything: a refusal records that
 TimeWitness declined to sign, not that an action was stopped. It does not establish legal weight,
 which comes from accreditation rather than engineering, and no regulation we have checked requires
-tamper-evidence, cryptographic proof or clock accuracy.
+cryptographic proof. FINRA Rule 6820 does set a clock synchronisation tolerance, and TimeWitness
+claims no part in meeting it or any other rule.
 
 **About what is built today.** Three time source clients exist in this repository, Roughtime, plain NTP and NTS, and only Roughtime signs anything a stranger can check, so the one that can be shown to a stranger is the one that cannot narrow the bound. A Roughtime server states its own uncertainty as a radius in whole seconds,
 so a bound resting on Roughtime alone would be seconds wide whatever else is done to it, and the
