@@ -31,12 +31,15 @@ fn refuse(what: &str, code: i32) -> Outcome {
 }
 
 /// The machine credential, from the environment and never the command line.
-fn credential() -> Result<String, Outcome> {
+///
+/// Asked only once the app at `address` is known to take machines. A stranger has no credential and
+/// cannot get one while the app is closed, so the closed app is said first and this never is.
+fn credential(address: &str) -> Result<String, Outcome> {
     let Ok(credential) = std::env::var(CREDENTIAL) else {
         return Err(refuse(
             &format!(
-                "{CREDENTIAL} is not set. It holds a machine credential the app issued to this \
-                 organisation"
+                "{CREDENTIAL} is not set. It holds the machine credential the app at {address} \
+                 gives an organisation"
             ),
             2,
         ));
@@ -70,7 +73,12 @@ pub fn run_enrol(args: &Args) -> Outcome {
         Ok(path) => path,
         Err(e) => return refuse(&e.0, 2),
     };
-    let credential = match credential() {
+    // Before the key, so a closed app never leaves a new key behind for an enrolment it refused.
+    let address = args.value("--to").unwrap_or(app::APP);
+    if let Some(why) = app::not_open(address) {
+        return refuse(&format!("nothing was enrolled: {why}"), 1);
+    }
+    let credential = match credential(address) {
         Ok(c) => c,
         Err(outcome) => return outcome,
     };
@@ -79,10 +87,6 @@ pub fn run_enrol(args: &Args) -> Outcome {
         Err(text) => return refuse(&text, 1),
     };
     let public = render::hex(&key.public_key_bytes());
-    let address = args.value("--to").unwrap_or(app::APP);
-    if let Some(why) = app::not_open(address) {
-        return refuse(&format!("nothing was enrolled: {why}"), 1);
-    }
 
     let body = json::render(&Value::map(vec![(
         "publicKey",
@@ -165,7 +169,14 @@ pub fn run_certificate(args: &Args) -> Outcome {
     if kind != "agent" && kind != "action" {
         return refuse("--kind is agent or action", 2);
     }
-    let credential = match credential() {
+    let address = args.value("--to").unwrap_or(app::APP);
+    if let Some(why) = app::not_open(address) {
+        return refuse(
+            &format!("no certificate was issued: {why}. Nothing was written"),
+            1,
+        );
+    }
+    let credential = match credential(address) {
         Ok(c) => c,
         Err(outcome) => return outcome,
     };
@@ -181,7 +192,6 @@ pub fn run_certificate(args: &Args) -> Outcome {
         Err(text) => return refuse(&text, 1),
     };
     let public = render::hex(&key.public_key_bytes());
-    let address = args.value("--to").unwrap_or(app::APP);
     let out = args.value("--out").map_or_else(
         || certificate_file::beside(key_path),
         std::path::PathBuf::from,
@@ -191,12 +201,6 @@ pub fn run_certificate(args: &Args) -> Outcome {
         ("publicKey", Value::text(public.clone())),
         ("kind", Value::text(kind)),
     ]));
-    if let Some(why) = app::not_open(address) {
-        return refuse(
-            &format!("no certificate was issued: {why}. Nothing was written"),
-            1,
-        );
-    }
     let answer = match app::post_json(address, app::CERTIFICATES, &credential, &body) {
         Ok(answer) if answer.status == 201 => answer,
         Ok(answer) => {
