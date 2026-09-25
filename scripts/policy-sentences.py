@@ -1045,29 +1045,35 @@ CLAIMS = [
         r'\b(regulators? (?:accept|recogni[sz]e|approve|require|treat)s?)\b',
         r'\b((?:certified|qualified|legal|official) (?:electronic )?time.?stamps?)\b',
         r'\b(eIDAS|AI Act|Article 12|17a-4|FINRA|MiFID|GDPR|Sarbanes|SOX|HIPAA|DORA|NIS ?2|21 CFR|Part 11|ISO ?27001|SOC ?2|ETSI|PCI.?DSS)\b',
-        # A rule's requirement handed back to us in a clause of its own, which the rule clause before it
-        # no longer refuses on the rule's name: "requires clock sync, which our agent meets".
-        r'\b(?:which|that|and) (?:TimeWitness|we|our \w+|the (?:agent|receipts?|product)|it|this)\b[^.;,]{0,30}?'
-        r'\b(meets?|satisf(?:y|ies)|fulfil+s?|discharges?|covers?|answers?|handles?|takes? care of)\b',
+        # The claim in the sentence after the rule: "FINRA 6820 requires clocks within 50 ms of NIST
+        # time. Every stamp sits well inside that tolerance." The second sentence names no rule, so
+        # what it turns on is the demonstrative that points back at one.
+        r'\b((?:that|this|the same|such a|each|every|its|the rule\'s) (?:\w+ )?(?:tolerance|obligation|mandate|audit trail|'
+        r'recordkeeping (?:rule|requirement|standard)))\b',
+        # "meets both", "satisfies them": the rules named a sentence earlier, met without being named.
+        r'\b((?:meet|satisf|fulfil|discharg|honou?r)\w* (?:both|either|all|each|every one|them|those|these)(?: of (?:them|those|these))?)\b',
+        # Two negations that add up to a claim: "does not require anything TimeWitness does not
+        # already provide", "asks for nothing a receipt does not carry". The group opens on the first
+        # negation so the denial test, which reads the words before the group, does not read it as a
+        # denial.
+        r'\b((?:does |do |did )?(?:not|never) (?:requires?|asks? for|sets?|names?|mandates?|demands?) '
+        r'(?:anything|something|more|a thing|one thing|that)\b[^.;]{0,40}?\b(?:does not|doesn\'t|do not|don\'t|cannot|can\'t|'
+        r'is not|isn\'t|are not|aren\'t|has not|hasn\'t|have not|haven\'t|won\'t|will not|without|lack\w*|miss\w*|already)\b[^.;]{0,20})',
+        r'\b((?:requires?|asks? for|sets?|names?|mandates?|demands?) (?:nothing|no \w+|anything less)\b[^.;]{0,40}?'
+        r'\b(?:does not|doesn\'t|do not|don\'t|cannot|can\'t|is not|isn\'t|are not|aren\'t|has not|hasn\'t|have not|haven\'t|'
+        r'won\'t|will not|without|lack\w*|miss\w*|already)\b[^.;]{0,20})',
     # What makes the mention honest is saying where standing comes from, never the noun on its own:
     # until 2026-09-16 "qualified trust service provider" was on this list, so "We are a qualified
     # trust service provider for timestamping" passed on the entry written to let the denial through.
     #
-    # Saying what a rule itself asks for is honest too, where the rule is the subject and nothing in
-    # the clause is us. Until 2026-09-25 the list said no rule it named asks for clock accuracy or
-    # tamper-evidence, and FINRA 6820 sets a clock tolerance against NIST time and SEC 17a-4 asks for
-    # records that cannot be rewritten. The corrected sentence names both, and a register that let
-    # only a denial mention a rule refused the truth while it passed the old error. So a clause whose
-    # subject is a named rule and whose verb is what it sets or asks for reads as a statement about
-    # the rule, and one that also names us, our receipts or our agent does not, so "FINRA 6820 sets a
-    # clock tolerance and TimeWitness satisfies that requirement" is still refused. The last
-    # alternative is the sentence the list ends that paragraph with, a compliance claim said to be
-    # false, which the denial test misses once more than five words sit between the claim and its verb.
+    # A rule's name is refused wherever it sits unless its own clause denies it. The one other way
+    # through is `honest_about_a_rule` below, which reads the whole sentence and admits two shapes and
+    # nothing else. On 2026-09-25 this entry was given an excuse for a clause whose subject is a named
+    # rule; the excuse was read over the clause and a claim in the next clause never met it, so forty
+    # compliance claims passed the same afternoon, "FINRA Rule 6820 requires clock synchronisation
+    # with NIST time, which TimeWitness provides" among them. Nothing here excuses a clause any more.
     ], None, r'\bfrom (?:being )?(?:an? )?accredit\w*\b|\baccreditation\b[^.;,]{0,20}?\b(?:rather|not|confers?|is (?:the only|what))\b|'
-             r'\bstanding\b[^.;,]{0,25}?\bcomes from\b|\bcomes from (?:being )?(?:an? )?(?:accredit\w*|qualified|QTSP)\b|'
-             r'\A(?![^.;]*\b(?:TimeWitness|we|our|us|you|your|it|its|receipts?|agent|product|this)\b)\W*(?:and |but )?'
-             r'(?:FINRA|SEC|AI Act)(?: Rule)? [\w.-]+(?: and [\w.-]+)? (?:does |do )?(?:sets?|asks? for|requires?|names?)\b|'
-             r'\b(?:an?|any) compliance claim\b[^.;,]{0,60}?\bwould be (?:false|wrong|untrue)\b',
+             r'\bstanding\b[^.;,]{0,25}?\bcomes from\b|\bcomes from (?:being )?(?:an? )?(?:accredit\w*|qualified|QTSP)\b',
      'claims legal weight or compliance, and standing comes from accreditation rather than engineering: TimeWitness claims no '
      'part in meeting any rule (rule 6 of what this product may say)'),
     ('accreditation', [
@@ -1082,6 +1088,71 @@ CLAIMS = [
 ]
 CLAIMS = [(name, [re.compile(p, re.I) for p in patterns], re.compile(needs, re.I) if needs else None,
            re.compile(unless, re.I) if unless else None, message) for name, patterns, needs, unless, message in CLAIMS]
+
+# The one way a sentence may name a rule without denying it, and it is read over the whole sentence,
+# anchored at both ends, so a claim in a later clause, a later sentence run on, or a tail after the
+# disclaimer has nowhere to sit. Two shapes and nothing else.
+#
+# A statement of what a rule asks for: an optional lead clause ending in a colon, then one or more
+# clauses of the form "FINRA Rule 6820 sets a tolerance ...", joined by ", and". The lead and the
+# object of every clause are free of every word on the list below: us and anything of ours, every
+# pronoun that could stand for us, every verb of providing or meeting, every copula, the legal-weight
+# vocabulary, and a bare "and", which is how a second subject gets into a clause. The list is
+# deliberately wide. A true sentence it refuses is reworded; a claim it passes is a hard rule broken.
+#
+# The disclaimer: an optional statement clause, then "TimeWitness claims no part in meeting either",
+# then optionally ", so a compliance claim built on any of these rules would be false", and nothing
+# before, between or after. That is the paragraph the limitation list ends on, and the README's
+# precis is the statement clause and the disclaimer joined.
+#
+# Why whole-sentence: the excuse this replaced on 2026-09-25 was read over one clause, and "FINRA
+# Rule 6820 requires clock synchronisation with NIST time, which TimeWitness provides" put the rule
+# in one clause and the claim in the next.
+RULE_NAMED = (r'(?:FINRA|SEC|AI Act)(?: Rule)? [\w.-]+(?: and [\w.-]+)? (?:does |do )?(?:sets?|asks? for|requires?|names?) ')
+RULE_STATEMENT = re.compile(r'\W*' + RULE_NAMED + r'(?P<object>[^,;:()]+?)\W*', re.I)
+NO_PART = re.compile(
+    r'\W*(?:(?P<rule>[^,;:()]+), and )?TimeWitness claims no part in meeting '
+    r'(?:either|it|them|these|those|any of (?:them|these|those)|it or any other rule|either of them|any(?: other)? rule|'
+    r'any of (?:these|those) rules)'
+    r'(?:, so a compliance claim built on (?:any of )?(?:them|these|those|either|it|these rules|those rules|any rule|'
+    r'any of them|any of these rules|any of those rules) would be (?:false|wrong|untrue))?\W*', re.I)
+NOT_IN_A_RULE_STATEMENT = re.compile(
+    r"\b(?:TimeWitness|we|our|ours|us|you|your|yours|it|its|itself|this|these|those|here|there|"
+    r"receipts?|stamps?|stamping|agents?|products?|services?|actions?|GitHub|builds?|built|install\w*|bounds?|verif\w*|tools?|"
+    r"software|readings?|signatures?|signed|signing|countersign\w*|witness\w*|daemon|binar(?:y|ies)|CLI|workflows?|pipelines?|"
+    r"SLSA|provenance|containers?|images?|labels?|headers?|MCP|users?|customers?|clients?|"
+    r"meets?|met|meeting|satisf\w*|fulfil\w*|provid\w*|deliver\w*|giv\w*|gave|keeps?|keeping|holds?|held|holding|stays?|stayed|"
+    r"sits?|sat|sitting|inside|cover\w*|address\w*|handl\w*|discharg\w*|answer\w*|ships?|shipped|shipping|writes?|wrote|"
+    r"written|gets?|got|comes?|came|honou?r\w*|respect\w*|observ\w*|pass\w*|tick\w*|achiev\w*|clear\w*|exceed\w*|beat\w*|"
+    r"ensur\w*|guarantee\w*|assur\w*|enabl\w*|help\w*|support\w*|align\w*|accordance|conform\w*|adher\w*|compl\w*|ready|"
+    r"default|box|free|cost\w*|exactly|already|always|now|today|done|takes? care|took care|in line|offer\w*|bring\w*|brought|"
+    r"mak\w*|made|serv\w*|solv\w*|equip\w*|designed|fits?|suits?|match\w*|cater\w*|counts?|qualif\w*|certif\w*|legal\w*|"
+    r"courts?|admissib\w*|evidenti\w*|notar\w*|official\w*|regulator\w*|accept\w*|approv\w*|recogni[sz]\w*|endors\w*|"
+    r"mandat\w*|is|are|was|were|being|been|will|would|can|could|shall|should|may|might|has|have|had|do|does|did|and)\b", re.I)
+
+
+def a_rule_statement(clause):
+    """Whether one clause says what a named rule asks for and nothing about us."""
+    m = RULE_STATEMENT.fullmatch(clause)
+    return bool(m) and not NOT_IN_A_RULE_STATEMENT.search(m.group('object'))
+
+
+def honest_about_a_rule(sentence):
+    """Whether the whole sentence is one of the two shapes that may name a rule without denying it."""
+    text = sentence.strip()
+    m = NO_PART.fullmatch(text)
+    if m:
+        return m.group('rule') is None or a_rule_statement(m.group('rule'))
+    lead, colon, body = text.partition(': ')
+    if colon:
+        if NOT_IN_A_RULE_STATEMENT.search(lead) or re.search(RULE_NAMED, lead, re.I):
+            return False
+    else:
+        body = text
+    return all(a_rule_statement(clause) for clause in body.split(', and '))
+
+
+ALLOWED = {'legal weight': honest_about_a_rule}
 
 
 def negated(sentence, match, group=0):
@@ -1107,6 +1178,8 @@ def claimed(sentence):
         return faults
     for name, patterns, needs, unless, message in CLAIMS:
         if needs and not needs.search(sentence):
+            continue
+        if name in ALLOWED and ALLOWED[name](sentence):
             continue
         for pattern in patterns:
             for m in pattern.finditer(sentence):
@@ -3077,6 +3150,70 @@ SEEDS = [
     ('legal weight', 'SEC 17a-4 asks for records that cannot be rewritten, and our receipts meet that requirement.'),
     ('legal weight', 'Any compliance claim built on these receipts would be fine with FINRA.'),
     ('legal weight', 'FINRA 6820 requires clock synchronisation, which our agent meets.'),
+    # The forty that passed on the afternoon of 2026-09-25, when the entry excused a clause: the
+    # rule in one clause and the claim in the next, joined by ", and", ", which", ";" or ":".
+    ('legal weight', 'FINRA Rule 6820 requires clock synchronisation with NIST time, which TimeWitness provides.'),
+    ('legal weight', 'FINRA 6820 requires business clocks within 50 ms of NIST time, and the agent keeps them there.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail, and we give you one.'),
+    ('legal weight', 'FINRA 6820 requires clocks within 50 ms of NIST time; the agent holds yours well inside it.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail: a TimeWitness receipt is that audit trail.'),
+    ('legal weight', 'FINRA 6820 requires a 50 ms clock tolerance, met by every stamp.'),
+    ('legal weight', 'FINRA Rule 6820 does require what the Action delivers.'),
+    ('legal weight', 'SEC Rule 17a-4 names the GitHub Action as an acceptable time-stamped audit trail.'),
+    ('legal weight', 'TimeWitness meets FINRA 6820 and a compliance claim to the contrary would be wrong.'),
+    ('legal weight', 'A compliance claim that TimeWitness meets FINRA 6820 would be false modesty.'),
+    # Shapes of the same day that neither read tried. Pronouns standing for us or ours.
+    ('legal weight', 'FINRA 6820 requires business clocks synchronised to NIST, and ours are.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail, and yours is in every receipt.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation, and it is done for you.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail, and here it is.'),
+    ('legal weight', 'FINRA 6820 sets a clock tolerance, and you are inside it from the first stamp.'),
+    ('legal weight', 'FINRA 6820 requires business clocks synchronised to NIST, and they are, with the agent installed.'),
+    ('legal weight', 'SEC 17a-4 asks for records that cannot be rewritten, and receipts cannot be.'),
+    # The passive, with and without a product noun.
+    ('legal weight', 'FINRA 6820 sets a clock tolerance, and they are held inside it by the agent.'),
+    ('legal weight', 'SEC 17a-4 asks for records that cannot be rewritten; that is what is written by every stamp.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation, which is provided out of the box.'),
+    ('legal weight', 'FINRA 6820 sets a tolerance that is kept by everyone who installs the agent.'),
+    ('legal weight', 'FINRA 6820 sets a tolerance that is always kept.'),
+    ('legal weight', 'SEC 17a-4 asks for records kept where they cannot be rewritten, which is exactly what a receipt is.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation to NIST, provided here.'),
+    ('legal weight', 'FINRA 6820 requires what is shipped.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail like this one.'),
+    # Helping to meet, supporting compliance, aligned with, in line with.
+    ('legal weight', 'TimeWitness helps you meet FINRA 6820.'),
+    ('legal weight', 'The Action helps a firm meet SEC 17a-4 recordkeeping.'),
+    ('legal weight', 'Our receipts support compliance with SEC 17a-4.'),
+    ('legal weight', 'TimeWitness supports compliance with FINRA Rules 4511 and 6820.'),
+    ('legal weight', 'Receipts are aligned with SEC 17a-4.'),
+    ('legal weight', 'The clock discipline is aligned with FINRA 6820\'s tolerance.'),
+    ('legal weight', 'Every stamp is in line with FINRA 6820.'),
+    ('legal weight', 'Our bound keeps you in line with what FINRA 6820 asks for.'),
+    ('legal weight', 'With the agent installed, a firm is in line with FINRA 6820.'),
+    ('legal weight', 'Compliance with SEC 17a-4 comes with every receipt.'),
+    ('legal weight', 'Installing the Action puts a firm inside FINRA 6820\'s tolerance.'),
+    # The rule in one sentence and the claim in the next: run on as one, and the second on its own.
+    ('legal weight', 'FINRA 6820 requires clocks within 50 ms of NIST time. Every stamp sits well inside that tolerance.'),
+    ('legal weight', 'Every stamp sits well inside that tolerance.'),
+    ('legal weight', 'The receipt is that audit trail.'),
+    ('legal weight', 'TimeWitness claims no part in meeting either, but every receipt meets both.'),
+    # List items.
+    ('legal weight', '- Meets FINRA 6820 out of the box.'),
+    ('legal weight', '- FINRA 6820: covered.'),
+    ('legal weight', '- SEC 17a-4 asks for a time-stamped audit trail, and the receipt is one.'),
+    ('legal weight', '* In line with SEC 17a-4.'),
+    # The two admitted shapes with a claim inside them.
+    ('legal weight', 'FINRA Rule 6820 does set a clock synchronisation tolerance, and TimeWitness claims no part in meeting it or any other rule, though every stamp is inside it.'),
+    ('legal weight', 'TimeWitness claims no part in meeting either, so a compliance claim built on any of these rules would be false modesty.'),
+    ('legal weight', 'Two of them ask for more than a log, and every receipt gives it: FINRA Rule 6820 sets a tolerance to which business clocks must be synchronised with NIST time.'),
+    ('legal weight', 'Two of them ask for more than a log: FINRA Rule 6820 sets a tolerance that every stamp respects, and SEC 17a-4 asks for records kept where they cannot be rewritten.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation and we do that.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail and a receipt is one.'),
+    ('legal weight', 'FINRA 6820 requires clocks within 50 ms of NIST time, ours included.'),
+    ('legal weight', 'Two of them ask for more than a log, which every receipt gives: FINRA Rule 6820 sets a tolerance for business clocks.'),
+    # Two negations that add up to a claim.
+    ('legal weight', 'FINRA 6820 does not require anything TimeWitness does not already provide.'),
+    ('legal weight', 'SEC 17a-4 asks for nothing a receipt does not carry.'),
     # From the two cold sets of 2026-09-16, written from the rules of what this product may say before this file was opened,
     # which refused 26 of 45 and 22 of 45 against the rules above: one or two sentences a class.
     ('somebody else\'s figure written as ours', 'We measured 5 to 50 ms over the public internet, so your bound is never worse than that.'),
@@ -3208,6 +3345,7 @@ HONEST = [
     'TimeWitness claims no part in meeting either, so a compliance claim built on any of these rules would be false.',
     'It does not establish legal weight, which comes from accreditation rather than engineering, and no regulation we have checked requires cryptographic proof.',
     'FINRA Rule 6820 does set a clock synchronisation tolerance, and TimeWitness claims no part in meeting it or any other rule.',
+    'FINRA 6820 requires clocks within 50 ms of NIST time.',
     'It carries no legal weight and no compliance claim.',
     'NTS improves the clock and can never be portable evidence.',
     'The receipt format refuses an NTS response in an evidence role outright.',
