@@ -121,7 +121,7 @@ jobs:
           if gh release view "$TAG" --repo "$REPO" --json isDraft,isPrerelease,assets > release.json 2>/dev/null; then
             held="$(python3 -c 'import json; r = json.load(open("release.json")); print(len(r["assets"]) if not r["isDraft"] and not r["isPrerelease"] else 0)')"
             if [ "$held" != 0 ]; then
-              refuse "$TAG is a published release and already carries $held files, which are never replaced; cut a new tag instead"
+              refuse "$TAG is a published release and already carries files ($held), which are never replaced; cut a new tag instead"
             fi
           fi
           echo "$TAG is on ${commit:0:12}, which is on main; started by $ACTOR"
@@ -487,7 +487,7 @@ jobs:
             # The guard refused this already. Asked again here because the release could have been
             # given files while the build ran.
             if [ "$is_pre" != true ] && [ "$held" != 0 ]; then
-              echo "::error::$TAG is a published release and already carries $held files, which are never replaced"
+              echo "::error::$TAG is a published release and already carries files ($held), which are never replaced"
               exit 1
             fi
             if [ "$is_pre" = true ]; then clobber=(--clobber); fi
