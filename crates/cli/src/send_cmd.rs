@@ -55,7 +55,12 @@ pub fn run(args: &Args) -> Outcome {
 
     let bytes = match fs::read(receipt_path) {
         Ok(bytes) => bytes,
-        Err(e) => return refuse(&format!("{receipt_path} could not be read: {e}"), 2),
+        Err(e) => {
+            return refuse(
+                &timewitness_platform::files::unreadable(std::path::Path::new(receipt_path), &e),
+                2,
+            )
+        }
     };
     let receipt = match open(&bytes) {
         Ok(receipt) => receipt,

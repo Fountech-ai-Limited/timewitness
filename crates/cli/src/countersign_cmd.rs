@@ -264,8 +264,12 @@ struct Claim {
 /// same reading are two places for that to stop being true.
 fn own_claim(args: &Args, half: Half) -> Result<Claim, Outcome> {
     let receipt_path = args.required("--receipt").map_err(|e| refuse(&e.0))?;
-    let bytes = fs::read(receipt_path)
-        .map_err(|e| refuse(&format!("{receipt_path} could not be read: {e}")))?;
+    let bytes = fs::read(receipt_path).map_err(|e| {
+        refuse(&timewitness_platform::files::unreadable(
+            std::path::Path::new(receipt_path),
+            &e,
+        ))
+    })?;
     let receipt = open(&bytes).map_err(|e| {
         refuse(&format!(
             "{receipt_path} is not a receipt this can read: {e}"
@@ -370,7 +374,10 @@ fn gather(args: &Args) -> Result<Vec<String>, Outcome> {
                     Ok(lines)
                 }
             }
-            Err(e) => Err(refuse(&format!("{path} could not be read: {e}"))),
+            Err(e) => Err(refuse(&timewitness_platform::files::unreadable(
+                std::path::Path::new(path),
+                &e,
+            ))),
         },
         (true, None) => Err(refuse(
             "countersign needs the header value, or --from naming a file holding it",

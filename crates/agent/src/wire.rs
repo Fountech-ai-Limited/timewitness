@@ -201,8 +201,8 @@ impl Endpoint {
     pub fn read(path: &Path) -> Result<Self, WireError> {
         let text = fs::read_to_string(path).map_err(|e| {
             WireError::Endpoint(format!(
-                "{} could not be read, so there is no agent to ask: {e}",
-                path.display()
+                "{}, so there is no agent to ask",
+                timewitness_platform::files::unreadable(path, &e)
             ))
         })?;
         Self::parse(&text)
@@ -226,13 +226,18 @@ impl Endpoint {
             .map(str::trim)
             .filter(|a| !a.is_empty())
             .ok_or_else(|| {
-                WireError::Endpoint("that file has no address on its first line".into())
+                WireError::Endpoint(
+                    "that file is not one `timewitness agent` wrote: it has no address on its first line"
+                        .into(),
+                )
             })?
             .to_string();
         let hex = lines.next().map(str::trim).unwrap_or_default();
+        // Said as what the file is, because a file that is not an endpoint at all is the ordinary
+        // way to get here, and until 2026-09-25 it was answered with a token length of nought.
         if hex.len() != TOKEN_BYTES * 2 {
             return Err(WireError::Endpoint(format!(
-                "that file's token is {} characters and a token is {}",
+                    "that file is not one `timewitness agent` wrote: its second line is {} characters, where the token an agent writes is {}",
                 hex.len(),
                 TOKEN_BYTES * 2
             )));
@@ -240,8 +245,12 @@ impl Endpoint {
         let mut token = [0u8; TOKEN_BYTES];
         for (i, slot) in token.iter_mut().enumerate() {
             let pair = &hex[i * 2..i * 2 + 2];
-            *slot = u8::from_str_radix(pair, 16)
-                .map_err(|_| WireError::Endpoint("that file's token is not hexadecimal".into()))?;
+            *slot = u8::from_str_radix(pair, 16).map_err(|_| {
+                WireError::Endpoint(
+                    "that file is not one `timewitness agent` wrote: its token is not hexadecimal"
+                        .into(),
+                )
+            })?;
         }
         Ok(Self { address, token })
     }

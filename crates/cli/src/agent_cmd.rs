@@ -131,7 +131,10 @@ pub fn run(args: &Args) -> Outcome {
         Err(e) => return fail(&format!("{e}")),
     };
     if let Err(e) = endpoint.write(Path::new(endpoint_path)) {
-        return fail(&format!("{endpoint_path} could not be written: {e}"));
+        return fail(&timewitness_platform::files::unwritable(
+            std::path::Path::new(endpoint_path),
+            &e,
+        ));
     }
 
     // The system clock, read once, only to anchor the model. Everything after this is the monotonic
