@@ -74,9 +74,10 @@ const RULES = [
 // The rules below read the page's text for ways it could ask for something; this is the line that
 // makes the browser refuse the ways they cannot see. A page carrying a different policy, or none,
 // is refused whatever else it says. `verifier-page-in-a-browser.mjs` is where the policy is watched
-// doing the refusing.
+// doing the refusing. It carries no frame-ancestors from 2026-09-25: a browser ignores that in a meta
+// tag and logs an error for it on every load, so a host serving the page sends it as a header.
 const POLICY =
-  '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\' \'wasm-unsafe-eval\'; style-src \'unsafe-inline\'; img-src data:; form-action \'none\'; base-uri \'none\'; frame-ancestors \'none\'">';
+  '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\' \'wasm-unsafe-eval\'; style-src \'unsafe-inline\'; img-src data:; form-action \'none\'; base-uri \'none\'">';
 
 // What is wrong with a built page, one line per finding.
 function findings(page, shown) {

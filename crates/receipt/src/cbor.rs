@@ -147,6 +147,21 @@ impl Cursor<'_> {
         self.bytes.len() - self.at
     }
 
+    /// A length or a count off the wire, held to what is left before it becomes a size. Each item
+    /// costs at least `per` bytes, so more than the bytes left can carry is a receipt that ends part
+    /// way through a value. Held as a 64-bit number first, so the answer is the same on a machine
+    /// whose sizes are 32 bits wide, which is what the verifier page runs on, as on one whose are 64.
+    fn announced(&self, argument: u64, per: usize) -> Result<usize, ReceiptError> {
+        let room = u64::try_from(self.remaining() / per).unwrap_or(u64::MAX);
+        if argument > room {
+            return Err(ReceiptError::Encoding(
+                "the receipt ends part way through a value".into(),
+            ));
+        }
+        // At most what is left, which is itself a size, so this cannot fail.
+        Ok(usize::try_from(argument).unwrap_or(usize::MAX))
+    }
+
     fn take(&mut self, n: usize) -> Result<&[u8], ReceiptError> {
         // Compared rather than added. `n` is a length argument off the wire and may be anything up
         // to 2^64-1, so `self.at + n` wraps in a release build, the guard passes on a number that
@@ -212,30 +227,26 @@ fn read_value(cursor: &mut Cursor, depth: usize) -> Result<Value, ReceiptError> 
             "the receipt nests too deeply".into(),
         ));
     }
-    let start = cursor.at;
     let (major, argument) = read_head(cursor)?;
     match major {
         MAJOR_UINT => Ok(Value::Int(i128::from(argument))),
         MAJOR_NINT => Ok(Value::Int(-1 - i128::from(argument))),
         MAJOR_BYTES => {
-            let n = usize::try_from(argument).map_err(|_| too_long(start))?;
+            let n = cursor.announced(argument, 1)?;
             Ok(Value::Bytes(cursor.take(n)?.to_vec()))
         }
         MAJOR_TEXT => {
-            let n = usize::try_from(argument).map_err(|_| too_long(start))?;
+            let n = cursor.announced(argument, 1)?;
             let raw = cursor.take(n)?;
             let text = core::str::from_utf8(raw)
                 .map_err(|_| ReceiptError::Encoding("a text field is not valid UTF-8".into()))?;
             Ok(Value::Text(text.to_string()))
         }
         MAJOR_ARRAY => {
-            let n = usize::try_from(argument).map_err(|_| too_long(start))?;
             // Refused on the announcement rather than by trying. Every member costs at least one
             // byte, so a count past what is left cannot be satisfied, and finding that out by
             // looping is a loop whose length a stranger chose.
-            if n > cursor.remaining() {
-                return Err(too_long(start));
-            }
+            let n = cursor.announced(argument, 1)?;
             let mut items = Vec::with_capacity(n.min(64));
             for _ in 0..n {
                 items.push(read_value(cursor, depth + 1)?);
@@ -243,11 +254,8 @@ fn read_value(cursor: &mut Cursor, depth: usize) -> Result<Value, ReceiptError> 
             Ok(Value::Array(items))
         }
         MAJOR_MAP => {
-            let n = usize::try_from(argument).map_err(|_| too_long(start))?;
             // A pair costs at least two bytes, so half of what is left is the most a map can hold.
-            if n > cursor.remaining() / 2 {
-                return Err(too_long(start));
-            }
+            let n = cursor.announced(argument, 2)?;
             let mut pairs = Vec::with_capacity(n.min(64));
             for _ in 0..n {
                 let k = read_value(cursor, depth + 1)?;
@@ -278,12 +286,6 @@ fn read_value(cursor: &mut Cursor, depth: usize) -> Result<Value, ReceiptError> 
             "a receipt may not carry a value of major type {other}"
         ))),
     }
-}
-
-fn too_long(at: usize) -> ReceiptError {
-    ReceiptError::Encoding(format!(
-        "the length at byte {at} is larger than this machine can hold"
-    ))
 }
 
 #[cfg(test)]
@@ -393,5 +395,33 @@ mod tests {
     #[test]
     fn text_that_is_not_utf8_is_refused() {
         assert!(decode(&[0x61, 0xff]).is_err());
+    }
+
+    /// A length that cannot be satisfied is said the same way on every machine. Until 2026-09-25 a
+    /// text file whose first byte announces an eight-byte length was "larger than this machine can
+    /// hold" in the browser, where a length is 32 bits wide, and "ends part way through a value" on
+    /// the command line, where it is 64. Same bytes, two reasons, and the page's read as a fault of
+    /// the reader's machine. The length is now held to what is left before it is ever made a size.
+    #[test]
+    fn a_length_past_the_end_is_the_same_refusal_however_wide_the_machine() {
+        let said = |bytes: &[u8]| match decode(bytes) {
+            Err(ReceiptError::Encoding(why)) => why,
+            other => panic!("{other:?}"),
+        };
+        let text_file = b"{\"receipt\":\"not really\"}
+";
+        assert_eq!(text_file.len(), 25);
+        assert_eq!(said(text_file), "the receipt ends part way through a value");
+
+        // Past what a 32-bit length holds, which is where the browser's answer used to differ.
+        for major in [0x5b_u8, 0x7b, 0x9b, 0xbb] {
+            let mut bytes = vec![major];
+            bytes.extend_from_slice(&(u64::from(u32::MAX) + 1).to_be_bytes());
+            assert_eq!(
+                said(&bytes),
+                "the receipt ends part way through a value",
+                "major byte {major:#x}"
+            );
+        }
     }
 }
