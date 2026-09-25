@@ -128,6 +128,10 @@ fn plan(args: &Args) -> Result<Service, String> {
             "{account:?} is not an account name this will write into a service definition"
         ));
     }
+    // The service runs this file as the account named, at every boot, so whoever can change the
+    // file, or rename a folder above it, can run what they like as that account.
+    #[cfg(unix)]
+    only_trusted_can_change(&program, &[0, id_number("-u", &account)?], &account)?;
 
     let mut arguments = vec![
         "agent".to_string(),
@@ -190,6 +194,60 @@ fn account_is_plain(name: &str) -> bool {
                 || matches!(c, '.' | '_' | '-')
                 || (windows && matches!(c, '\\' | ' '))
         })
+}
+
+/// A number `id` gives for an account: `-u` for its user and `-g` for its group.
+#[cfg(unix)]
+fn id_number(flag: &str, account: &str) -> Result<u32, String> {
+    let out = Command::new("id")
+        .args([flag, account])
+        .output()
+        .map_err(|e| format!("`id` could not be run: {e}"))?;
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .map_err(|_| format!("{account} is not an account on this machine"))
+}
+
+/// Refuses a binary that anybody but root or the service's own account could change, or that sits
+/// under a folder somebody else could rename or fill.
+///
+/// Every folder from the binary up to `/` counts, because whoever can rename one of them can put a
+/// different file where the service looks. A folder may be writable by its group where that group
+/// is root's, or on macOS the administrators', and by anybody where it carries the sticky bit, as
+/// `/tmp` does, since then only an entry's owner may rename it.
+#[cfg(unix)]
+fn only_trusted_can_change(program: &Path, owners: &[u32], account: &str) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let trusted_group = |gid: u32| gid == 0 || (cfg!(target_os = "macos") && gid == 80);
+    for path in program.ancestors() {
+        let meta = std::fs::metadata(path)
+            .map_err(|e| format!("{} could not be read: {e}", path.display()))?;
+        let mode = meta.mode();
+        let sticky = meta.is_dir() && mode & 0o1000 != 0;
+        let who = if !owners.contains(&meta.uid()) {
+            Some("the account that owns it")
+        } else if mode & 0o002 != 0 && !sticky {
+            Some("anybody on this machine")
+        } else if mode & 0o020 != 0 && !sticky && !trusted_group(meta.gid()) {
+            Some("everybody in its group")
+        } else {
+            None
+        };
+        if let Some(who) = who {
+            return Err(format!(
+                "{} can be changed by {who}, and the service would run {} as {account} at every \
+                 boot, so whoever that is could run anything as {account}. Put the binary where \
+                 only root can write, for example with `sudo install -m 0755 {} \
+                 /usr/local/bin/timewitness`, and install from there",
+                path.display(),
+                program.display(),
+                program.display(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A systemd unit that runs the agent at boot and cannot change the clock.
@@ -596,17 +654,7 @@ fn put_in_place(service: &Service) -> Result<String, String> {
 fn give_to(folder: &Path, account: &str) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
-    let number = |flag: &str| -> Result<u32, String> {
-        let out = Command::new("id")
-            .args([flag, account])
-            .output()
-            .map_err(|e| format!("`id` could not be run: {e}"))?;
-        String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse()
-            .map_err(|_| format!("{account} is not an account on this machine"))
-    };
-    let (uid, gid) = (number("-u")?, number("-g")?);
+    let (uid, gid) = (id_number("-u", account)?, id_number("-g", account)?);
     std::os::unix::fs::chown(folder, Some(uid), Some(gid))
         .map_err(|e| format!("{} could not be given to {account}: {e}", folder.display()))?;
     std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700))
@@ -647,27 +695,33 @@ fn put_in_place(service: &Service) -> Result<String, String> {
     for unit in task_xml(service).encode_utf16() {
         bytes.extend(unit.to_le_bytes());
     }
+    if !elevated() {
+        return Err(
+            "installing a service needs an administrator, and this is not running as one. Run it \
+             again from a terminal opened as administrator"
+                .to_string(),
+        );
+    }
     // An agent from an earlier install is still running with its old definition, and a new one
     // would find it answering on the endpoint and not start.
     let _ = tool("schtasks", &["/End", "/TN", TASK]);
-    let file = std::env::temp_dir().join("timewitness-agent-task.xml");
-    std::fs::write(&file, bytes)
-        .map_err(|e| format!("{} could not be written: {e}", file.display()))?;
-    let created = tool(
-        "schtasks",
-        &[
-            "/Create",
-            "/TN",
-            TASK,
-            "/XML",
-            &file.display().to_string(),
-            "/F",
-        ],
-    );
-    let _ = std::fs::remove_file(&file);
-    created.map_err(|e| {
-        format!("{e}. Installing a service needs an administrator: run it again as one")
-    })?;
+    let folder = folder_only_administrators_can_write()?;
+    let created =
+        write_new(&folder.join(format!("{}.xml", random_name()?)), &bytes).and_then(|file| {
+            tool(
+                "schtasks",
+                &[
+                    "/Create",
+                    "/TN",
+                    TASK,
+                    "/XML",
+                    &file.display().to_string(),
+                    "/F",
+                ],
+            )
+        });
+    let _ = std::fs::remove_dir_all(&folder);
+    created?;
     tool("schtasks", &["/Run", "/TN", TASK])?;
     Ok(after_install(
         service,
@@ -676,6 +730,77 @@ fn put_in_place(service: &Service) -> Result<String, String> {
          says why.",
         "timewitness agent uninstall",
     ))
+}
+
+/// Whether this is running elevated, read from its own token's integrity level. High (12288) or
+/// System (16384) is an administrator's; `whoami` prints the level's number whatever the language.
+#[cfg(windows)]
+fn elevated() -> bool {
+    Command::new("whoami")
+        .arg("/groups")
+        .output()
+        .map(|out| {
+            let groups = String::from_utf8_lossy(&out.stdout);
+            groups.contains("S-1-16-12288") || groups.contains("S-1-16-16384")
+        })
+        .unwrap_or(false)
+}
+
+/// Sixteen random bytes as a name, so nothing can take a name before it is used.
+#[cfg(windows)]
+fn random_name() -> Result<String, String> {
+    let mut bytes = [0u8; 16];
+    getrandom::getrandom(&mut bytes).map_err(|e| format!("no random name could be made: {e}"))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// A new folder for the task definition, in Windows' own temporary folder rather than the
+/// account's, which anything running unelevated as that account could write. It is made under a
+/// name nobody can know beforehand, and only administrators and SYSTEM may write in it, with
+/// nothing inherited from the folder it sits in.
+///
+/// Until this, the definition went to a fixed name in the account's own temporary folder, and
+/// unelevated code could have swapped in one with a SYSTEM principal before the elevated
+/// `schtasks` read it back.
+#[cfg(windows)]
+fn folder_only_administrators_can_write() -> Result<PathBuf, String> {
+    let root = std::env::var_os("SystemRoot")
+        .ok_or("this machine does not say where Windows is, so there is nowhere safe to write")?;
+    let folder = PathBuf::from(root)
+        .join("Temp")
+        .join(format!("timewitness-install-{}", random_name()?));
+    std::fs::create_dir(&folder)
+        .map_err(|e| format!("{} could not be made: {e}", folder.display()))?;
+    let folder_text = folder.display().to_string();
+    let only = tool(
+        "icacls",
+        &[
+            folder_text.as_str(),
+            "/inheritance:r",
+            "/grant:r",
+            "*S-1-5-32-544:(OI)(CI)F",
+            "*S-1-5-18:(OI)(CI)F",
+        ],
+    );
+    if let Err(e) = only {
+        let _ = std::fs::remove_dir_all(&folder);
+        return Err(e);
+    }
+    Ok(folder)
+}
+
+/// Writes a file that must not exist yet, and refuses one that does.
+#[cfg(windows)]
+fn write_new(path: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
+    use std::io::Write;
+
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(bytes))
+        .map_err(|e| format!("{} could not be written: {e}", path.display()))?;
+    Ok(path.to_path_buf())
 }
 
 #[cfg(windows)]
@@ -822,6 +947,55 @@ mod tests {
         assert_eq!(windows_word(r"C:\a b\"), r#""C:\a b\\""#);
         assert_eq!(windows_word(r#"say "hi""#), r#""say \"hi\"""#);
         assert_eq!(windows_word(""), r#""""#);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_binary_somebody_else_could_change_is_refused() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let root = std::env::temp_dir().join(format!("timewitness-service-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let folder = root.join("bin");
+        std::fs::create_dir_all(&folder).unwrap();
+        let binary = folder.join("timewitness");
+        std::fs::write(&binary, b"not really a binary").unwrap();
+        let mode = |path: &Path, mode: u32| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        mode(&root, 0o755);
+        mode(&folder, 0o755);
+        mode(&binary, 0o755);
+        let me = std::fs::metadata(&binary).unwrap().uid();
+        // The temporary folder above is root's and sticky, so everything from here up is fine.
+        let fine = only_trusted_can_change(&binary, &[0, me], "nik");
+
+        mode(&folder, 0o777);
+        let open_folder = only_trusted_can_change(&binary, &[0, me], "nik");
+        mode(&folder, 0o1777);
+        let sticky_folder = only_trusted_can_change(&binary, &[0, me], "nik");
+        mode(&folder, 0o755);
+        mode(&binary, 0o775);
+        let group_file = only_trusted_can_change(&binary, &[0, me], "nik");
+        mode(&binary, 0o755);
+        let someone_elses = only_trusted_can_change(&binary, &[0, me + 1], "root");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(fine, Ok(()));
+        let refused = open_folder.unwrap_err();
+        assert!(
+            refused.starts_with(&format!("{} can be changed by anybody", folder.display())),
+            "{refused}"
+        );
+        assert_eq!(sticky_folder, Ok(()));
+        assert!(group_file
+            .unwrap_err()
+            .contains("by everybody in its group"));
+        let refused = someone_elses.unwrap_err();
+        assert!(
+            refused.contains("by the account that owns it") && refused.contains("as root"),
+            "{refused}"
+        );
     }
 
     #[test]
