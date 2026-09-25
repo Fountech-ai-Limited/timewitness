@@ -6,10 +6,10 @@
 //!
 //! ## What it does not do, said here because a reader will assume otherwise
 //!
-//! It installs nothing. There is no Windows service, no systemd unit, no scheduler entry and
-//! nothing that starts at boot. It is a foreground process that runs until it is stopped, and if
-//! this machine restarts it is not running afterwards. The limitation list says so on all three
-//! surfaces.
+//! It installs nothing itself. It is a foreground process that runs until it is stopped, and if this
+//! machine restarts it is not running afterwards. `timewitness agent install`, in `service_cmd`,
+//! hands this same process to whatever starts things at boot, and `timewitness agent uninstall`
+//! takes it away again.
 //!
 //! It does not set this machine's clock. The default is measure and vouch, exactly as the one-shot
 //! command's is, because the Windows time service contends with any other discipliner by design and
@@ -45,6 +45,7 @@ use timewitness_sources::TimeSource;
 
 use crate::args::Args;
 use crate::render;
+use crate::service_cmd;
 use crate::verify_cmd::Outcome;
 
 /// How many reads to take when measuring the counter's own granularity.
@@ -56,6 +57,25 @@ const GRANULARITY_READS: usize = 2_000;
 
 /// Run it.
 pub fn run(args: &Args) -> Outcome {
+    match args.positional.first().map(String::as_str) {
+        None => {}
+        Some("install") => return service_cmd::install(args),
+        Some("uninstall") => return service_cmd::uninstall(args),
+        Some(other) => {
+            return fail(&format!(
+                "{other:?} is not something the agent does. `timewitness agent install` starts it \
+                 at every boot, `timewitness agent uninstall` stops that, and `timewitness agent \
+                 --endpoint <file>` runs it here until it is stopped"
+            ))
+        }
+    }
+    if args.value("--user").is_some() {
+        return fail(
+            "--user names the account a service runs as, so it goes with `timewitness agent \
+             install`. Run by hand, the agent runs as whoever started it",
+        );
+    }
+
     let endpoint_path = match args.required("--endpoint") {
         Ok(path) => path,
         Err(e) => return fail(&e.0),
