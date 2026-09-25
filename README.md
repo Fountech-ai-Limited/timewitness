@@ -62,7 +62,7 @@ product sells.
 **About a sixth of a second is what this code reaches today**, and it was seconds until 2026-09-09.
 Measured on an ordinary desktop at the sixteen rounds the Action ships, with all three source kinds
 in the round: 149.3 ms, 161.2 ms and 163.2 ms wide over three passes at 21:39, and a bound of 153.9 ms on the receipt
-committed in this repository at 21:41. A machine whose only sources are the three public Roughtime
+committed in this repository at 21:41 on that desktop's clock, 18:41 UTC. A machine whose only sources are the three public Roughtime
 servers gets no receipt at all: three operators is under the shipped floor of four, so it is refused.
 Before that floor went in on 2026-09-09 such a machine reached seconds, 12.0 s wide at those same sixteen
 rounds on 2026-09-08, because a Roughtime server states its uncertainty as a radius in whole seconds.
@@ -128,8 +128,8 @@ sources reach alone.
 A receipt is worth something only if a stranger can check it, and that takes three different kinds of
 evidence.
 
-- **An authenticated UTC corridor** puts a signed interval round the moment that a stranger can
-  check. A Roughtime response,
+- **An authenticated UTC corridor** puts a signed interval round the moment its server answered,
+  which a stranger can check and which the reading has to overlap. A Roughtime response,
   where we generate the nonce and the server signs ours. It does not make the bound tighter: a
   Roughtime radius is a whole number of seconds, and the three public servers reachable on
   2026-09-07 were stating one, three and five.
@@ -186,9 +186,10 @@ one thing exactly: while fewer than half of them are wrong, the interval holds t
 that disagrees with the others can narrow it, widen it or move it. Half of them wrong is not covered,
 a source is not taken at its word about how certain it is, and a source in the minority can still
 move the reading inside the interval a majority allows. A source that agrees with everything is a
-different case and one the protection does not cover: a server stating a radius of an hour
-contradicts nobody, and where two servers disagree and no majority exists without it, its arrival is
-what turns a refusal into an interval wider than either of them supports.
+different case, and the published algorithm does not cover it: a server stating a radius of an hour
+contradicts nobody, and where two servers disagree and no majority exists without it, the textbook
+would let its arrival turn a refusal into an interval wider than either of them supports. The agent
+refuses that round instead, by the stricter rule described above.
 
 **About what is stamped.** It cannot prove a photograph, a document or a recording is real; it binds
 a hash to a bounded time. It cannot prove the software describing an event described it truthfully.
@@ -238,8 +239,9 @@ there is no OpenTimestamps anchor. Roughtime is an Internet-Draft and not an RFC
 A sleep is detected and has never been watched happening: the agent reads the two counters an
 operating system keeps, one that stops while the machine sleeps and one that does not, and refuses
 until it has synchronised again, but nothing has put a real machine to sleep to watch it, and a sleep
-shorter than a quarter of a second is not seen at all. The Windows path is run by hand on one machine
-and not in continuous integration, which runs on Linux only. An agent that starts inside a leap smear
+shorter than a quarter of a second is not seen at all. On Windows, continuous integration installs and
+removes the agent as a service and nothing more; the rest of the Windows path is run by hand on one
+machine. An agent that starts inside a leap smear
 may not know it, because the announcement it would have latched was cleared before it started.
 Nothing here stops any of it: a machine suspends, a second time service sets the clock, and a leap
 second arrives, and all the agent controls is whether it signs afterwards.

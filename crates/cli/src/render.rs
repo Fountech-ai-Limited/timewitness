@@ -104,14 +104,12 @@ pub fn usage() -> String {
     out.push_str(
         "                          refusing, 300 by default and at most 3600. Every call\n",
     );
+    out.push_str("                          it makes has its own timeout, and on a network that\n");
+    out.push_str("                          drops packets rather than refusing them the shipped\n");
     out.push_str(
-        "                          it makes has its own timeout and nothing bounded the\n",
+        "                          settings would poll for twelve minutes; this answers\n",
     );
-    out.push_str(
-        "                          command: on a network that drops packets rather than\n",
-    );
-    out.push_str("                          refusing them the shipped settings poll for twelve\n");
-    out.push_str("                          minutes before answering\n");
+    out.push_str("                          by refusing at five\n");
     out.push_str("      --sequence <n>      where this receipt sits in a chain\n");
     out.push_str("      --previous <file>   the receipt before it in that chain\n");
     out.push_str(
@@ -173,9 +171,11 @@ pub fn usage() -> String {
         "      Answer Roughtime requests, off a clock model disciplined the same way the\n",
     );
     out.push_str("      agent's is. A Roughtime radius is a whole number of seconds with zero\n");
-    out.push_str("      forbidden, so the corridor this states is two seconds wide however good\n");
-    out.push_str("      its clock is: running one narrows nobody's bound. What it buys is a\n");
-    out.push_str("      signed corridor that is there when somebody else's server is not.\n\n");
+    out.push_str("      forbidden, so the corridor this states is at least two seconds wide\n");
+    out.push_str("      however good its clock is, and wider where cutting its midpoint to a\n");
+    out.push_str("      whole second calls for it: running one narrows nobody's bound. What it\n");
+    out.push_str("      buys is a signed corridor that is there when somebody else's server is\n");
+    out.push_str("      not.\n\n");
     out.push_str("      --bind <addr>       address and port to read, 0.0.0.0:2002 by default\n");
     out.push_str("      --key <file>        the long-term key, 32 bytes. Without it the key is\n");
     out.push_str("                          read from TIMEWITNESS_ROUGHTIME_KEY as 64 hex\n");
@@ -490,7 +490,8 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
         out.push_str("\nThe evidence, one role at a time\n");
         out.push_str(
             "  Three roles and none of them does another's job. A corridor puts a signed interval\n\
-             \x20 round the moment that a stranger can check, and does not tighten the bound. A\n\
+             \x20 round the moment its server answered, which a stranger can check and the\n\
+             \x20 reading has to overlap, and does not tighten the bound. A\n\
              \x20 beacon says not earlier. A witness says not later. The agent's own bound is a\n\
              \x20 claim and is not on this list.\n",
         );
@@ -1073,7 +1074,8 @@ pub fn roughtime_serving(at: RoughtimeStart<'_>) -> String {
          this\n",
     );
     out.push_str(
-        "states is two seconds wide however good its clock is. Running it narrows nobody's bound.\n",
+        "states is at least two seconds wide however good its clock is, and wider where cutting its\n\
+         midpoint to a whole second calls for it. Running it narrows nobody's bound.\n",
     );
     out
 }
