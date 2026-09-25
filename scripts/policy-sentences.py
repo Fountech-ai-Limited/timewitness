@@ -119,7 +119,14 @@ breaks that rule. From the night of 2026-09-25 they are read off the text as a p
 case, through characters that draw nothing and letters of other alphabets that look Latin, spelled out
 a letter at a time, and inside a web address; and they are read wherever a reader is shown words,
 the list's version notes and every line the job summary writes included. Until then "Finra",
-"eidas", a Cyrillic I in FINRA and a link to finra.org each passed on every surface. What it still cannot see is a claim that names nothing in its scope at all:
+"eidas", a Cyrillic I in FINRA and a link to finra.org each passed on every surface. From 2026-09-26
+the scope is read by kind as well as by name, because every set written blind had found the next
+name the lists lacked: a run of capitals this product does not use itself, a standard's letters and
+number, a body's name, a Latin tag, the words of the law in eight languages, and a letter of any
+script these pages are not written in. The same day the job summary stopped being read from its
+source: the script is run under bash, against a stand-in binary, once for each way it can end, and the
+rule reads what it printed, because eight ways of writing a line in shell had put a claim in front of
+a reader that a reader of source never saw. What it still cannot see is a claim that names nothing in its scope at all:
 "your clocks sit where the rules want them" names no rule, and a bare "rule" is in forty paragraphs
 of the list about the agent's own rules, so it is not on the lists.
 
@@ -167,6 +174,7 @@ stripped attributes, so the sentence that called our width outside-vouched passe
 """
 
 import collections
+import concurrent.futures
 import hashlib
 import html
 import json
@@ -496,6 +504,193 @@ def summary_text(text):
             current.append(said)
     paragraphs.append(' '.join(current))
     return '\n\n'.join(p for p in paragraphs if p)
+
+
+# The job summary as a reader is shown it, for the legal weight rule, from 2026-09-26.
+#
+# `summary_text` reads the script's source, and a reader of source is a reader of one shell grammar
+# at a time. On 2026-09-26 eight ways of writing a line, an unquoted echo, quotes split round a word,
+# printf with its words as an argument, a pipe to tee, a group, a line after `;` or `||` and echo -e
+# among them, each put a claim naming FINRA 6820 in front of a reader and none was read. Growing the
+# pattern for each would lose to the ninth. So the script is run instead: by bash, in a folder of its
+# own, with a stand-in for the agent's binary that answers from fixed fields and touches no network,
+# the job summary pointed at a file, and every word it writes read back from that file and from the
+# log. Bash decides what a line prints, which is the one reading that cannot disagree with bash.
+#
+# A run reads only the lines it reaches, and a claim can sit in a branch a run does not take. So the
+# script is run once for every way it can end, listed in SUMMARY_RUNS, with bash tracing which lines
+# it ran, and a stretch of lines no run reached is held to the rule as it is written in the source: in
+# scope and not word for word what some run printed, it is refused, because nobody has seen what it
+# prints. What that cannot see is a claim assembled at run time, from pieces that name nothing, on a
+# path none of the runs take. A new branch wants a new entry in SUMMARY_RUNS before it can say
+# anything in scope.
+#
+# Every other rule still reads the source through `summary_text`, as it did, because a figure a run
+# prints is the stand-in's figure and not the product's.
+SUMMARY_SCRIPTS = {'action-stamp.sh'}
+AS_SHOWN = ' as a run of it shows it'
+NOT_REACHED = ' where no run of it reached'
+
+# The stand-in for `timewitness`. It answers `stamp` by writing a file and `verify` with the fields
+# the script reads, and TW_FIXTURE says which way it goes wrong, so each of the script's refusals is
+# reached by one run.
+STAND_IN = r'''#!/usr/bin/env bash
+case "$1" in
+stamp)
+    out=
+    while [ $# -gt 0 ]; do [ "$1" = --out ] && out="$2"; shift; done
+    printf 'a stand-in receipt\n' > "$out"
+    ;;
+verify)
+    case " $* " in
+    *" --fields "*)
+        [ "$TW_FIXTURE" = refused ] && exit 1
+        for pair in earliest_ns=1000 latest_ns=2000 width_ns=1000 'width_in_words=one microsecond' \
+                    reading_ns=1500 receipt_sha256=aa payload_hash=bb attestations_checked=1 \
+                    attestations_carried=1 format_version=1; do
+            [ "$TW_FIXTURE" = missing ] && [ "${pair%%=*}" = width_ns ] && continue
+            printf '%s\n' "$pair"
+        done
+        [ "$TW_FIXTURE" = twice ] && printf 'width_ns=5\n'
+        ;;
+    *" --quiet "*)
+        [ "$TW_FIXTURE" = silent ] && exit 0
+        printf 'accepted, one of one attestations checked\nthe checked evidence holds the moment one microsecond wide\n'
+        ;;
+    esac
+    ;;
+esac
+exit 0
+'''
+
+# Each way the script can end: the fixture the stand-in follows and the inputs the Action is given.
+# Every path is relative to the run's own folder, so nothing a run prints carries the name of the
+# machine's temporary folder, which is a different string on every machine and could itself hold a
+# run of capitals. '{here}' is the folder the runs sit in.
+SUMMARY_RUNS = [
+    ('it signs', {}),
+    ('it signs with every option', {'TW_PREVIOUS': '{here}/previous.cbor', 'TW_PROVENANCE': '{here}/provenance.json',
+                                    'TW_IMAGE': 'an-image', 'TW_EVENT': 'release', 'TW_SEQUENCE': '2'}),
+    ('there is no subject', {'TW_SUBJECT': '{here}/not-there'}),
+    ('its verifier refuses it', {'TW_FIXTURE': 'refused'}),
+    ('a field comes twice', {'TW_FIXTURE': 'twice'}),
+    ('a field is missing', {'TW_FIXTURE': 'missing'}),
+    ('the verifier says nothing', {'TW_FIXTURE': 'silent'}),
+    ('the provenance is not there', {'TW_PROVENANCE': '{here}/not-there.json'}),
+]
+
+# What bash is told before the script: trace every line it runs into a file of its own, keep python3
+# from being run, and send any web request nowhere.
+PRELUDE = r'''
+exec 7>"$TW_TRACE"
+BASH_XTRACEFD=7
+PS4='+@tw@${BASH_SOURCE[0]##*/}@${LINENO}@ '
+python3() { :; }
+set -x
+source "$TW_SCRIPT"
+'''
+
+
+def a_bash():
+    """The bash to run the script in, which on Windows is Git's and never the launcher Windows puts
+    first on the path, since that one starts a Linux machine rather than a shell."""
+    named = os.environ.get('TIMEWITNESS_BASH')
+    if named:
+        return named
+    found = []
+    git = shutil.which('git')
+    if os.name == 'nt' and git:
+        here = Path(git).resolve().parent
+        for up in (here, here.parent, here.parent.parent):
+            found += [up / 'bin' / 'bash.exe', up / 'usr' / 'bin' / 'bash.exe']
+    if shutil.which('bash'):
+        found.append(Path(shutil.which('bash')))
+    for c in found:
+        low = str(c).lower()
+        if c.is_file() and not (os.name == 'nt' and ('system32' in low or 'windowsapps' in low)):
+            return str(c)
+    raise Unreadable('there is no bash here to run the job summary in, so what it writes was not read')
+
+
+def what_a_run_shows(full, floor=SENTENCE_FLOOR):
+    """What the summary script shows a reader, as (text shown, source lines no run reached).
+
+    The text is every paragraph of the job summary and the log over all of SUMMARY_RUNS, each once.
+    The lines are the stretches of the source, comments and blank lines aside, that no run ran and
+    that are not word for word a line some run printed, each stretch joined into one paragraph."""
+    import subprocess
+    import tempfile
+    source = full.read_text(encoding='utf-8').replace('\r\n', '\n')
+    bash = a_bash()
+    shown, ran, printed = [], set(), set()
+    with tempfile.TemporaryDirectory(prefix='tw-summary-') as tmp:
+        work = Path(tmp)
+        script = work / 'the-summary-script.sh'
+        script.write_text(source, encoding='utf-8', newline='\n')
+        stand_in = work / 'action' / 'target' / 'release' / 'timewitness'
+        stand_in.parent.mkdir(parents=True)
+        stand_in.write_text(STAND_IN, encoding='utf-8', newline='\n')
+        stand_in.chmod(0o755)
+        for name in ('subject.bin', 'previous.cbor', 'provenance.json'):
+            (work / name).write_text('{}\n' if name.endswith('.json') else 'a stand-in\n', encoding='utf-8')
+
+        def one_run(n, label, inputs):
+            here = work / f'run-{n}'
+            here.mkdir()
+            env = {k: v for k, v in os.environ.items() if not k.startswith(('GITHUB_', 'TW_', 'RUNNER_'))}
+            env.update({'TW_SUBJECT': '../subject.bin', 'TW_ACTION_PATH': '../action', 'TW_OUTPUT': 'receipt.cbor',
+                        'TW_KEY': 'agent.key', 'GITHUB_STEP_SUMMARY': 'summary.md', 'GITHUB_OUTPUT': 'output.txt',
+                        'TW_TRACE': 'trace', 'TW_SCRIPT': '../' + script.name, 'HOME': '.', 'TMPDIR': '.',
+                        'http_proxy': 'http://127.0.0.1:9', 'https_proxy': 'http://127.0.0.1:9',
+                        'HTTP_PROXY': 'http://127.0.0.1:9', 'HTTPS_PROXY': 'http://127.0.0.1:9', 'no_proxy': ''})
+            env.update({k: v.replace('{here}', '..') for k, v in inputs.items()})
+            try:
+                return here, subprocess.run([bash, '--noprofile', '--norc', '-c', PRELUDE], cwd=here, env=env,
+                                            capture_output=True, timeout=120)
+            except (OSError, subprocess.SubprocessError) as e:
+                raise Unreadable(f'the job summary script could not be run ({label}): {e}') from e
+
+        # The runs share nothing but the script and the stand-in, so they run side by side: one after
+        # another they took twenty seconds on Windows, where every process bash starts is slow.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(SUMMARY_RUNS)) as pool:
+            done = list(pool.map(lambda job: one_run(job[0], *job[1]), enumerate(SUMMARY_RUNS)))
+        for n, (here, run) in enumerate(done):
+            texts = []
+            summary = (here / 'summary.md')
+            texts.append(summary.read_bytes().decode('utf-8', 'replace') if summary.is_file() else '')
+            texts += [run.stdout.decode('utf-8', 'replace'), run.stderr.decode('utf-8', 'replace')]
+            if n == 0:
+                if run.returncode != 0:
+                    tail = texts[2].strip().splitlines()[-3:]
+                    raise Unreadable(f'the job summary script exits {run.returncode} where it signs, so what it shows '
+                                     f'was not read: {" | ".join(tail)}')
+                count = len(pieces(texts[0].replace('\r\n', '\n')))
+                if count < floor:
+                    raise Unreadable(f'a run of {full.name} wrote {count} sentences to the job summary, under the floor '
+                                     f'of {floor}, so it was not read')
+            for text in texts:
+                text = text.replace('\r\n', '\n')
+                printed.update(line.strip() for line in text.splitlines() if line.strip())
+                shown += [p for p in PARAGRAPH_BREAK.split(text) if p.strip()]
+            trace = here / 'trace'
+            if trace.is_file():
+                for line in trace.read_bytes().decode('utf-8', 'replace').splitlines():
+                    m = re.search(r'@tw@([^@]*)@(\d+)@', line)
+                    if m and m.group(1) == script.name:
+                        ran.add(int(m.group(2)))
+    stretches, current = [], []
+    for at, line in enumerate(source.splitlines(), start=1):
+        bare = line.strip()
+        if not bare or bare.startswith('#') or at in ran or bare in printed:
+            if current:
+                stretches.append(current)
+                current = []
+            continue
+        current.append(bare)
+    if current:
+        stretches.append(current)
+    unreached = [' '.join(s) for s in stretches]
+    return '\n\n'.join(dict.fromkeys(words_of(p) for p in shown)), unreached
 
 
 def site_strings(node, key=''):
@@ -1340,6 +1535,187 @@ LEGAL_SHAPES = [re.compile(p, re.I) for p in (
     r'won\'t|will not|without|lack\w*|miss\w*|already)\b',
 )]
 
+# The scope by kind rather than by name, from 2026-09-26.
+#
+# Every list above is a list, and every fresh set written blind has found the next name it lacks: on
+# 2026-09-26 the ICO, the ACPR, the SII and the DIAN, EN 50128, the Office of Rail and Road, Lloyd's
+# Register, the SWIFT CSP, "ipso facto", "onus probandi", "probative value" and three claims written in
+# German, French and Spanish all passed on every surface. Adding those thirteen would close thirteen.
+# So from here a paragraph is in scope by the shape of what it names as well: a run of capitals, a
+# standard's letters and number, a body's name, a Latin tag, the words of the law in the languages a
+# page could be written in, and any letter of a script this product's pages are not written in. The
+# names above stay, because they are what these shapes grew out of and they still read a name in
+# lower case, which a shape cannot.
+
+# The runs of capitals this product's own pages use, which are protocols, formats and file names and
+# not bodies or rules. The list is closed the other way round from the ones above: a run of capitals
+# not on it is in scope, so a regulator nobody has heard of is read, and what it costs to be wrong is a
+# word added here or a paragraph added to the register. A name that is a body, a standard or a licence
+# is not written here even where honest copy uses it, NIST, MIT and ISC among them, with two exceptions
+# and the reason for each. PTB is named as one of the operators a round asks, beside Cloudflare and
+# Netnod, which no run of capitals would read; IETF is named where the list says Roughtime is a draft
+# and not an RFC, which is a sentence this product has to be able to say. Each sits in a list item of
+# the README's limitations, which is one paragraph of several thousand words, and an entry that long
+# would be copied rather than read. A claim that either vouches for a receipt still has to be made in
+# words these lists read: approved, endorsed or recognised by, certified, traceable to.
+OUR_CAPITALS = frozenset('''
+    UTC NTS NTP NTPv4 RFC RFCs COSE CBOR SLSA JSON YAML TOML HTML CSS JS TS SVG SVGs PNG AVIF WEBP PDF
+    HTTP HTTPS URL URLs URI API APIs CLI UI UX OS CPU CI CD PR PRs LAN WAN GPS GNSS PTP PPS SHA RSA ECDSA
+    EdDSA TLS DNS OCI SBOM POST GET PUT EC2 README AI ID IDs OK FAQ USD GBP EUR OAuth FFFD TSAPolicyId
+    PGlite UChile REFUSED macOS iOS UUID UUIDs KB MB GB PTB IETF
+'''.split())
+CAPITALS = re.compile(r"(?<![\w-])[\w'-]*[A-Z]{2,}[\w'-]*")
+
+
+def capital_runs(text):
+    """Each word holding two or more capitals in a row that is not one of this product's own."""
+    found = []
+    for m in CAPITALS.finditer(text):
+        word = m.group().strip("'-")
+        # A variable's name, such as TW_SUBJECT, is a word in a program and names no one.
+        if '_' in word or word.upper().startswith('TIMEWITNESS'):
+            continue
+        parts = [p for p in re.split(r"[-']", word) if re.search(r'[A-Z]{2}', p)]
+        if any(p.rstrip('s') not in OUR_CAPITALS and p not in OUR_CAPITALS and not p.isdigit() for p in parts):
+            found.append((m.start(), f'a run of capitals, {word}'))
+    return found
+
+
+# A standard's letters and its number, "EN 50128", "ISO/IEC 27001:2022", "BS 10008", "SIL 4", "SP
+# 800-53", "NF Z42-013", read whether or not the letters are one this product uses, because a number
+# after them makes them a document. Three families are not: a digest, a text encoding and a protocol
+# version, which are sums and versions and not documents anybody complies with; and an RFC number,
+# which is the protocol vocabulary rule 2 of what this product may say is itself written in. A claim
+# that we meet one still has to be made in words, and "conform", "compliant", "certified" and "meets
+# the requirements of" are all read by the lists above.
+STANDARD_NUMBER = re.compile(r"(?<![\w.-])([A-Z][A-Za-z]{0,7}(?:[/ ][A-Z]{2,8})?)[ \u00a0./:-]?(\d[\d.:/-]*[a-z]?)(?![\w])")
+NOT_A_STANDARD = re.compile(r'^(?:SHA|UTF|TLS|SSL|HTTPS?|IPv|NTPv|EC|P|X|RFCs?|Ed|v|V|UTC|Step|'
+                            r'Level|Figure|Table|Item|Round|Stage|Block|Day|Week|Line|Version|Q|H|T|No|USD|GBP|EUR)$')
+
+
+def standard_numbers(text):
+    """Each standard's letters and number, as `STANDARD_NUMBER` reads one."""
+    found = []
+    for m in STANDARD_NUMBER.finditer(text):
+        letters = m.group(1)
+        if NOT_A_STANDARD.match(letters):
+            continue
+        if len(re.findall(r'[A-Z]', letters)) >= 2 or STANDARD_PREFIX.match(letters):
+            found.append((m.start(), f'a standard\'s number, {m.group().strip()}'))
+    return found
+
+
+# The letters a standard's number is written after that hold a single capital or none, and would
+# otherwise be read as a word and a number.
+STANDARD_PREFIX = re.compile(r'^(?:Art|Arts|Sec|Secs|Reg|Regs|Norm|Norma|Nr|No|Anlage|Annexe|Anexo|Allegato|Bijlage|'
+                             r'Loi|Ley|Lei|Legge|Wet|Gesetz|Decreto|Decret|Dekret|Titel|Titre|Titulo)$')
+
+# A body's name: capitalised words ending in the noun a body is named by, "Lloyd's Register",
+# "Information Commissioner's Office", "Financial Conduct Authority", or that noun opening a name,
+# "Office of Rail and Road", "Board of Governors". Read on the text as written, since the capitals are
+# what make it a name, and in the languages the words of the law are read in below.
+BODY_NOUNS = (r"(?:Office|Offices|Authority|Authorities|Commission|Commissioner|Commissioners|Register|Registry|Registrar|"
+              r"Agency|Agencies|Bureau|Board|Council|Ministry|Department|Tribunal|Court|Courts|Inspectorate|Directorate|"
+              r"Committee|Chamber|Institute|Institution|Administration|Ombudsman|Regulator|Supervisor|Parliament|"
+              r"Assembly|Senate|Congress|Cabinet|Secretariat|Federation|Association|Organisation|Organization|Society|"
+              r"Union|Bank|Exchange|Service|Services|Body|Bodies|Panel|Consortium|Foundation|Task Force|Registrar|"
+              r"Behorde|Bundesamt|Bundesanstalt|Amt|Anstalt|Gericht|Gerichtshof|Kammer|Autorite|Autorita|Autoridad|"
+              r"Autoridade|Agence|Agencia|Agenzia|Cour|Corte|Tribunale|Rechtbank|Commissie|Comision|Commissione|"
+              r"Comissao|Conseil|Consejo|Consiglio|Conselho|Ministere|Ministerio|Ministero|Ministerium|Raad|Toezicht|"
+              r"Myndighet|Inspektion|Urzad|Instytut|Istituto|Instituto|Institut)")
+BODY_NAME = re.compile(r"(?<![\w-])(?:[A-Z][\w'.&-]*\s+(?:(?:of|for|and|on|the|de|du|des|la|le|del|della|di|der|"
+                       r"fur|voor|van|dos|das|do|da)\s+)*){1,5}" + BODY_NOUNS + r"(?![\w-])"
+                       r"|(?<![\w-])" + BODY_NOUNS + r"\s+(?:of|for|on|de|du|des|del|della|di|der|fur|voor|van|dos|"
+                       r"das|do|da)\s+(?:the\s+|la\s+|le\s+|l'|el\s+|il\s+|lo\s+|den\s+|het\s+)?[A-Z]")
+
+# The words of the law in the languages a page could be written in, read with their accents taken
+# off, as `fold` leaves them: German, French, Spanish, Italian, Portuguese, Dutch, Polish and the
+# Scandinavian languages, and the Latin tags the law of all of them uses. Wide on purpose: a stem that
+# is also an English word, "recht" or "prova", costs a register entry where it is honest.
+LEGAL_ABROAD = re.compile(_names([
+    # German
+    'recht', 'rechte', 'rechts\\w*', 'rechtlich\\w*', 'rechtsgultig\\w*', 'gultig\\w*', 'rechtssicher\\w*',
+    'revisionssicher\\w*', 'beweis\\w*', 'gericht\\w*', 'gesetz\\w*', 'verordnung\\w*', 'richtlinie\\w*',
+    'vorschrift\\w*', 'aufsicht\\w*', 'behord\\w*', 'bundes\\w*', 'zulassig\\w*', 'zertifi\\w*', 'konform\\w*',
+    'normativ\\w*', 'haftung\\w*', 'urteil\\w*', 'richter\\w*', 'anwalt\\w*', 'amtlich\\w*', 'hoheitlich\\w*',
+    'eidesstattlich\\w*', 'vertrauensdienst\\w*', 'prufung\\w*', 'prufstelle\\w*', 'verbindlich\\w*', 'pflicht\\w*',
+    # French
+    'juridi\\w*', 'legale?s?', 'legalement', 'probant\\w*', 'probatoire\\w*', 'preuves?', 'tribunaux', 'juges?',
+    'lois?', 'decrets?', 'reglement\\w*', 'reglementaire\\w*', 'conformite\\w*', 'homolog\\w*', 'opposab\\w*',
+    'recevab\\w*', 'huissier\\w*', 'notaire\\w*', 'autorites?', 'horodatage\\w*', 'qualifie\\w*', 'juridiction\\w*',
+    'contentieux', 'jurisprudence\\w*', 'habilit\\w*',
+    # Spanish
+    'validez', 'probatori\\w*', 'pruebas?', 'jueces', 'juez', 'leyes', 'ley', 'decretos?', 'reglament\\w*',
+    'normativ\\w*', 'cumplimiento\\w*', 'cumple\\w*', 'conforme\\w*', 'autoridad\\w*', 'notari\\w*',
+    'fehaciente\\w*', 'vinculante\\w*', 'cualificad\\w*', 'organismos?', 'superintendencia\\w*', 'tributari\\w*',
+    'hacienda', 'sede judicial', 'ministerio\\w*', 'comision\\w*', 'agencia\\w*', 'juzgado\\w*', 'judiciales',
+    # Italian
+    'giuridic\\w*', 'legalmente', 'probatori\\w*', 'prova', 'tribunale\\w*', 'giudic\\w*', 'legge',
+    'leggi', 'regolament\\w*', 'conformita', 'autorita', 'notai\\w*', 'opponibil\\w*', 'marca temporale\\w*',
+    'qualificat\\w*', 'vincolant\\w*', 'garante', 'cassazione', 'codice civile', 'ministero', 'agenzia',
+    # Portuguese
+    'validade', 'juiz', 'juizes', 'lei', 'leis', 'regulament\\w*', 'conformidade', 'autoridade\\w*',
+    'cartorio\\w*', 'vinculativ\\w*', 'fe publica', 'qualificad\\w*', 'comissao',
+    # Dutch
+    'juridisch\\w*', 'wettelijk\\w*', 'wetgeving\\w*', 'wet', 'wetten', 'wetboek\\w*', 'rechtsgeldig\\w*',
+    'bewijs\\w*', 'rechter\\w*', 'rechtbank\\w*', 'besluit\\w*', 'verordening\\w*', 'richtlijn\\w*', 'toezicht\\w*',
+    'notaris\\w*', 'bindend\\w*', 'erkend\\w*', 'geldig\\w*', 'gecertificeerd\\w*',
+    # Polish
+    'prawn\\w*', 'prawo', 'prawa', 'dowod\\w*', 'sadow\\w*', 'sadu', 'sadzie', 'ustaw\\w*', 'rozporzadz\\w*',
+    'zgodn\\w*', 'certyfik\\w*', 'urzad\\w*', 'kwalifikowan\\w*', 'notarial\\w*',
+    # Swedish, Danish and Norwegian
+    'rattslig\\w*', 'juridisk\\w*', 'laglig\\w*', 'lagstift\\w*', 'lagen', 'lagar', 'bevis\\w*', 'domstol\\w*',
+    'forordning\\w*', 'foreskrift\\w*', 'myndighet\\w*', 'tillsyn\\w*', 'certifier\\w*', 'godkand\\w*',
+    'retslig\\w*', 'rettslig\\w*', 'lovlig\\w*', 'lovgiv\\w*', 'lovkrav\\w*', 'domstole\\w*',
+    # Latin
+    'ipso', 'facto', 'onus', 'probandi', 'probatio\\w*', 'jure', 'iure', 'jus', 'ius', 'juris', 'iuris', 'lex',
+    'legis', 'lege', 'inter alia', 'mutatis mutandis', 'ab initio', 'ex parte', 'ex officio', 'in camera', 'in rem',
+    'in personam', 'pro bono', 'quid pro quo', 'sui generis', 'ratio decidendi', 'obiter', 'dicta', 'audi alteram',
+    'nemo judex', 'res ipsa', 'actus reus', 'locus standi', 'de minimis', 'erga omnes', 'ex post', 'ex ante',
+    'in limine', 'pacta sunt', 'caveat emptor', 'in dubio', 'nulla poena', 'stricto sensu', 'lato sensu',
+    'certiorari', 'mandamus', 'sine qua non', 'per curiam', 'fumus', 'a quo', 'ad quem', 'intra vires',
+    'nunc pro tunc', 'ex tunc', 'ex nunc', 'curiae', 'in re', 'fide', 'fides', 'bona', 'ergo omnes',
+    '\\w+(?:andi|endi|orum)',
+]))
+
+# The English words of proof, standing, property and approval that the lists above were missing when
+# a set written blind reached them: "probative value", "burden of proof", "type approval", "SWIFT CSP
+# assessors", "copyright priority".
+LEGAL_MORE = re.compile(_names([
+    'probat\\w*', 'burden of proof', 'standard of proof', 'onus', 'evidential\\w*', 'type[- ]approv\\w*',
+    'approv\\w* (?:by|under|for use|as)', 'assessors?', 'copyright\\w*', 'patent\\w*', 'trade ?marks?',
+    'intellectual property', 'prior art', 'priority dates?', 'proof of (?:priority|authorship|ownership|creation|'
+    'invention|existence|compliance|conduct)', 'validity', 'rulings?', 'adjudicat\\w*', 'juris\\w*',
+    'jurid\\w*', 'exams?', 'examinations?', 'inspections?', 'inspectorates?', 'conform\\w*',
+    'in accordance with', 'officials?', 'sovereign\\w*', 'entitle\\w*', 'offen[cs]es?', 'crim(?:e|es|inal\\w*)',
+    'fraud\\w*', 'forger(?:y|ies)', 'qualif(?:y|ies|ied|ying|ication|ications)', 'standards? (?:bod(?:y|ies)|organi[sz]ations?)',
+    'standardi[sz]ation', 'recogni[sz]\\w* (?:by|under|in|across|as)', 'accepted (?:by|in|under|as)',
+    'admitted (?:in|into|as|by)', 'valid (?:in|under|before|as) ', 'binding on', 'in force', 'codes? of practice',
+    '(?:approved|endorsed|sanctioned|ratified|mandated|authori[sz]ed|accredited|audited|vetted|blessed) by',
+    'traceab\\w*', 'rights? (?:holders?|owners?|reserved)',
+    # Rules standing for somebody else's rules: rules that want, ask or allow something, and a place
+    # or a thing the rules decide. "Your clocks sit where the rules want them" named nothing and passed
+    # every surface until 2026-09-26. This product's own copy speaks of rules only as its own, the rules
+    # a receipt was signed under or the rules that refuse, and none of that is read here.
+    '(?:where|what|how|as|whatever) (?:the |your |their |all the |any )?rules',
+    'rules (?:want|wants|ask|asks|require|requires|expect|expects|demand|demands|say|says|need|needs|call for|'
+    'allow|allows|permit|permits)', 'oversight', 'overseers?', 'watchdogs?', 'good practice guides?', 'accountab\\w*', 'regulated',
+    'duty of care', 'contracts?', 'terms of (?:service|use)', 'breach\\w*', 'notice periods?', 'jurisdictions?',
+]))
+
+
+def other_scripts(text):
+    """Each letter of a script this product's pages are not written in, once `fold` has read every
+    letter that looks Latin as the Latin one. No list here reads Greek, Japanese or Arabic, so a
+    paragraph in one is in scope whatever it says, and costs an entry if it is honest."""
+    found = []
+    for at, ch in enumerate(text):
+        if ch.isalpha() and not unicodedata.name(ch, '').startswith('LATIN'):
+            found.append((at, f'a letter of another script, {ch}'))
+            break
+    return found
+
+
 LEGAL_MESSAGE = ('names {named}, and a paragraph naming a rule, a regulator or anything of legal standing passes only '
                  'word for word as an entry in {register} for the surface it is on. {why} Reword it so it names none of '
                  'them, or add it there once it has been read against rule 6 of what this product may say: TimeWitness '
@@ -1365,6 +1741,10 @@ def legal_terms(text):
         found += [(m.start(), m.group()) for m in LEGAL_NAMES_ANY_CASE.finditer(low)]
         found += [(m.start(), m.group()) for m in LEGAL_WORDS.finditer(low)]
         found += [(m.start(), m.group()) for shape in LEGAL_SHAPES for m in shape.finditer(low)]
+        found += [(m.start(), m.group()) for m in LEGAL_ABROAD.finditer(low)]
+        found += [(m.start(), m.group()) for m in LEGAL_MORE.finditer(low)]
+        found += [(m.start(), f'a name of a body, {m.group()}') for m in BODY_NAME.finditer(variant)]
+        found += capital_runs(variant) + standard_numbers(variant) + other_scripts(variant)
         found += [(m.start(), f'a word mixing alphabets, {m.group()}') for m in MIXED.finditer(variant)]
         found += official_addresses(low)
     return list(dict.fromkeys(term for _, term in sorted(found)))
@@ -1509,9 +1889,10 @@ def judge(sentence, policy, landing=None, read=None, where=None):
     return [fault for fault, _ in faults_in(sentence, policy, landing, read, where)]
 
 
-def faults_in(text, policy, landing=None, read=None, where=None):
+def faults_in(text, policy, landing=None, read=None, where=None, legal=True):
     """Each fault in a sentence or a paragraph, with the words it is a fault of: the piece it was
-    found in for every rule but one, and the paragraph for the legal weight rule."""
+    found in for every rule but one, and the paragraph for the legal weight rule, unless `legal` says
+    that rule reads this surface some other way."""
     found = []
     at = 0
     for piece in pieces(text) or [text]:
@@ -1522,7 +1903,8 @@ def faults_in(text, policy, landing=None, read=None, where=None):
         found += [(fault, piece) for fault in piece_faults(piece, policy, landing, spans)]
         if read is not None:
             read += [(start + a, start + b) for a, b in spans]
-    found += [(fault, text) for fault in legal_weight(text, where)]
+    if legal:
+        found += [(fault, text) for fault in legal_weight(text, where)]
     return found
 
 
@@ -1822,6 +2204,9 @@ def piece_faults(sentence, policy, landing=None, read=None):
 
 # Where a paragraph only the legal weight rule reads came from: the list's version notes.
 ABOVE_THE_LIST = ' above its first heading'
+# The places a paragraph is read from that only the legal weight rule reads: the list's version
+# notes, what a run of the job summary script shows, and the lines of it no run reached.
+LEGAL_ONLY = (ABOVE_THE_LIST, AS_SHOWN, NOT_REACHED)
 
 
 def contradictions(read_from, policy, landing, name=None):
@@ -1832,11 +2217,25 @@ def contradictions(read_from, policy, landing, name=None):
     from the list's version notes is held to that rule and to no other."""
     name = surface_of if name is None else name
     problems = []
+    # A script whose run was read is held to the legal weight rule on what the run showed, and its
+    # source is read by every other rule.
+    run = {where[:-len(AS_SHOWN)] for where, _ in read_from if where.endswith(AS_SHOWN)}
     for where, unit in read_from:
+        if where.endswith(NOT_REACHED):
+            named = legal_terms(unit)
+            if named:
+                terms = ', '.join(f'"{t}"' for t in named)
+                problems.append(f'{where}: names {terms}, and no run of the script reaches these lines, so what '
+                                f'they write has not been read by anybody. Add a run to SUMMARY_RUNS in '
+                                f'{Path(__file__).name} that reaches them, or move them where a run does:\n'
+                                f'    "{unit[:220]}"')
+            continue
         if where.endswith(ABOVE_THE_LIST):
             found = [(fault, unit) for fault in legal_weight(unit, name(where))]
+        elif where.endswith(AS_SHOWN):
+            found = [(fault, unit) for fault in legal_weight(unit, name(where[:-len(AS_SHOWN)]))]
         else:
-            found = faults_in(unit, policy, landing, where=name(where))
+            found = faults_in(unit, policy, landing, where=name(where), legal=where not in run)
         for fault, words in found:
             problems.append(f'{where}: {fault}:\n    "{words[:220]}"')
     return problems
@@ -1844,7 +2243,7 @@ def contradictions(read_from, policy, landing, name=None):
 
 def not_above_the_list(read_from):
     """What every rule but the legal weight rule reads: all of it but the list's version notes."""
-    return [(where, unit) for where, unit in read_from if not where.endswith(ABOVE_THE_LIST)]
+    return [(where, unit) for where, unit in read_from if not where.endswith(LEGAL_ONLY)]
 
 
 def enough(where, found, floor):
@@ -1874,6 +2273,10 @@ def surfaces(files, site, floor=SENTENCE_FLOOR):
         elif name.endswith('.yml'):
             text = yaml_text(text)
         elif name.endswith('.sh'):
+            if name in SUMMARY_SCRIPTS:
+                shown, unreached = what_a_run_shows(full, floor)
+                out += [(f'{path}{AS_SHOWN}', s) for s in sentences(shown)]
+                out += [(f'{path}{NOT_REACHED}', s) for s in unreached if legal_terms(s)]
             text = summary_text(text)
         elif name.endswith('.json'):
             text = '\n\n'.join(s for _, s in site_strings(json.loads(text)))
@@ -5687,7 +6090,12 @@ def another_tree(tree, pattern, policy):
         raise Unreadable(f'the pattern found {len(files)} surfaces in {tree}, so it is not reading the tree')
     read_from, _ = surfaces([str(p) for p in files], None, 1)
     names = {str(p): p.relative_to(base).as_posix() for p in files}
-    read_from = [(names.get(where, where), sentence) for where, sentence in read_from]
+    def named(where):
+        for tag in LEGAL_ONLY:
+            if where.endswith(tag):
+                return names.get(where[:-len(tag)], where[:-len(tag)]) + tag
+        return names.get(where, where)
+    read_from = [(named(where), sentence) for where, sentence in read_from]
     # A tree's surfaces are named to the legal weight rule with `tree:` before their path, so an
     # entry for this repository's README is not an entry for the README of a tree it reads.
     problems = contradictions(read_from, policy, None, lambda where: 'tree:' + where)
@@ -5730,6 +6138,87 @@ def a_tree_elsewhere_is_read(policy):
 
 # Names the legal weight rule has to hold in scope, each in a sentence that says nothing else, so a
 # name dropped from the lists above fails here rather than going quiet.
+# One sentence for each kind the scope reads without a name for it. Each names something no list above
+# names, so a kind that stops being read shows here rather than in the next set written blind.
+IN_SCOPE_BY_KIND = [
+    ('a run of capitals', 'The QXV has looked at every receipt.'),
+    ('a run of capitals with a lower case letter in it', 'Every receipt suits the QxVR.'),
+    ('a standard\'s number', 'Built to ZQ 40817 from the first line.'),
+    ('a standard\'s number with its year', 'Written against ZQ/QX 4081-2:2024.'),
+    ('a name ending in a body\'s noun', 'Quillon Harbour Register has seen it.'),
+    ('a name opening with a body\'s noun', 'Looked at by the Office of Quillon and Harbour.'),
+    ('a name of a body in German', 'Die Quillon Bundesanstalt hat es gesehen.'),
+    ('a Latin tag', 'It is ipso facto settled.'),
+    ('the Latin of proof', 'The onus probandi moves to them.'),
+    ('an English word of proof', 'Each receipt has probative value.'),
+    ('an English phrase of proof', 'It shifts the burden of proof.'),
+    ('German', 'Jeder Beleg ist rechtsverbindlich.'),
+    ('French', 'Chaque re\u00e7u a une valeur probante.'),
+    ('Spanish', 'Cada recibo tiene plena validez jur\u00eddica.'),
+    ('Italian', 'Ogni ricevuta ha valore probatorio.'),
+    ('Portuguese', 'Cada recibo tem validade jur\u00eddica.'),
+    ('Dutch', 'Elk bewijs is rechtsgeldig.'),
+    ('Polish', 'Ka\u017cdy znacznik ma moc dowodowa.'),
+    ('Swedish', 'Varje kvitto ar r\u00e4ttsligt giltigt.'),
+    ('Greek', '\u039a\u03ac\u03b8\u03b5 \u03b1\u03c0\u03cc\u03b4\u03b5\u03b9\u03be\u03b7 \u03b9\u03c3\u03c7\u03cd\u03b5\u03b9.'),
+    ('Japanese', '\u3053\u306e\u30bf\u30a4\u30e0\u30b9\u30bf\u30f3\u30d7\u306f\u6709\u52b9\u3067\u3059\u3002'),
+    ('a type approval', 'Every agent carries a type approval.'),
+    ('a vouching body', 'Each release is endorsed by the Quillon group.'),
+    ('traceability', 'Every stamp is traceable to the national clock.'),
+    ('copyright', 'A receipt settles copyright priority.'),
+]
+# This product's own words, which the scope by kind has to leave alone.
+OUT_OF_SCOPE_OURS = [
+    'The agent holds a bound on UTC from NTP, NTS and Roughtime, and RFC 3161 is the witness.',
+    'The receipt is CBOR, signed with COSE, and its digest is SHA-256.',
+    'Step 2 of the GitHub Action is in Figure 3 and Table 1.',
+    'USD 15 a month, for one person.',
+    'PTB, Cloudflare and Netnod each answer on two protocols.',
+    'The verifier prints its verdict first.',
+]
+
+
+def the_summary_is_read_as_it_is_shown():
+    """Whether a line of the job summary script is read the way bash prints it, whatever shell
+    grammar writes it, and whether a line no run reaches is held to the rule.
+
+    Each line below writes a claim naming a rule in a shape `summary_text` never read until
+    2026-09-26. They are put at the end of the shipped script, one run of it reads them, and each claim
+    has to be in what that run shows. The last is in a branch no run takes and has to come back as a
+    line no run reached."""
+    import tempfile
+    faults = []
+    shapes = [
+        ('unquoted', 'echo Receipts meet QXR 6801 out of the box.'),
+        ('quotes split round a word', 'echo "Receipts meet "QXR" 6802 out of the box."'),
+        ('printf with an argument', "printf '%s\\n' \"Receipts meet QXR 6803 out of the box.\""),
+        ('a pipe to tee', 'echo "Receipts meet QXR 6804 out of the box." | tee -a "$GITHUB_STEP_SUMMARY"'),
+        ('a group', '{ echo "Receipts meet QXR 6805 out of the box."; } >> "$GITHUB_STEP_SUMMARY"'),
+        ('after a semicolon', 'true; echo "Receipts meet QXR 6806 out of the box."'),
+        ('after ||', '[ -z "$HOME" ] || echo "Receipts meet QXR 6807 out of the box."'),
+        ('echo -e over two lines', 'echo -e "Receipts meet\\nQXR 6808 out of the box."'),
+        ('built from pieces', 'q=QX; echo "Receipts meet ${q}R 6809 out of the box."'),
+    ]
+    shipped = (ROOT / 'scripts' / 'action-stamp.sh').read_text(encoding='utf-8').replace('\r\n', '\n')
+    hidden = 'if [ "${TW_EVENT:-}" = never-taken ]; then\n    echo "Receipts meet QXR 6820 on this branch."\nfi\n'
+    with tempfile.TemporaryDirectory() as tmp:
+        script = Path(tmp) / 'action-stamp.sh'
+        planted = shipped.rstrip('\n') + '\n' + ''.join(f'echo\n{line}\n' for _, line in shapes) + hidden
+        script.write_text(planted, encoding='utf-8', newline='\n')
+        try:
+            shown, unreached = what_a_run_shows(script)
+        except Unreadable as e:
+            return [f'the job summary script with the shapes planted could not be run: {e}']
+    for n, (label, _) in enumerate(shapes, start=1):
+        if f'Receipts meet QXR 68{n:02d} out of the box.' not in shown:
+            faults.append(f'a claim written {label} was not read the way bash prints it')
+    if not [u for u in unreached if 'QXR 6820 on this branch' in u and legal_terms(u)]:
+        faults.append('a claim in a branch no run takes did not come back as a line no run reached')
+    if [u for u in unreached if legal_terms(u) and 'QXR' not in u]:
+        faults.append(f'the shipped script has lines in scope no run reaches: {[u for u in unreached if legal_terms(u)][:2]}')
+    return faults
+
+
 IN_LEGAL_SCOPE = ['FINRA 4511', 'FINRA Rule 6820', 'SEC 17a-4', 'SEC Rule 613', 'the CAT', 'the CFTC', 'ESMA', 'the FCA',
                   'MiFID II', 'RTS 25', 'eIDAS', 'a QTSP', 'the AI Act', 'Article 12', '21 CFR Part 11', 'HIPAA', 'SOX',
                   'GDPR', 'DORA', 'NIS2', 'PCI DSS', 'SOC 2', 'ISO 27001', 'NIST SP 800-53', 'FIPS 140', 'Regulation 2024/1689',
@@ -5771,15 +6260,15 @@ def the_legal_register_is_closed(policy):
         if not legal_weight(text + ' TimeWitness keeps yours there.'):
             faults.append(f'a register entry passed with a sentence added after it: {text[:90]}')
         # One word changed: the first word nothing puts in scope, so the paragraph stays in scope and
-        # differs from the entry by that word alone.
+        # differs from the entry by that word alone. An entry with no such word, a heading of one word
+        # that is itself in scope, has one word put in front of it instead.
         words = text.split(' ')
         for n, word in enumerate(words):
-            if re.fullmatch(r"[A-Za-z]+[.,;:]?", word) and not legal_terms(word) and word.lower().strip('.,;:') != 'also':
+            if re.fullmatch(r"[A-Za-z][A-Za-z0-9.-]*?[.,;:]?", word) and not legal_terms(word) and word.lower().strip('.,;:') != 'also':
                 changed = ' '.join(words[:n] + ['also' + word[len(word.rstrip('.,;:')):]] + words[n + 1:])
                 break
         else:
-            faults.append(f'a register entry has no word to change: {text[:90]}')
-            continue
+            changed = 'Also ' + text
         if not legal_terms(changed):
             faults.append(f'changing one word took a register entry out of scope: {changed[:90]}')
         elif not legal_weight(changed):
@@ -5817,6 +6306,15 @@ def the_legal_register_is_closed(policy):
         faults.append('a word mixing alphabets is not in the legal weight rule\'s scope')
     if legal_terms('e5f98f8f54baf84a1c32d1796820430d58faa62 is a digest.'):
         faults.append('a name was read inside a digest, so every hash on a surface is asked for an entry')
+    # The scope by kind: one of each kind no list names, and the words this product's own pages use,
+    # which have to stay out of it or every paragraph about a clock is asked for an entry.
+    for kind, sentence in IN_SCOPE_BY_KIND:
+        if not legal_terms(sentence):
+            faults.append(f'{kind} is not in the legal weight rule\'s scope: {ascii(sentence)}')
+    for sentence in OUT_OF_SCOPE_OURS:
+        if legal_terms(sentence):
+            faults.append(f'this product\'s own words were put in scope by {legal_terms(sentence)}: {sentence}')
+    faults += the_summary_is_read_as_it_is_shown()
     # The places on a surface the rule did not read until the night of 2026-09-25: a line holding only
     # a no-break space, which Markdown does not end a paragraph on, the job summary written with the
     # other quote or a redirect, and the limitation list's version notes.

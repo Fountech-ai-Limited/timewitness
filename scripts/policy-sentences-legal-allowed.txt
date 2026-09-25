@@ -290,3 +290,26 @@ time-stamped audit trail.
 
 @ none
 TimeWitness does not meet FINRA 6820 or SEC 17a-4, and claims no legal weight.
+
+# In scope from 2026-09-26, when the scope came to be read by the kind of thing a paragraph names
+# as well as by name: a licence's copyright and patent terms, a copyright line and a notice period.
+# Each read against rule 6: they are the terms the code is offered on and say nothing about a
+# receipt's standing.
+
+@ README.md
+Apache License 2.0, in [LICENSE](LICENSE), copyright Fountech.ai Limited. Apache rather than MIT
+because of what this is: the Action goes into other people's workflows and the receipt format is
+something other people implement, so the patent grant in section 3 and the retaliation clause beside
+it matter, and MIT has neither. [NOTICE](NOTICE) carries the copyright line that section 4d of the
+licence propagates into anything derived from this.
+
+@ tree:content/asset-manifest.json
+Lucide 1.41.0, ISC licence, 24px grid, 2px stroke
+
+@ tree:content/pricing.json
+An export is never refused, in any state. Everything this app holds for this organisation comes out
+as one file, and that stays true while the notice period runs out.
+
+@ tree:README.md
+Copyright Fountech.ai Limited. All rights reserved. This repository is not open source: the agent,
+the receipt format and the verifier are, and they are in timewitness under Apache-2.0.
