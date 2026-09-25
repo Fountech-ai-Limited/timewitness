@@ -230,7 +230,7 @@ accurate time.
 **It cannot prove exact UTC over the public internet.** The design's bound is milliseconds and today's is about a sixth of a second on a machine that reaches the sources that narrow it. A machine that reaches only Roughtime is refused rather than given a wider bound, and the section on what is built says why. The 5 to 50 ms, the 1 ms and the 100
 microsecond figures are quoted from public research and none of them has been measured by us. They
 belong, in that order, to the public internet with no hardware of our own, to a good local network
-against a stratum-1 source, and to a cloud instance with a hypervisor clock. A claim needing
+against a stratum-1 source, and to a cloud instance with a hypervisor clock. The first two are read from David Mills' Executive Summary: Computer Network Time Synchronization, which puts an internet path at a few milliseconds to several tens of milliseconds and a clock updated each minute from a primary reference at about a millisecond. The third is from Amazon's post of November 2023 on microsecond clocks for EC2 instances, which gives it as the clock error bound a supported instance typically sees over NTP. A claim needing
 microsecond truth needs hardware this product does not sell. Nanoseconds is the resolution of the
 local read and never the accuracy to UTC; the two get confused constantly and that confusion is the
 problem this product exists to fix.

@@ -59,6 +59,12 @@ good LAN against a stratum-1 source, and to a cloud instance with a hypervisor c
 microseconds need hardware. Nanosecond accuracy is a datacentre thing and is not something this
 product sells.
 
+The first two figures are read from David Mills' Executive Summary: Computer Network Time
+Synchronization, which puts an internet path at a few milliseconds to several tens of milliseconds
+and a clock updated each minute from a primary reference at about a millisecond. The third is from
+Amazon's post of November 2023 on microsecond clocks for EC2 instances, which gives it as the clock
+error bound a supported instance typically sees over NTP.
+
 **About a sixth of a second is what this code reaches today**, and it was seconds until 2026-09-09.
 Measured on an ordinary desktop at the sixteen rounds the Action ships, with all three source kinds
 in the round: 149.3 ms, 161.2 ms and 163.2 ms wide over three passes at 21:39, and a bound of 153.9 ms on the receipt
