@@ -15,8 +15,9 @@ license: Apache-2.0
 # generated on the runner where none is supplied, and the receipt says so rather than implying that
 # the key means something it does not.
 #
-# What it cannot do is in the workflow summary it writes, every run, in the same words the shipped
-# list of limitations uses. The most important of them here: the width a runner gets is set by which
+# What it cannot do is in the workflow summary it writes, every run, in words of its own that end by
+# naming the shipped list of limitations, `timewitness cannot-prove`, as the whole of it. The most
+# important of them here: the width a runner gets is set by which
 # time sources that runner can reach, and not by its hardware. A runner reaching only the public
 # Roughtime servers is seconds wide whatever else is done to it, because those state their own
 # uncertainty as a radius in whole seconds. One with ordinary NTP servers in the round is
