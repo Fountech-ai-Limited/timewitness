@@ -20,10 +20,11 @@ license: Apache-2.0
 # time sources that runner can reach, and not by its hardware. A runner reaching only the public
 # Roughtime servers is seconds wide whatever else is done to it, because those state their own
 # uncertainty as a radius in whole seconds. One with ordinary NTP servers in the round is
-# milliseconds: ours read 211.3 ms on 2026-09-09 at sixteen rounds, and 16.219 s on 2026-09-08 at
-# the four rounds this file shipped that day, against Roughtime alone. Neither is a figure for
-# anybody else's runner, and this comment said the seconds one was the only outcome until
-# 2026-09-10, which was true when it was written and stopped being true on 2026-09-09.
+# milliseconds: ours read 222.628 ms on 2026-09-25 at sixteen rounds, in the public install check at
+# v0.4, and 16.219 s on 2026-09-08 at the four rounds this file shipped that day, against Roughtime
+# alone, a round the operator floor now refuses. Neither is a figure for anybody else's runner.
+# Until 2026-09-25 this comment led with 211.3 ms from 2026-09-09, a receipt taken before receipts
+# named their operators, which `timewitness verify` now refuses on the operator floor.
 
 inputs:
   subject:
