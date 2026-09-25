@@ -338,13 +338,13 @@
   },
   {
    "figures": [
-    "211.3 ms"
+    "222.628 ms"
    ],
    "surfaces": [
     "content/for-maintainers.json",
     "/for-maintainers"
    ],
-   "sentence": "211.3 ms",
+   "sentence": "222.628 ms",
    "reason": "the conditions are in the table line this figure sits in"
   },
   {
