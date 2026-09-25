@@ -129,11 +129,11 @@ sentences=(
   # rather than two measurements from different days.
   "Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms wide over three readings at 16:27, against 161.1 ms, 159.4 ms and 162.2 ms wide from the one-shot command on the same machine twelve minutes earlier."
   "What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit."
-  # Replaced 2026-09-09, when a resident agent went into the tree. Both sentences
-  # they replace said the agent did not exist, and one of them is now four sentences, because
-  # what exists is narrower than what a reader will assume: a foreground process that installs
-  # nothing, that the shipped Action does not use, against two source clients rather than four.
-  "The agent runs only while somebody keeps it running: it installs no service, starts at no boot, and is not running after a restart until a person starts it again."
+  # Replaced 2026-09-09, when a resident agent went into the tree, and again on 2026-09-25, when
+  # `timewitness agent install` went in. The sentence it replaces said the agent installs no service
+  # and starts at no boot. What exists is still narrower than a reader will assume: a service on
+  # three systems, with a restart checked on one of them and no binary in any release.
+  "The agent starts at boot only where somebody has installed it as a service, and a restart has been checked on Linux and nowhere else."
   # Added 2026-09-10. The measurement that says where a longer baseline stops buying anything.
   "Leaving the agent running longer stops narrowing the bound after about thirty minutes."
   "The one line a workflow installs runs the one-shot command and not the agent, so every receipt this product has issued in continuous integration came from a model built and thrown away in the same job."
