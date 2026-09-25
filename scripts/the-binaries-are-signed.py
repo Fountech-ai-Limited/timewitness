@@ -76,12 +76,13 @@ def archive_name(tag, target):
     return "timewitness-%s-%s%s" % (tag, target, TARGETS[target][1])
 
 
-def signer(tag):
-    """Who may have signed a Linux archive of this tag. Keyless signing binds the signature to the
-    workflow that ran and the ref it ran from, so this is a statement about where the file came from
-    rather than about a key somebody could copy: this tag pushed, or the workflow run from main."""
-    return (r"^https://github\.com/Fountech-ai-Limited/timewitness/\.github/workflows/release\.yml"
-            r"@refs/(heads/main|tags/%s)$" % re.escape(tag))
+# Who may have signed a Linux archive. Keyless signing binds the signature to the workflow that ran
+# and the ref it ran from, so this is a statement about where the file came from rather than about a
+# key somebody could copy: the release workflow, run from main. A run started by a tag is refused,
+# because a tag's commit carries its own copy of the workflow and need never have been reviewed. The
+# tag itself is held by the archive's name and by `--version`.
+SIGNER = (r"^https://github\.com/Fountech-ai-Limited/timewitness/\.github/workflows/release\.yml"
+          r"@refs/heads/main$")
 
 
 def required_assets(tag):
@@ -272,7 +273,7 @@ def check(tag, repo, work):
     else:
         for name in sorted(signed_blobs):
             code, out = run([cosign, "verify-blob", files[name], "--bundle", files[name + BUNDLE],
-                             "--certificate-identity-regexp", signer(tag),
+                             "--certificate-identity-regexp", SIGNER,
                              "--certificate-oidc-issuer", ISSUER])
             if judge_cosign(code, out):
                 say("PASS", "%s is signed by this repository's release workflow (cosign)" % name)
@@ -379,11 +380,11 @@ def self_test():
     expect("signtool, no signature", judge_signtool(1, "SignTool Error: No signature found.\n"), False)
     expect("signtool, exit 0 and no verdict", judge_signtool(0, ""), False)
     base = "https://github.com/Fountech-ai-Limited/timewitness/.github/workflows/release.yml@refs/"
-    expect("signed by this tag's run", bool(re.match(signer("v0.4"), base + "tags/v0.4")), True)
-    expect("signed by a run from main", bool(re.match(signer("v0.4"), base + "heads/main")), True)
-    expect("signed by another tag's run", bool(re.match(signer("v0.4"), base + "tags/v0.4.1")), False)
-    expect("signed by a run from a branch", bool(re.match(signer("v0.4"), base + "heads/other")), False)
-    expect("signed by another workflow", bool(re.match(signer("v0.4"), base.replace("release.yml", "ci.yml") + "tags/v0.4")), False)
+    expect("signed by a run started by this tag", bool(re.match(SIGNER, base + "tags/v0.4")), False)
+    expect("signed by a run from main", bool(re.match(SIGNER, base + "heads/main")), True)
+    expect("signed by another tag's run", bool(re.match(SIGNER, base + "tags/v0.4.1")), False)
+    expect("signed by a run from a branch", bool(re.match(SIGNER, base + "heads/other")), False)
+    expect("signed by another workflow", bool(re.match(SIGNER, base.replace("release.yml", "ci.yml") + "heads/main")), False)
     expect("cosign passes", judge_cosign(0, "Verified OK\n"), True)
     expect("cosign refuses", judge_cosign(1, "Error: none of the expected identities matched\n"), False)
 

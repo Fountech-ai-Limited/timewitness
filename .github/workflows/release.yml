@@ -5,15 +5,23 @@ name: Release binaries
 # to the network, so an unsigned one is not a thing a stranger should be asked to run, and a release
 # gets binaries only when every one of them is signed.
 #
-# Two ways in, and neither is a pull request, so no fork's code ever runs with
-# the signing secrets in reach:
+# One way in: running it by hand from `main`, naming a release tag that already exists. A tag
+# pushed does not start it. A tag's commit carries its own copy of this file, so a workflow that
+# started on a tag would be whatever that commit says it is, and nothing in this file could stop it.
+# Only `main` is reviewed before it lands, so only a run from `main` is trusted with what follows.
 #
-# - pushing a release tag, `v0.4` or `v0.4.1`. A tag with a pre-release name, `v0.4-rc.1`, does not
-#   start it on its own.
-# - running it by hand on a tag that already exists. With `rehearsal` set, and only on a tag with a
-#   pre-release name, it attaches whatever it built to a pre-release even where signing was skipped,
-#   so the whole route can be watched end to end before the signing identities exist. A rehearsal
-#   never touches a release that is not a pre-release, and never becomes the latest release.
+# Before anything is built, the first job, which holds no secret, refuses the run unless:
+#
+# - it was started by hand from `main`, by somebody who administers this repository;
+# - the tag exists and its commit is on `main`, so what gets built is code that was reviewed;
+# - the release, where there is one already, is a pre-release or carries no binaries yet. Attaching
+#   to a source release, which is how a tag gets its binaries after the release is cut, stays
+#   possible. Replacing binaries a stranger may already have recorded the digests of does not.
+#
+# With `rehearsal` set, and only on a tag with a pre-release name, it attaches whatever it built to
+# a pre-release even where signing was skipped, so the whole route can be watched end to end before
+# the signing identities exist. A rehearsal never touches a release that is not a pre-release, and
+# never becomes the latest release.
 #
 # Signing, per system, runs only when its secrets are set, and says so loudly when they are not:
 #
@@ -29,17 +37,15 @@ name: Release binaries
 #   than against a key we hold and could lose. There is no platform authority for Linux binaries to
 #   defer to, and a key of our own would be one more thing to trust us about.
 #
-# The signing secrets belong to the `release` environment, which only `main` and `v*` tags may use,
-# so a workflow changed on any other branch cannot reach them.
+# The signing secrets belong to the `release` environment, which only a run from `main` may use. A
+# workflow changed on any other branch, or carried by a tag, cannot reach them: GitHub refuses the
+# environment before a step runs. Release tags can be made only by an administrator and never moved
+# or deleted once made, so the tag a run builds is the tag that was reviewed.
 #
 # `scripts/the-binaries-are-signed.py` is the check, and `binaries-check.yml` runs it on all three
 # systems once the assets are attached.
 
 on:
-  push:
-    tags:
-      - 'v[0-9]*'
-      - '!v*-*'
   workflow_dispatch:
     inputs:
       tag:
@@ -56,54 +62,89 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-binaries-${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  group: release-binaries-${{ inputs.tag }}
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  tag:
-    name: which tag, and what can be signed
+  # Holds no secret and enters no environment, so a run it refuses never comes near the signing
+  # identities.
+  guard:
+    name: may this run build and sign
     runs-on: ubuntu-latest
-    environment: release
     outputs:
-      tag: ${{ steps.tag.outputs.tag }}
-      prerelease: ${{ steps.tag.outputs.prerelease }}
-      rehearsal: ${{ steps.tag.outputs.rehearsal }}
-      apple: ${{ steps.secrets.outputs.apple }}
-      azure: ${{ steps.secrets.outputs.azure }}
+      tag: ${{ steps.guard.outputs.tag }}
+      commit: ${{ steps.guard.outputs.commit }}
+      prerelease: ${{ steps.guard.outputs.prerelease }}
+      rehearsal: ${{ steps.guard.outputs.rehearsal }}
     steps:
-      - id: tag
+      - id: guard
         env:
+          GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          PUSHED: ${{ github.ref_name }}
-          ASKED: ${{ inputs.tag }}
+          REF: ${{ github.ref }}
+          ACTOR: ${{ github.triggering_actor }}
+          TAG: ${{ inputs.tag }}
           REHEARSAL: ${{ inputs.rehearsal }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = push ]; then tag="$PUSHED"; rehearsal=false; else tag="$ASKED"; rehearsal="${REHEARSAL:-false}"; fi
-          if ! [[ "$tag" =~ ^v[0-9]+(\.[0-9]+){0,2}(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::the tag asked for is not a release tag"
+          refuse() {
+            echo "::error::$1"
+            echo "### Refused: $1" >> "$GITHUB_STEP_SUMMARY"
             exit 1
+          }
+          [ "$EVENT" = workflow_dispatch ] || refuse "this runs only when started by hand, and it was started by $EVENT"
+          [ "$REF" = refs/heads/main ] || refuse "this runs only from main, and it was started from $REF"
+          role="$(gh api "repos/$REPO/collaborators/$ACTOR/permission" --jq .permission)" \
+            || refuse "could not read what $ACTOR may do in this repository, so nothing is built"
+          [ "$role" = admin ] || refuse "$ACTOR does not administer this repository, and only an administrator may release"
+          if ! [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+){0,2}(-[0-9A-Za-z.-]+)?$ ]]; then
+            refuse "the tag asked for is not a release tag"
           fi
-          found="$(git ls-remote --tags "https://github.com/$REPO.git" "refs/tags/$tag")"
-          if [ -z "$found" ]; then
-            echo "::error::there is no tag called $tag"
-            exit 1
-          fi
+          commit="$(gh api "repos/$REPO/commits/refs/tags/$TAG" --jq .sha 2>/dev/null)" || refuse "there is no tag called $TAG"
+          on_main="$(gh api "repos/$REPO/compare/$commit...main" --jq .status)" || refuse "could not compare $TAG with main"
+          case "$on_main" in
+            ahead|identical) ;;
+            *) refuse "$TAG is on ${commit:0:12}, which is not on main, so it was never reviewed" ;;
+          esac
+          rehearsal="${REHEARSAL:-false}"
           prerelease=false
-          case "$tag" in *-*) prerelease=true ;; esac
+          case "$TAG" in *-*) prerelease=true ;; esac
           if [ "$rehearsal" = true ] && [ "$prerelease" != true ]; then
-            echo "::error::a rehearsal attaches unsigned binaries, so it runs only on a tag with a pre-release name, and $tag is not one"
-            exit 1
+            refuse "a rehearsal attaches unsigned binaries, so it runs only on a tag with a pre-release name, and $TAG is not one"
           fi
+          # A published release that is not a pre-release keeps the binaries it was first given.
+          # Somebody may have recorded their digests, and a second build signs different bytes.
+          if gh release view "$TAG" --repo "$REPO" --json isDraft,isPrerelease,assets > release.json 2>/dev/null; then
+            held="$(python3 -c 'import json; r = json.load(open("release.json")); print(len(r["assets"]) if not r["isDraft"] and not r["isPrerelease"] else 0)')"
+            if [ "$held" != 0 ]; then
+              refuse "$TAG is a published release and already carries $held files, which are never replaced; cut a new tag instead"
+            fi
+          fi
+          echo "$TAG is on ${commit:0:12}, which is on main; started by $ACTOR"
           {
-            echo "tag=$tag"
+            echo "tag=$TAG"
+            echo "commit=$commit"
             echo "prerelease=$prerelease"
             echo "rehearsal=$rehearsal"
           } >> "$GITHUB_OUTPUT"
+
+  tag:
+    name: which tag, and what can be signed
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: release
+    outputs:
+      tag: ${{ needs.guard.outputs.tag }}
+      commit: ${{ needs.guard.outputs.commit }}
+      prerelease: ${{ needs.guard.outputs.prerelease }}
+      rehearsal: ${{ needs.guard.outputs.rehearsal }}
+      apple: ${{ steps.secrets.outputs.apple }}
+      azure: ${{ steps.secrets.outputs.azure }}
+    steps:
       - id: secrets
         # Only whether each set is complete leaves this step, never a value.
         env:
@@ -143,9 +184,11 @@ jobs:
           - { target: aarch64-apple-darwin, runner: macos-15, exe: timewitness }
           - { target: x86_64-pc-windows-msvc, runner: windows-2022, exe: timewitness.exe }
     steps:
+      # The commit the guard read as on main, and not the tag, since a tag with a pre-release name can
+      # still be moved while this runs.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/tags/${{ needs.tag.outputs.tag }}
+          ref: ${{ needs.tag.outputs.commit }}
           persist-credentials: false
       - name: Build
         shell: bash
@@ -433,12 +476,21 @@ jobs:
           REHEARSAL: ${{ needs.tag.outputs.rehearsal }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" --repo "$REPO" --json isPrerelease > release.json 2>/dev/null; then
+          clobber=()
+          if gh release view "$TAG" --repo "$REPO" --json isPrerelease,assets > release.json 2>/dev/null; then
             is_pre="$(python3 -c 'import json; print(str(json.load(open("release.json"))["isPrerelease"]).lower())')"
+            held="$(python3 -c 'import json; print(len(json.load(open("release.json"))["assets"]))')"
             if [ "$REHEARSAL" = true ] && [ "$is_pre" != true ]; then
               echo "::error::$TAG is a release and not a pre-release, and a rehearsal never touches one"
               exit 1
             fi
+            # The guard refused this already. Asked again here because the release could have been
+            # given files while the build ran.
+            if [ "$is_pre" != true ] && [ "$held" != 0 ]; then
+              echo "::error::$TAG is a published release and already carries $held files, which are never replaced"
+              exit 1
+            fi
+            if [ "$is_pre" = true ]; then clobber=(--clobber); fi
           else
             if [ "$REHEARSAL" = true ]; then
               notes="A rehearsal of the release route. The binaries attached here may not be signed, and nobody should run them."
@@ -449,7 +501,7 @@ jobs:
             if [ "$PRERELEASE" = true ]; then flags+=(--prerelease --latest=false); fi
             gh release create "$TAG" --repo "$REPO" "${flags[@]}"
           fi
-          gh release upload "$TAG" --repo "$REPO" --clobber dist/*
+          gh release upload "$TAG" --repo "$REPO" "${clobber[@]}" dist/*
 
   check:
     name: check what was attached
