@@ -245,9 +245,10 @@ pub fn usage() -> String {
     out.push_str("      Read two receipts and say which moment came first. Both are checked the\n");
     out.push_str("      way verify checks one, and then the two bounds are compared. No network\n");
     out.push_str("      and no account. Where the two bounds overlap the answer is that nobody\n");
-    out.push_str("      can say, which is an answer: it means the two stamps are closer\n");
-    out.push_str("      together than the bound on either of them. Where the two receipts are\n");
-    out.push_str("      of one chain it also says which was signed first, which is a different\n");
+    out.push_str("      can say, which is an answer. Moments further apart than the two widths\n");
+    out.push_str("      added together always come out in order; closer ones do only where the\n");
+    out.push_str("      two intervals happen to sit clear of each other. Where the two receipts\n");
+    out.push_str("      are of one chain it also says which was signed first, a different\n");
     out.push_str("      statement, resting on a hash rather than on a clock, and it never\n");
     out.push_str("      settles the question the bounds left open.\n\n");
     out.push_str("      --anchors <file>    your own trust material, as verify takes it\n");
