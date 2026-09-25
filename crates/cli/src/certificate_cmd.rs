@@ -216,7 +216,7 @@ pub fn run_certificate(args: &Args) -> Outcome {
         Err(e) => return refuse(&format!("{e}. Nothing was written"), 1),
     };
     if let Err(e) = fs::write(&out, &kept) {
-        return refuse(&format!("{} could not be written: {e}", out.display()), 1);
+        return refuse(&timewitness_platform::files::unwritable(&out, &e), 1);
     }
     Outcome {
         text: format!(

@@ -35,7 +35,12 @@ pub fn run(args: &Args) -> Outcome {
     for path in [first_path, second_path] {
         match fs::read(path) {
             Ok(read) => bytes.push(read),
-            Err(e) => return refuse(&format!("{path} could not be read: {e}")),
+            Err(e) => {
+                return refuse(&timewitness_platform::files::unreadable(
+                    std::path::Path::new(path),
+                    &e,
+                ))
+            }
         }
     }
 

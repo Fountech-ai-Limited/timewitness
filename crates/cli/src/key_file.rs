@@ -47,7 +47,7 @@ pub(crate) fn key_or_new(path: &str) -> Result<AgentKey, String> {
     getrandom::getrandom(&mut seed)
         .map_err(|e| format!("this machine would not give us random bytes: {e}"))?;
     write_private(Path::new(path), &seed)
-        .map_err(|e| format!("{path} could not be written: {e}"))?;
+        .map_err(|e| timewitness_platform::files::unwritable(std::path::Path::new(path), &e))?;
     Ok(AgentKey::from_seed(&seed))
 }
 

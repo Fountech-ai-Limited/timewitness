@@ -119,7 +119,7 @@ pub fn run(args: &Args) -> Outcome {
         Err(e) => return fail(&format!("{e}")),
     };
     if let Err(e) = std::fs::write(path, text) {
-        return fail(&format!("{} could not be written: {e}", path.display()));
+        return fail(&timewitness_platform::files::unwritable(path, &e));
     }
 
     Outcome {
@@ -149,7 +149,7 @@ fn read_existing(path: &Path) -> Result<KeyLog, String> {
             )
         }),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(KeyLog::default()),
-        Err(e) => Err(format!("{} could not be read: {e}", path.display())),
+        Err(e) => Err(timewitness_platform::files::unreadable(path, &e)),
     }
 }
 
@@ -287,8 +287,8 @@ fn short(hex: &str) -> String {
 fn sign_head(log: &KeyLog, signing_path: &Path) -> Result<SignedHead, String> {
     let bytes = std::fs::read(signing_path).map_err(|e| {
         format!(
-            "the signing key at {} could not be read: {e}",
-            signing_path.display()
+            "the signing key: {}",
+            timewitness_platform::files::unreadable(signing_path, &e)
         )
     })?;
     let secret: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
