@@ -1,0 +1,244 @@
+# The paragraphs that may name a rule, a regulation, a standard, a statute, a regulator or anything of
+# legal standing, and the surfaces each may sit on. Read by scripts/policy-sentences.py, whose legal
+# weight rule refuses every paragraph in its scope that is not written here word for word.
+#
+# An entry is a line starting "@ " naming its surfaces, separated by commas, then the paragraph on
+# the lines below it, up to a blank line. The paragraph is compared once spaces are evened out and
+# curly quote marks made straight, and in nothing else: one word changed and it is a different
+# paragraph, refused until somebody reads it and writes it here.
+#
+# A surface is named the way the check names it:
+#   README.md, docs/what-timewitness-cannot-prove.md, docs/verifier.md, action.yml, scripts/action-stamp.sh
+#       this repository's surfaces, by their path in it
+#   content/<file>.json    the site's content files, read beside this tree or with --site
+#   /<page>                a page the site serves, by its path
+#   tree:<path>            a file in a tree read with --tree, by its path in that tree
+#   <file name>            a file handed in from outside this tree, by its name alone
+#   none                   read and approved and placed on no surface. It passes a caller that names
+#                          no surface, which is a test calling the rule on a sentence, and nowhere else
+#
+# Before adding an entry, read it against rule 6 of what this product may say: no legal weight is
+# claimed, ever, and TimeWitness claims no part in meeting any rule. A paragraph that says what a
+# rule asks for is fine. A paragraph that says, or lets a reader take, that we meet it is not, and
+# neither is one that sits a rule beside a sentence about what TimeWitness does.
+
+# The README, the list of what TimeWitness cannot prove, and the Action's job summary.
+
+@ README.md
+Milliseconds is the accuracy to UTC. That is what the network path allows. The 5 to 50 ms, the 1 ms
+and the 100 microsecond figures are quoted from public research and none of them has been measured by
+us. They belong, in that order, to the public internet with no hardware of our own, to a good LAN
+against a stratum-1 source, and to a cloud instance with a hypervisor clock. Certified microseconds
+need hardware. Nanosecond accuracy is a datacentre thing and is not something this product sells.
+
+@ README.md
+About what it does when something is wrong. It does not prevent anything: a refusal records that
+TimeWitness declined to sign, not that an action was stopped. It does not establish legal weight,
+which comes from accreditation rather than engineering, and no regulation we have checked requires
+cryptographic proof. FINRA Rule 6820 does set a clock synchronisation tolerance, and TimeWitness
+claims no part in meeting it or any other rule.
+
+@ docs/what-timewitness-cannot-prove.md
+It does not establish legal weight. Legal standing in this area comes from accreditation, meaning
+qualified trust service provider status under eIDAS, and not from engineering. A private root is
+admissible and never presumed. No regulation we have checked, including AI Act Article 12, SEC 17a-4
+and FINRA 4511 and 6820, requires cryptographic proof. Two of them ask for more than a log: FINRA
+Rule 6820 sets a tolerance to which a member firm's business clocks must be synchronised with NIST
+time, and SEC 17a-4 asks for records kept where they cannot be rewritten or with a time-stamped audit
+trail. TimeWitness claims no part in meeting either, so a compliance claim built on any of these rules
+would be false. The timestamp authorities used here are free services and none of them is a qualified
+trust service.
+
+@ docs/what-timewitness-cannot-prove.md
+One freshness beacon works, not two. The design names drand, the NIST beacon and the UChile beacon,
+and asks for at least two. Only drand is verified here. On 2026-09-07 the NIST beacon's pulses did not
+satisfy its own published rule that the output value is the SHA-512 of the signature, and the
+certificate a pulse names by hash carried a 2048-bit key while the signature was 4096-bit; those two
+cannot both be right, so no client was written for it. The UChile beacon was not serving its
+interface at all.
+
+@ scripts/action-stamp.sh
+This receipt does not prevent anything. It records that a stamp was taken; there is no enforcement
+path in this design. It establishes no legal weight: standing in this area comes from accreditation
+and not from engineering.
+
+# The site, as its content files and as the pages built from them.
+
+@ content/cannot-prove.json, tree:content/cannot-prove.json, /cannot-prove
+It does not establish legal weight.
+
+@ content/cannot-prove.json, tree:content/cannot-prove.json, /cannot-prove
+Legal standing in this area comes from accreditation, meaning qualified trust service provider status
+under eIDAS, and not from engineering. A private root is admissible and never presumed. No regulation
+we have checked, including AI Act Article 12, SEC 17a-4 and FINRA 4511 and 6820, requires
+cryptographic proof. Two of them ask for more than a log: FINRA Rule 6820 sets a tolerance to which a
+member firm's business clocks must be synchronised with NIST time, and SEC 17a-4 asks for records kept
+where they cannot be rewritten or with a time-stamped audit trail. TimeWitness claims no part in
+meeting either, so a compliance claim built on any of these rules would be false. The timestamp
+authorities used here are free services and none of them is a qualified trust service.
+
+@ content/cannot-prove.json, tree:content/cannot-prove.json, /cannot-prove
+The design names drand, the NIST beacon and the UChile beacon, and asks for at least two. Only drand
+is verified here. On 2026-09-07 the NIST beacon's pulses did not satisfy its own published rule that
+the output value is the SHA-512 of the signature, and the certificate a pulse names by hash carried a
+2048-bit key while the signature was 4096-bit; those two cannot both be right, so no client was
+written for it. The UChile beacon was not serving its interface at all.
+
+@ content/for-maintainers.json, tree:content/for-maintainers.json, /for-maintainers
+One step in a workflow file. There is no configuration file and nothing to store as a secret, and
+every input below has a default that works. From the release of app.timewitness.dev the repository is
+linked to an account there, and the key the step signs with is certified through GitHub's own workflow
+identity, which needs the workflow to grant id-token: write and still stores no secret.
+
+@ content/for-maintainers.json, tree:content/for-maintainers.json, /for-maintainers
+It carries no legal weight and no compliance claim. Legal standing comes from accreditation, not from
+engineering, and no regulation we have checked requires cryptographic proof. FINRA Rule 6820 does set
+a clock synchronisation tolerance, and TimeWitness claims no part in meeting it or any other rule.
+
+# The app, read with --tree from its own repository. Its certificates are the app's statement that
+# an account certified a key, which is why "certified" is in scope and why these are here.
+
+@ tree:content/accounts.json
+Keys this tier carries, certified at once
+
+@ tree:content/app.json
+A receipt is a TimeWitness certificate when this app certified the key that signed it. Checking a
+receipt never comes here, and never will.
+
+@ tree:content/app.json
+No key is certified, because the key log has no first head.
+
+@ tree:content/app.json
+Certify a signing key for a machine or a build, on a free tier or a paid one, and record it as an
+entry in a key log anybody can download.
+
+@ tree:content/app.json
+A certificate proves an account certified a key. It does not prove who the legal entity behind the
+account is, and it does not prove the key was never stolen from the machine it was certified to.
+
+@ tree:content/app.json
+A receipt from a key this app did not certify is not a TimeWitness certificate. Its third-party time
+evidence still stands, the verifier still prints it, and nobody can say whose key signed it.
+
+@ tree:content/app.json
+No page of this app has legal weight, and no regulation we have read requires any of it.
+
+@ tree:content/pricing.json
+sign in, search and export; certify keys up to the free tier
+
+@ tree:content/pricing.json
+No page of this app has legal weight, and no regulation we have read asks for any of this.
+
+@ tree:README.md
+A receipt is a TimeWitness certificate when this app certified the key that signed it. Certifying a
+key is the thing that goes through the app. Checking a receipt never has to, and never will: the
+verifier is free, runs offline, needs no account and reaches nothing of ours, and
+scripts/stopping-it-changes-no-verdict.sh is what holds that rather than the sentence.
+
+@ tree:README.md
+A machine asks for a certificate for a key it enrolled, with the same credential, at POST
+/api/machine/certificates. The app appends a certificate to the key log naming the key, the
+organisation, the method and a window starting then: a day for an Action run, a week for a resident
+agent, which renews daily. No window starts before certification began, and until that moment is set
+nothing is certified. A renewal is a new entry, never an edit. The free tier is counted in keys an
+organisation holds certified at once, never in receipts. Serving the log, with a beacon round on every
+head and a timestamp token over the head that fixes the cutoff, is not built here yet.
+
+@ tree:README.md
+| State | Enters when | The organisation can | |---|---|---| | Active | a payment goes through |
+everything its tier carries | | Past due | a payment fails | everything, with a notice, for fourteen
+days while the provider retries | | Lapsed | the retries run out, or somebody cancels | sign in,
+search and export; certify keys up to the free tier | | Closed | ninety days after the lapse, after
+two emails | sign in and export; the copies of the receipts held here are deleted |
+
+@ tree:README.md
+A lapse records and it prevents nothing. Every receipt the organisation ever made still checks out
+offline, in every state, closed included. No key log entry is ever removed, so a receipt signed inside
+a window certified before the lapse still reads as a TimeWitness certificate against a fresh copy of
+the log, for ever. Two machines whose certificates are inside their windows go on countersigning each
+other with no call to us. An export is never refused, in any state, because refusing one while a
+notice period runs out would be holding somebody's evidence. What closing deletes is this app's
+copies of the receipts, down the one path that already deletes one, so each deletion is recorded by
+hash like every other.
+
+@ tree:README.md
+The free tier is counted in keys, machines and repositories, and never in receipts.
+TIMEWITNESS_APP_FREE_KEYS is how many keys an organisation may hold certified at once. A tier that is
+being paid for has no ceiling of ours, a lapsed organisation is held to the free one, and a closed
+organisation certifies nothing new while everything it already holds keeps its window.
+
+@ tree:README.md
+It is an audit export and nothing grander. No regulation we have checked asks for any of this, so the
+export names none, claims no standing, and says so in a sentence that travels with it.
+tests/audit-export.test.ts reads every word of the file for a named regulation, and npm run
+export-checks-out puts the export's own sentences to the sentence checker in the other repository,
+which can tell claiming a thing from denying it.
+
+@ tree:README.md
+| Variable | What it is | |---|---| | TIMEWITNESS_APP_ORIGIN | the one origin the app answers on, such
+as https://dev.timewitness.dev; the passkey relying party is its host | | DATABASE_URL | a Postgres
+connection string. pglite:<folder> runs Postgres in the process, and is refused in production | |
+TIMEWITNESS_APP_MAIL | http to send through the mail service, or file:<folder> to write each message
+to a folder, refused in production | | TIMEWITNESS_APP_MAIL_KEY, TIMEWITNESS_APP_MAIL_FROM | the mail
+service's key and the address mail comes from | | TIMEWITNESS_APP_GITHUB_ID,
+TIMEWITNESS_APP_GITHUB_SECRET | the GitHub OAuth app. Without them, signing in with GitHub answers 503
+and nothing else changes | | TIMEWITNESS_APP_SIGNUP | addresses and @domains that may sign up, comma
+separated. Empty means invitations only | | TIMEWITNESS_APP_CERTIFICATION_BEGAN | when certification
+began, whole nanoseconds since the Unix epoch. Unset, no certificate is issued. It is fixed once, with
+the key log entry that states it, and never moves | | TIMEWITNESS_APP_FREE_KEYS | how many keys one
+organisation may hold certified at once. Unset, no limit is applied, because the tier is not decided |
+| TIMEWITNESS_APP_RETENTION_DAYS | how many days a filed receipt is kept. Unset, nothing is ever
+deleted | | TIMEWITNESS_APP_VERIFY_PER_HOUR | how many checks one organisation may ask the
+verification endpoint for in an hour. Unset, there is no ceiling. It is a number on the deployment
+until plans exist, and what happens past it does not change when they do | | TIMEWITNESS_APP_VERIFIER
+| where the verifier module and its record sit, for a host whose layout differs. Unset, lib/verifier
+under the folder the server was started in | | WALL_SECRET | any 32 random bytes. The wall signs its
+links and sessions with it, and rotating it signs everybody out | | WALL_ALLOWED | the addresses the
+wall admits, comma separated. Adding one sends that person nothing |
+
+# The line that travels in every audit export the app writes, which its own check hands to this
+# file as the-export-in-words.md.
+
+@ the-export-in-words.md
+This export has no standing of any kind and nothing here says it has. It is a record of what was
+measured and what was signed. Standing of that kind comes from accreditation, which this product does
+not hold, and no regulation we have checked requires cryptographic proof. Some do set a clock
+synchronisation tolerance or ask for records that cannot be rewritten, and TimeWitness claims no part
+in meeting those or any other rule.
+
+# Read and approved, and on no surface: the honest sentences the test passes of 2026-09-25 hold the
+# rule to, each of which has to pass when it is handed to the rule on its own.
+
+@ none
+No regulation we have checked, including AI Act Article 12, SEC 17a-4 and FINRA 4511 and 6820,
+requires cryptographic proof.
+
+@ none
+Two of them ask for more than a log: FINRA Rule 6820 sets a tolerance to which a member firm's
+business clocks must be synchronised with NIST time, and SEC 17a-4 asks for records kept where they
+cannot be rewritten or with a time-stamped audit trail.
+
+@ none
+TimeWitness claims no part in meeting either, so a compliance claim built on any of these rules would
+be false.
+
+@ none
+FINRA Rule 6820 does set a clock synchronisation tolerance, and TimeWitness claims no part in meeting
+it or any other rule.
+
+@ none
+It does not establish legal weight, which comes from accreditation rather than engineering, and no
+regulation we have checked requires cryptographic proof.
+
+@ none
+FINRA 6820 requires clocks within 50 ms of NIST time.
+
+@ none
+SEC 17a-4 asks for records kept where they cannot be rewritten or with a time-stamped audit trail.
+
+@ none
+FINRA Rule 6820 sets a clock synchronisation tolerance against NIST time, and SEC 17a-4 asks for a
+time-stamped audit trail.
+
+@ none
+TimeWitness does not meet FINRA 6820 or SEC 17a-4, and claims no legal weight.
