@@ -1045,13 +1045,31 @@ CLAIMS = [
         r'\b(regulators? (?:accept|recogni[sz]e|approve|require|treat)s?)\b',
         r'\b((?:certified|qualified|legal|official) (?:electronic )?time.?stamps?)\b',
         r'\b(eIDAS|AI Act|Article 12|17a-4|FINRA|MiFID|GDPR|Sarbanes|SOX|HIPAA|DORA|NIS ?2|21 CFR|Part 11|ISO ?27001|SOC ?2|ETSI|PCI.?DSS)\b',
+        # A rule's requirement handed back to us in a clause of its own, which the rule clause before it
+        # no longer refuses on the rule's name: "requires clock sync, which our agent meets".
+        r'\b(?:which|that|and) (?:TimeWitness|we|our \w+|the (?:agent|receipts?|product)|it|this)\b[^.;,]{0,30}?'
+        r'\b(meets?|satisf(?:y|ies)|fulfil+s?|discharges?|covers?|answers?|handles?|takes? care of)\b',
     # What makes the mention honest is saying where standing comes from, never the noun on its own:
     # until 2026-09-16 "qualified trust service provider" was on this list, so "We are a qualified
     # trust service provider for timestamping" passed on the entry written to let the denial through.
+    #
+    # Saying what a rule itself asks for is honest too, where the rule is the subject and nothing in
+    # the clause is us. Until 2026-09-25 the list said no rule it named asks for clock accuracy or
+    # tamper-evidence, and FINRA 6820 sets a clock tolerance against NIST time and SEC 17a-4 asks for
+    # records that cannot be rewritten. The corrected sentence names both, and a register that let
+    # only a denial mention a rule refused the truth while it passed the old error. So a clause whose
+    # subject is a named rule and whose verb is what it sets or asks for reads as a statement about
+    # the rule, and one that also names us, our receipts or our agent does not, so "FINRA 6820 sets a
+    # clock tolerance and TimeWitness satisfies that requirement" is still refused. The last
+    # alternative is the sentence the list ends that paragraph with, a compliance claim said to be
+    # false, which the denial test misses once more than five words sit between the claim and its verb.
     ], None, r'\bfrom (?:being )?(?:an? )?accredit\w*\b|\baccreditation\b[^.;,]{0,20}?\b(?:rather|not|confers?|is (?:the only|what))\b|'
-             r'\bstanding\b[^.;,]{0,25}?\bcomes from\b|\bcomes from (?:being )?(?:an? )?(?:accredit\w*|qualified|QTSP)\b',
-     'claims legal weight or compliance, and standing comes from accreditation rather than engineering: no regulation we have '
-     'checked requires a clock bound (rule 6 of what this product may say)'),
+             r'\bstanding\b[^.;,]{0,25}?\bcomes from\b|\bcomes from (?:being )?(?:an? )?(?:accredit\w*|qualified|QTSP)\b|'
+             r'\A(?![^.;]*\b(?:TimeWitness|we|our|us|you|your|it|its|receipts?|agent|product|this)\b)\W*(?:and |but )?'
+             r'(?:FINRA|SEC|AI Act)(?: Rule)? [\w.-]+(?: and [\w.-]+)? (?:does |do )?(?:sets?|asks? for|requires?|names?)\b|'
+             r'\b(?:an?|any) compliance claim\b[^.;,]{0,60}?\bwould be (?:false|wrong|untrue)\b',
+     'claims legal weight or compliance, and standing comes from accreditation rather than engineering: TimeWitness claims no '
+     'part in meeting any rule (rule 6 of what this product may say)'),
     ('accreditation', [
         r'\b(?:we|TimeWitness|the (?:agent|product|company)|our (?:company|product)) (?:is|are|am|remains?|became|become|were|was)\b'
         r'[^.;,]{0,25}?\b((?:an? )?(?:accredited|qualified trust service|QTSP|certified|licen[sc]ed|approved|recogni[sz]ed))\b',
@@ -3054,6 +3072,11 @@ SEEDS = [
     ('legal weight', 'Using TimeWitness satisfies SEC 17a-4 recordkeeping requirements out of the box.'),
     ('legal weight', 'Our receipts are admissible in court as certified legal timestamps.'),
     ('legal weight', 'These receipts will hold up in court.'),
+    # What a statement of what a rule asks for must not excuse, from 2026-09-25.
+    ('legal weight', 'FINRA Rule 6820 sets a clock synchronisation tolerance and TimeWitness satisfies that requirement for you.'),
+    ('legal weight', 'SEC 17a-4 asks for records that cannot be rewritten, and our receipts meet that requirement.'),
+    ('legal weight', 'Any compliance claim built on these receipts would be fine with FINRA.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation, which our agent meets.'),
     # From the two cold sets of 2026-09-16, written from the rules of what this product may say before this file was opened,
     # which refused 26 of 45 and 22 of 45 against the rules above: one or two sentences a class.
     ('somebody else\'s figure written as ours', 'We measured 5 to 50 ms over the public internet, so your bound is never worse than that.'),
@@ -3180,7 +3203,11 @@ HONEST = [
     'It does not establish legal weight, which comes from accreditation rather than engineering, and no regulation we have checked requires it.',
     'Legal standing in this area comes from accreditation, meaning qualified trust service provider status under eIDAS, and not from engineering.',
     'A private root is admissible and never presumed.',
-    'No regulation we have checked, including AI Act Article 12, SEC 17a-4 and FINRA 4511 and 6820, requires tamper-evidence, cryptographic proof or clock accuracy, so a compliance claim built on any of them would be false.',
+    'No regulation we have checked, including AI Act Article 12, SEC 17a-4 and FINRA 4511 and 6820, requires cryptographic proof.',
+    'Two of them ask for more than a log: FINRA Rule 6820 sets a tolerance to which a member firm\'s business clocks must be synchronised with NIST time, and SEC 17a-4 asks for records kept where they cannot be rewritten or with a time-stamped audit trail.',
+    'TimeWitness claims no part in meeting either, so a compliance claim built on any of these rules would be false.',
+    'It does not establish legal weight, which comes from accreditation rather than engineering, and no regulation we have checked requires cryptographic proof.',
+    'FINRA Rule 6820 does set a clock synchronisation tolerance, and TimeWitness claims no part in meeting it or any other rule.',
     'It carries no legal weight and no compliance claim.',
     'NTS improves the clock and can never be portable evidence.',
     'The receipt format refuses an NTS response in an evidence role outright.',

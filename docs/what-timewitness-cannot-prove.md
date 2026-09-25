@@ -424,9 +424,12 @@ rollback is the same: it is detected and recorded after the event, and nothing i
 **It does not establish legal weight.** Legal standing in this area comes from accreditation, meaning
 qualified trust service provider status under eIDAS, and not from engineering. A private root is
 admissible and never presumed. No regulation we have checked, including AI Act Article 12, SEC 17a-4
-and FINRA 4511 and 6820, requires tamper-evidence, cryptographic proof or clock accuracy, so a
-compliance claim built on any of them would be false. The timestamp authorities used here are free
-services and none of them is a qualified trust service.
+and FINRA 4511 and 6820, requires cryptographic proof. Two of them ask for more than a log: FINRA
+Rule 6820 sets a tolerance to which a member firm's business clocks must be synchronised with NIST
+time, and SEC 17a-4 asks for records kept where they cannot be rewritten or with a time-stamped
+audit trail. TimeWitness claims no part in meeting either, so a compliance claim built on any of
+these rules would be false. The timestamp authorities used here are free services and none of them
+is a qualified trust service.
 
 ## About what is built today, which is the part that moves
 
