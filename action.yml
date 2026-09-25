@@ -87,7 +87,7 @@ inputs:
       is never sent. It sits above the arithmetic for a run where a third of the sources blackhole,
       which is sixteen rounds by three sources by five seconds, or 240 seconds of waiting, after
       which that run still answers correctly on the rest. A healthy run takes seconds. Raise it if
-      you also raise rounds or gap.
+      you also raise rounds.
     required: false
     default: "300"
   previous:

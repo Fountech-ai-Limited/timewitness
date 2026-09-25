@@ -44,7 +44,8 @@ echo "my first stamped file" > hello.txt
 timewitness stamp --subject hello.txt --key my-agent.key --out hello.receipt.cbor
 ```
 
-It asks the time servers for a few seconds, then writes the receipt. `my-agent.key` is made on the
+It polls the time servers over sixteen rounds, which takes anywhere from about ten seconds to about a
+minute depending on how quickly they answer, then writes the receipt. `my-agent.key` is made on the
 spot because it does not exist yet. It proves that one agent signed the receipt and nothing about
 who you are, so keep it if you want your next receipts signed by the same agent.
 
