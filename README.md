@@ -292,8 +292,13 @@ asks our own two Roughtime servers as well, `timewitness-roughtime-lhr.fly.dev:2
 timewitness.dev/key-log.txt names for them, with the three tests in
 `crates/cli/tests/against_a_running_server.rs`. The run reads the servers out of that log each
 morning, so a server added to it is asked from then on. A pass there means the server answered under
-the key we published and stated the narrowest corridor the Roughtime format allows. It is ours, so
-it is never an independent source for anybody's bound. The summary names every test and whether it
+the key we published, and that the corridor it signed is one a server of ours can justify: a radius
+of whole seconds and at least one, a midpoint less than a second from where its bound could have
+been centred, a radius no wider than cutting that midpoint to a whole second calls for on the widest
+bound its model will answer from, and a corridor that meets the moment this machine, held to the
+published NTP servers, says the server answered. So a pass covers the narrowest corridor the
+Roughtime format allows, and a wider one only where that cut calls for it. It is ours, so it is
+never an independent source for anybody's bound. The summary names every test and whether it
 answered, with the tests against our servers named by address, and the date of the run is the last
 time the live integrations were seen working. The ordinary build asks none of them, because a server
 being down is not a fault in a commit.
