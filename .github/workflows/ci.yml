@@ -20,7 +20,7 @@ jobs:
     name: build, lint and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # The whole history. Three of the repository checks read every commit, and at the default
           # depth of one they see a single commit and do nothing in the place they were put to run.
@@ -38,7 +38,7 @@ jobs:
           rustup default stable
 
       - name: Cache the build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry
@@ -284,7 +284,7 @@ jobs:
       # existed, finds no reader, and compiles one from source every run.
       - name: Cache the advisory reader
         id: audit-cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cargo/bin/cargo-audit
           key: ${{ runner.os }}-cargo-audit-0.22.2
@@ -307,7 +307,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
@@ -317,7 +317,7 @@ jobs:
           rustup default stable
 
       - name: Cache the build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry
@@ -331,6 +331,20 @@ jobs:
 
       - name: Every single-bit change to a receipt is refused, with no network
         run: bash scripts/every-bit-refused.sh
+
+      # The sweep a stranger runs on a receipt of their own, run here on a committed one so the
+      # route through the two variables is watched working. It is ignored everywhere they are not
+      # set, since without them it has nothing to sweep.
+      - name: The same sweep on a receipt named from outside
+        env:
+          TW_EVERY_BIT_RECEIPT: ${{ github.workspace }}/crates/verify/tests/data/a-real-stamp/receipt.cbor
+          TW_EVERY_BIT_SUBJECT: ${{ github.workspace }}/crates/verify/tests/data/a-real-stamp/subject.bin
+        run: |
+          set -o pipefail
+          cargo test --release -p timewitness-verify --test every_bit_of_a_receipt -- \
+            --ignored --exact a_receipt_named_in_the_environment 2>&1 | tee "$RUNNER_TEMP/named.txt"
+          grep -qF 'test a_receipt_named_in_the_environment ... ok' "$RUNNER_TEMP/named.txt" \
+            || { echo "the named receipt was not swept"; exit 1; }
 
       - name: That check still stops where the network is in reach
         run: |

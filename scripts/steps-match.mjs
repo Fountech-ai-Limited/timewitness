@@ -34,6 +34,7 @@ const WORKFLOW_ONLY = {
   'Build the command line': 'the every-bit job builds only the release binary it sweeps, and the hook has built the workspace already',
   'Every single-bit change to a receipt is refused, with no network': 'it needs a Linux network namespace, which this desktop has not; the suite runs the same sweep in one process',
   'That check still stops where the network is in reach': 'it is the sweep above run backwards, so it needs what the sweep needs',
+  'The same sweep on a receipt named from outside': 'the tests the hook runs sweep the same committed receipt already; this runs it once more through the two variables a stranger sets',
 };
 
 // Steps the hook runs and the workflow does not, with why.
