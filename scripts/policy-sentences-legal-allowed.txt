@@ -196,6 +196,54 @@ under the folder the server was started in | | WALL_SECRET | any 32 random bytes
 links and sessions with it, and rotating it signs everybody out | | WALL_ALLOWED | the addresses the
 wall admits, comma separated. Adding one sends that person nothing |
 
+# Added 2026-09-25 when the scope was read in any case and widened to the words of a court, a
+# proceeding and a jurisdiction: paragraphs that name "binding", "judges" or a section of the product
+# specification, none of them about legal standing, each read and entered as it stands.
+
+@ docs/what-timewitness-cannot-prove.md above its first heading
+Version 6 of the same day superseded version 5, which superseded version 4 of the same day, which
+superseded versions 1 to 3 and section 8 of the product specification of 2026-09-03. Section 8 had
+eleven items, written before any of the evidence clients existed; version 1 added eleven that came out
+of building them. Versions 2 and 3 add three that came out of attacking the clock model: what using
+several sources actually buys, what a source is not taken at its word about, and how far a bound can
+be carried past the last time the sources answered. Version 4 moves four items in the built-today
+section, because the verifier and the Action shipped on 2026-09-08 and three of the things this list
+said do not exist now do, and it adds what a build runner's bound actually is, which is the number a
+reader of a receipt from CI meets. Version 5 adds the two the list was missing about its own headline
+claim: that nothing verifies order, and that a refusal receipt is a phrase rather than an artefact.
+Version 6 adds three that came out of building the detection for the faults the environment causes:
+what a sleep detector has and has not been watched doing, which platform the Windows path was run on,
+and what an agent that started part way through a leap smear can and cannot see.
+
+@ docs/verifier.md
+What a key decides, and what it does not. The name an attestation gives for its signer sits in bytes
+whoever wrote the receipt controls, so it decides one thing only: whether the signature is checked.
+Every check whose inputs are all inside the receipt runs on every entry whatever the reader holds, and
+an entry failing one is refused at every setting, --no-anchors included, with a sentence saying the
+fault needs no key to see. For a corridor that is the framing, the encoding, the nonce and its binding
+to this receipt's subject, the delegation window, the signed part of the response under the key the
+delegation names, the version, the radius, the Merkle path from the stored request to the signed root,
+and the moment, radius and nonce the receipt prints beside it. For a token it is the reply parsing as
+a granted timestamp response, the request and the token both being about this receipt's subject, the
+two carrying the same nonce, the signed attributes carrying the digest of the token, and the moment,
+interval and nonce printed beside it. For a round it is the shape alone, that the signature is 48
+bytes and a point on the curve: which moment a round falls at is arithmetic on the chain's schedule,
+which is part of the anchor, so a round from a chain the reader does not hold has its printed moment
+held to the receipt's interval and to nothing else. Until 2026-09-15 the name was read first and
+nothing after it ran, so a reply of zeros behind a renamed server was reported not checked, exit 0. A
+renamed Roughtime server is refused on its own now whatever else is done to the response: the request
+is the Merkle leaf, so a request that names a different key no longer hashes into the root the server
+signed.
+
+@ content/product-fixtures.json, tree:content/product-fixtures.json
+Our own bound is labelled inside the receipt as our claim, never as third-party evidence.
+(product_truth.receipt_contains). This receipt says its bound rests on the agent's own model and the
+verifier judges it on that.
+
+@ /, /screen
+Our own bound is labelled inside the receipt as our claim, never as third-party evidence. This receipt
+says its bound rests on the agent's own model and the verifier judges it on that.
+
 # The line that travels in every audit export the app writes, which its own check hands to this
 # file as the-export-in-words.md.
 
