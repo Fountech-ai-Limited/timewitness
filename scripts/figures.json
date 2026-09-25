@@ -59,9 +59,9 @@
    "5308fa0875eb16d3a10cbedf95e2ae4c67874e3389ea94278bd3a1b37ba0e7bb": "entry 4, 16.219 s of the whole interval",
    "6566c3ce2c0c872095191387164166bb66b4c887e21d7b04a8438d6f4f0fb554": "entry 6, 12.0 s of the whole interval",
    "46660692e24e9f5c15edc543d1904175b6b1b1d4dc9c35abe2d423d48fac72c1": "entry 13, 30 s of a ceiling",
-   "1a640f6ed4ab1d0162c991f35795417564238fe572253556e1f330af5a824919": "entry 17, 5 to 50 ms of the whole interval",
-   "58c4145f5130cacb873d55b7b7523433bcd38de8577d1dab96cb2a1157724e59": "entry 18, 1 ms of the whole interval",
-   "3472ce27e132f7594f00bac84e2595da170af0373d6c4f19214595456a962615": "entry 19, 100 microseconds of the whole interval",
+   "1a640f6ed4ab1d0162c991f35795417564238fe572253556e1f330af5a824919": "entry 17, 5 to 50 ms of the whole interval, off the list from 2026-09-25, its evidence now the document it is read from",
+   "58c4145f5130cacb873d55b7b7523433bcd38de8577d1dab96cb2a1157724e59": "entry 18, 1 ms of the whole interval, off the list from 2026-09-25, its evidence now the document it is read from",
+   "3472ce27e132f7594f00bac84e2595da170af0373d6c4f19214595456a962615": "entry 19, 100 microseconds of the whole interval, off the list from 2026-09-25, its evidence now the document it is read from",
    "bc678c50ad52623dd5935826a2ded7f14ea1a00f232e7c99acba8ba2f7bb90ee": "entry 21, 42 s of a setting or a condition",
    "de05223bf944b8c854978b0b86e25f294e6fc0a947ca9977991b42bb4db1daa5": "entry 22, 6.2, 17.4, 16.4, 10.4 s of the whole interval",
    "ed95c75c603e75ae0a4f77b38777241a2e7a64c8d439213e163cda89f831d475": "entry 23, 16.439 s of the whole interval",
@@ -605,7 +605,11 @@
    "precision": "1 ms",
    "whose": "public research, quoted",
    "conditions": "the public internet with no hardware of our own",
-   "evidence": "docs/what-timewitness-cannot-prove.md, the paragraph that quotes the three public research figures and says none has been measured by us",
+   "evidence": {
+    "kind": "document",
+    "artefact": "Executive Summary: Computer Network Time Synchronization, D. L. Mills",
+    "note": "a few milliseconds at fifteen-minute updates to several tens of milliseconds on an intercontinental path, the range this register writes as 5 to 50 ms"
+   },
    "requiresNearby": "quoted from public research",
    "servedOnSite": true,
    "saidWith": [
@@ -619,7 +623,11 @@
    "precision": "1 ms",
    "whose": "public research, quoted",
    "conditions": "a good local network against a stratum-1 source",
-   "evidence": "docs/what-timewitness-cannot-prove.md, the paragraph that quotes the three public research figures and says none has been measured by us",
+   "evidence": {
+    "kind": "document",
+    "artefact": "Executive Summary: Computer Network Time Synchronization, D. L. Mills",
+    "note": "the order of one millisecond at one-minute updates, as used with primary reference clocks"
+   },
    "requiresNearby": "quoted from public research",
    "servedOnSite": true,
    "saidWith": [
@@ -633,7 +641,11 @@
    "precision": "1 microseconds",
    "whose": "public research, quoted",
    "conditions": "a cloud instance with a hypervisor clock",
-   "evidence": "docs/what-timewitness-cannot-prove.md, the paragraph that quotes the three public research figures and says none has been measured by us",
+   "evidence": {
+    "kind": "document",
+    "artefact": "It's About Time: Microsecond-Accurate Clocks on Amazon EC2 Instances, Amazon Web Services, November 2023",
+    "note": "a clock error bound typically under 100 microseconds over the NTP connection, on an instance where the microsecond-accurate service is available"
+   },
    "requiresNearby": "quoted from public research",
    "servedOnSite": true,
    "saidWith": [

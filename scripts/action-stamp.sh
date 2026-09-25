@@ -202,7 +202,8 @@ summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
     echo
     echo "The figures usually quoted for ordinary machines, 5 to 50 ms on the public internet with no"
     echo "special hardware and about 1 ms on a good local network against a stratum-1 source, are"
-    echo "quoted from public research. Neither has been measured by us and neither is ours."
+    echo "quoted from public research. Neither has been measured by us and neither is ours. Both are"
+    echo "read from David Mills' Executive Summary: Computer Network Time Synchronization."
     echo
     echo "This receipt does not prevent anything. It records that a stamp was taken; there is no"
     echo "enforcement path in this design. It establishes no legal weight: standing in this area comes"
