@@ -262,6 +262,28 @@ fn the_app_is_not_open_yet_and_a_send_to_it_is_refused_by_name() {
         assert!(!words.contains("308"), "{what}: {words}");
     }
 
+    // A stranger has no credential, and cannot get one while the app is closed. Until 2026-09-25
+    // all three answered that the credential was missing and spoke of one "the app issued", which
+    // sends them looking for an app that is not there. The closed app is said first.
+    for (what, args) in [
+        ("send", vec!["send", path]),
+        ("enrol", vec!["enrol", "--key", key]),
+        ("certificate", vec!["certificate", "--key", key]),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_timewitness"))
+            .args(&args)
+            .env_remove(CREDENTIAL)
+            .output()
+            .expect("the binary runs");
+        let words = said(&output);
+        assert_eq!(output.status.code(), Some(1), "{what}: {words}");
+        assert!(
+            words.contains("https://app.timewitness.dev is not open yet"),
+            "{what}: {words}"
+        );
+        assert!(!words.contains(CREDENTIAL), "{what}: {words}");
+    }
+
     let usage = String::from_utf8_lossy(
         &Command::new(env!("CARGO_BIN_EXE_timewitness"))
             .arg("--help")
