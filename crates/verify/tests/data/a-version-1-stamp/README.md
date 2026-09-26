@@ -1,7 +1,7 @@
 # One version 1 receipt, taken from the real servers
 
 `receipt.hex` is the receipt, as hex so the repository stays text. It was produced on 2026-09-21
-at 20:24 local time by `timewitness stamp`, built from the branch that introduced receipt format
+at 17:24 UTC by `timewitness stamp`, built from the branch that introduced receipt format
 version 1, on a desktop that was running another long measurement at the same time. `subject.bin` is the sixty-one bytes it stamps.
 
 `xxd -r -p receipt.hex receipt.cbor` gives back the file `timewitness verify` reads.

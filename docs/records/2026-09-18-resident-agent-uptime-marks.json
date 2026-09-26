@@ -3,7 +3,7 @@
  "path": "the resident agent",
  "date": "2026-09-18",
  "cadenceSeconds": 32,
- "how": "Two resident agents started within eight seconds of each other at 22:55:55 on an ordinary Windows desktop against the nine published servers, thirty-two second cadence, 250 ms ceiling, each asked for a reading with timewitness stamp --agent --no-evidence: one every five seconds for forty minutes and one every ten seconds for seven minutes. The raw readings, the receipts taken at thirty-six minutes and their verify output are on the desktop that took them, beside the raw readings.",
+ "how": "Two resident agents started within eight seconds of each other at 19:55:55 UTC on an ordinary Windows desktop against the nine published servers, thirty-two second cadence, 250 ms ceiling, each asked for a reading with timewitness stamp --agent --no-evidence: one every five seconds for forty minutes and one every ten seconds for seven minutes. The raw readings, the receipts taken at thirty-six minutes and their verify output are on the desktop that took them, beside the raw readings.",
  "figures": [
   "102",
   "101",
