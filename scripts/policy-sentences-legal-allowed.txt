@@ -27,9 +27,10 @@
 @ README.md
 Milliseconds is the accuracy to UTC. That is what the network path allows. The 5 to 50 ms, the 1 ms
 and the 100 microsecond figures are quoted from public research and none of them has been measured by
-us. They belong, in that order, to the public internet with no hardware of our own, to a good LAN
-against a stratum-1 source, and to a cloud instance with a hypervisor clock. Certified microseconds
-need hardware. Nanosecond accuracy is a datacentre thing and is not something this product sells.
+us. They belong, in that order, to the public internet with no hardware of our own, to a clock
+updated once a minute, as primary reference clocks are, and to a cloud instance with a hypervisor
+clock. Certified microseconds need hardware. Nanosecond accuracy is a datacentre thing and is not
+something this product sells.
 
 @ README.md
 About what it does when something is wrong. It does not prevent anything: a refusal records that

@@ -622,11 +622,11 @@
    "unit": "ms",
    "precision": "1 ms",
    "whose": "public research, quoted",
-   "conditions": "a good local network against a stratum-1 source",
+   "conditions": "a clock updated once a minute, as primary reference clocks are",
    "evidence": {
     "kind": "document",
     "artefact": "Executive Summary: Computer Network Time Synchronization, D. L. Mills",
-    "note": "the order of one millisecond at one-minute updates, as used with primary reference clocks"
+    "note": "accuracy to the order of one millisecond at update intervals of one minute, as used with primary reference clocks; the same summary puts a lightly loaded 100 Mb/s Ethernet at the order of 100 microseconds"
    },
    "requiresNearby": "quoted from public research",
    "servedOnSite": true,
