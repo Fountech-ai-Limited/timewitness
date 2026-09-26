@@ -1275,7 +1275,7 @@
    "unit": "s",
    "precision": "1 s",
    "whose": "ours",
-   "conditions": "uptime marks of two fresh resident agents on an ordinary Windows desktop, 2026-09-18 from 22:55:55, nine published servers, thirty-two second cadence, 250 ms ceiling, one asked every five seconds for forty minutes and one every ten seconds for seven minutes; and the ten second interval between readings on the second",
+   "conditions": "uptime marks of two fresh resident agents on an ordinary Windows desktop, 2026-09-18 from 19:55:55 UTC, nine published servers, thirty-two second cadence, 250 ms ceiling, one asked every five seconds for forty minutes and one every ten seconds for seven minutes; and the ten second interval between readings on the second",
    "evidence": {
     "kind": "record",
     "artefact": "docs/records/2026-09-18-resident-agent-uptime-marks.json"
@@ -1376,7 +1376,7 @@
    "unit": "ms",
    "precision": "0.001 ms",
    "whose": "ours",
-   "conditions": "an ordinary Windows desktop, 2026-09-18 at 23:32, three readings through the resident agent at thirty-six minutes of uptime and a thirty-two second polling cadence, nine servers behind six operators and nine kept, after the ageing of a source's interval was bounded by the band",
+   "conditions": "an ordinary Windows desktop, 2026-09-18 at 20:32 UTC, three readings through the resident agent at thirty-six minutes of uptime and a thirty-two second polling cadence, nine servers behind six operators and nine kept, after the ageing of a source's interval was bounded by the band",
    "evidence": {
     "kind": "record",
     "artefact": "docs/records/2026-09-18-resident-agent-widths.json"
@@ -1400,7 +1400,7 @@
    "unit": "ms",
    "precision": "0.001 ms",
    "whose": "ours",
-   "conditions": "the sources overlapping, halved, on the three readings through the resident agent at thirty-six minutes of uptime on an ordinary Windows desktop, 2026-09-18 at 23:32, read off timewitness verify on each receipt",
+   "conditions": "the sources overlapping, halved, on the three readings through the resident agent at thirty-six minutes of uptime on an ordinary Windows desktop, 2026-09-18 at 20:32 UTC, read off timewitness verify on each receipt",
    "evidence": {
     "kind": "record",
     "artefact": "docs/records/2026-09-18-resident-agent-sources-overlapping.json"
