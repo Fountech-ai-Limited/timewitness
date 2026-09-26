@@ -259,7 +259,7 @@
    "unit": "ms",
    "precision": "0.001 ms",
    "whose": "ours",
-   "conditions": "an ordinary desktop on an ordinary connection, 2026-09-09 at 21:41, sixteen polling rounds, nine public servers of three kinds behind six operators, signed under a ceiling of 30 s, the one-shot default until 2026-09-15",
+   "conditions": "an ordinary desktop on an ordinary connection, 2026-09-09 at 18:41 UTC, sixteen polling rounds, nine public servers of three kinds behind six operators, signed under a ceiling of 30 s, the one-shot default until 2026-09-15",
    "evidence": {
     "kind": "receipt",
     "artefact": "crates/verify/tests/data/a-real-stamp/receipt.cbor",
@@ -848,7 +848,7 @@
    "unit": "ms",
    "precision": "0.1 ms",
    "whose": "ours",
-   "conditions": "the 153.875 ms of the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor on 2026-09-09 at 21:41, written to one decimal place",
+   "conditions": "the 153.875 ms of the receipt committed at crates/verify/tests/data/a-real-stamp/receipt.cbor on 2026-09-09 at 18:41 UTC, written to one decimal place",
    "evidence": {
     "kind": "receipt",
     "artefact": "crates/verify/tests/data/a-real-stamp/receipt.cbor",
