@@ -1,5 +1,15 @@
 # What TimeWitness cannot prove
 
+Version 26, 2026-09-26. Supersedes version 25 of the same day, which it keeps whole and corrects in
+two places. The claim at the head of the list said the beacon puts the reading no earlier than its
+round. The round is fetched after the reading is taken, so what it shows is that the receipt was made
+no earlier than that round, which is what the item on the beacon below has always said. The item on
+the corridor said the reading has to overlap it, and a reading is a point: it is the receipt's interval
+that is held to overlap the corridor. The note on version 18 said the outside signatures say when the
+reading was taken and that the corridor makes the moment checkable. Neither is true, since no signature
+in a receipt dates the reading, and version 25 withdrew the first without naming the note; this one
+names it. The list still runs to 61 items.
+
 Version 25, 2026-09-26. Supersedes version 24 of 2026-09-25, which it keeps whole and corrects in
 two places. The claim at the head of the list read as if the outside evidence dated the reading, and
 no signature in a receipt does that, so it now says each part shows one thing about the time and none
@@ -226,9 +236,9 @@ of what is built today. The last group is marked, because those move.
 TimeWitness says: at this local counter reading, UTC was somewhere in this interval, and here is
 signed evidence from three parties who have never heard of us, each part showing one thing about the
 time and none saying when that reading was taken. The interval is our own claim and the outside
-evidence does not vouch for it. That evidence is checked, and on the receipt committed in this repository it holds the moment from below and not from
-above: the beacon says the reading was not earlier than its round, and the timestamp authority states
-no accuracy of its own, so nothing here puts a number on how wrong that authority's clock could be. A
+evidence does not vouch for it. That evidence is checked, and on the receipt committed in this repository it leaves one edge and not
+two: the beacon round shows the receipt was made no earlier than that round, and the timestamp authority
+states no accuracy of its own, so nothing here puts a number on how wrong that authority's clock could be. A
 bound resting on that evidence is what we are building towards. Bounded time and unbroken order. Not
 accurate time.
 
@@ -294,7 +304,7 @@ in the parties involved; it is what their signatures actually say.
 **An authenticated corridor does not tighten the bound.** A Roughtime server states a midpoint and a
 radius in whole seconds, and the three public servers reachable on 2026-09-07 were stating one, three
 and five. So a corridor is seconds wide. It puts a signed interval round the moment its server
-answered, which a stranger can check and which the reading has to overlap, and the millisecond figure comes from ordinary time sources rather than from it. Plain NTP
+answered, which a stranger can check and which the receipt's interval has to overlap, and the millisecond figure comes from ordinary time sources rather than from it. Plain NTP
 and NTS run in every stamp beside the corridor, and neither signs anything a stranger can check.
 Anybody who expects Roughtime to be the precise part has the roles the wrong way round.
 
