@@ -1,8 +1,8 @@
 # One receipt, taken from the real servers
 
-`receipt.cbor` was produced on 2026-09-09 at 21:41 by `timewitness stamp` on an ordinary machine on
-an ordinary internet connection, at the sixteen rounds the agent defaults to. `subject.bin` is the
-fifty-eight bytes it stamps, unchanged since 2026-09-08.
+`receipt.cbor` was produced on 2026-09-09 at 21:41 on that machine's clock, 18:41 UTC, by
+`timewitness stamp` on an ordinary machine on an ordinary internet connection, at the sixteen rounds
+the agent defaults to. `subject.bin` is the fifty-eight bytes it stamps, unchanged since 2026-09-08.
 
 Everything in it is real. Nine public servers disciplined the clock, three of each of the three
 kinds this product speaks: Roughtime, plain NTP and NTS. One of the Roughtime servers signed over a
