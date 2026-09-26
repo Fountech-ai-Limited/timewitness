@@ -6,9 +6,9 @@ the agent defaults to. `subject.bin` is the fifty-eight bytes it stamps, unchang
 
 Everything in it is real. Nine public servers disciplined the clock, three of each of the three
 kinds this product speaks: Roughtime, plain NTP and NTS. One of the Roughtime servers signed over a
-nonce derived from the hash of `subject.bin`, a drand quicknet round pins it no earlier, and
-DigiCert's timestamp authority signed for the payload hash to pin it no later. None of those has
-heard of this product.
+nonce derived from the hash of `subject.bin`, a drand quicknet round shows the receipt was made no
+earlier than that round, and DigiCert's timestamp authority signed for the payload hash on its own
+clock, which states no accuracy and so bounds nothing in UTC. None of those has heard of this product.
 
 The bound is 153.875 ms wide. Read off `timewitness verify` on this file, which prints half widths:
 35.081 ms is the sources overlapping, 38.011 ms is the model's own regression residual doubled by

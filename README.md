@@ -9,9 +9,10 @@ continuously against four to six independent sources and keeps a running measure
 clock could be. Through the agent a stamp is then a local read with no network in it, and it says
 three things: the reading, a bound on the error, which is our own claim, and third-party signed
 evidence, each part showing one thing about the time and none saying when it was taken. That
-evidence is checked and it does not vouch for the bound. On the receipt committed here it holds the moment from below and not from above: the beacon says the reading
-was not earlier than its round, and the timestamp authority states no accuracy of its own, so nothing
-here puts a number on how wrong that authority's clock could be. A bound resting on that evidence is
+evidence is checked and it does not vouch for the bound. On the receipt committed here it leaves one edge and not
+two: the beacon round shows the receipt was made no earlier than that round, and the timestamp
+authority states no accuracy of its own, so nothing here puts a number on how wrong that authority's
+clock could be. A bound resting on that evidence is
 what this is being built towards.
 
 The claim is bounded time and unbroken order. It is not accurate time.
@@ -135,15 +136,15 @@ A receipt is worth something only if a stranger can check it, and that takes thr
 evidence.
 
 - **An authenticated UTC corridor** puts a signed interval round the moment its server answered,
-  which a stranger can check and which the reading has to overlap. A Roughtime response,
+  which a stranger can check and which the receipt's interval has to overlap. A Roughtime response,
   where we generate the nonce and the server signs ours. It does not make the bound tighter: a
   Roughtime radius is a whole number of seconds, and the three public servers reachable on
   2026-09-07 were stating one, three and five.
 - **A public freshness beacon** proves not-earlier-than, because the beacon value could not have been
   known before its round was published. A drand round, whose signature covers the round number and
   not the time.
-- **An independent final witness** proves not-later-than: an RFC 3161 timestamp authority, a
-  transparency log, or an anchor into a public chain.
+- **An independent final witness** proves not-later-than on the witness's own clock: an RFC 3161
+  timestamp authority, a transparency log, or an anchor into a public chain.
 
 NTS improves the clock and can never be portable evidence. Its keys are symmetric, so a client
 holding one could forge a response to itself and a stranger has no signature to check. The receipt
@@ -182,8 +183,9 @@ rate back against that band and widens by what it measured where the two disagre
 sharp enough to say so; where the fit's error bar is wider than the whole band, which is every fit
 in the first rounds after a start, it has measured nothing and the widening is half the band.
 
-**About the evidence.** An authenticated corridor makes the moment checkable to within seconds and
-does not make the bound tighter, because a Roughtime radius is seconds. A beacon's signature covers a round number and not a
+**About the evidence.** An authenticated corridor puts a signed interval seconds wide round the
+moment its server answered, which the receipt's interval has to overlap, and does not make the bound
+tighter, because a Roughtime radius is seconds. A beacon's signature covers a round number and not a
 time, and rests on no coalition holding enough of a shared key. A beacon pins the receipt, not the
 thing being stamped. A final witness attests the payload rather than the receipt, and is checked
 against a certificate pinned in advance rather than chained to a root. Where parties who are meant to
