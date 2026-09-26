@@ -1565,6 +1565,7 @@ OUR_CAPITALS = frozenset('''
     PGlite UChile REFUSED macOS iOS UUID UUIDs KB MB GB PTB IETF
 '''.split())
 CAPITALS = re.compile(r"(?<![\w-])[\w'-]*[A-Z]{2,}[\w'-]*")
+HEX_WORD = re.compile(r'[0-9A-F]+')
 
 
 def capital_runs(text):
@@ -1574,6 +1575,10 @@ def capital_runs(text):
         word = m.group().strip("'-")
         # A variable's name, such as TW_SUBJECT, is a word in a program and names no one.
         if '_' in word or word.upper().startswith('TIMEWITNESS'):
+            continue
+        # Nor is a colour or a digest written in hex: "#FBBF24" in the words of a picture, or a hash
+        # in capitals. Letters alone stay read, so "FCA" and "DEA" are still a run of capitals.
+        if HEX_WORD.fullmatch(word) and (re.search(r'\d', word) or text[max(m.start() - 1, 0):m.start()] == '#'):
             continue
         parts = [p for p in re.split(r"[-']", word) if re.search(r'[A-Z]{2}', p)]
         if any(p.rstrip('s') not in OUR_CAPITALS and p not in OUR_CAPITALS and not p.isdigit() for p in parts):
@@ -1588,7 +1593,7 @@ def capital_runs(text):
 # which is the protocol vocabulary rule 2 of what this product may say is itself written in. A claim
 # that we meet one still has to be made in words, and "conform", "compliant", "certified" and "meets
 # the requirements of" are all read by the lists above.
-STANDARD_NUMBER = re.compile(r"(?<![\w.-])([A-Z][A-Za-z]{0,7}(?:[/ ][A-Z]{2,8})?)[ \u00a0./:-]?(\d[\d.:/-]*[a-z]?)(?![\w])")
+STANDARD_NUMBER = re.compile(r"(?<![\w.#-])([A-Z][A-Za-z]{0,7}(?:[/ ][A-Z]{2,8})?)[ \u00a0./:-]?(\d[\d.:/-]*[a-z]?)(?![\w])")
 NOT_A_STANDARD = re.compile(r'^(?:SHA|UTF|TLS|SSL|HTTPS?|IPv|NTPv|EC|P|X|RFCs?|Ed|v|V|UTC|Step|'
                             r'Level|Figure|Table|Item|Round|Stage|Block|Day|Week|Line|Version|Q|H|T|No|USD|GBP|EUR)$')
 
@@ -6175,6 +6180,7 @@ OUT_OF_SCOPE_OURS = [
     'USD 15 a month, for one person.',
     'PTB, Cloudflare and Netnod each answer on two protocols.',
     'The verifier prints its verdict first.',
+    'The mark is drawn in #FBBF24 and #22D3EE on #F8FAFC, and its digest is 9F86D081884C7D65.',
 ]
 
 
