@@ -229,7 +229,7 @@
    "surfaces": [
     "action.yml"
    ],
-   "sentence": "Sixteen is the default because it takes about six seconds and each further second after it buys less than a quarter of a second of width. required: false default: \"16\" max-width: description: >- The widest interval this agent will sign for, in nanoseconds.",
+   "sentence": "Sixteen is the default because it takes about six seconds and each further second after it buys less than a quarter of a second of width.",
    "reason": "arithmetic on two readings stated above it"
   },
   {

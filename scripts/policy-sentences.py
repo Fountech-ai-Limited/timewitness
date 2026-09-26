@@ -19,6 +19,10 @@ policy off the code and asks each sentence whether it contradicts it.
     python3 scripts/policy-sentences.py FILE...         only the files named, for a copy of an old tree
     python3 scripts/policy-sentences.py --tree DIR --surfaces PATTERN   the claims in another tree, the app's
 
+Everything here is the standard library but one thing: the Action's manifest is read through PyYAML,
+which the runners' own Python carries, so it is read as GitHub decodes it. A Python without it exits
+2 naming it, and `python3 -m pip install pyyaml` is the whole of the fix.
+
 **The only number anybody may quote about this file comes from `--score` on a set whose sha256 was
 frozen before this file was opened.** `--self-test` proves each seed is refused by the rule it is
 there for, which is a different property and is not a score: the seeds are the material this file was
@@ -457,9 +461,111 @@ def list_notes(text):
     return text[:at] if at >= 0 else ''
 
 
-def yaml_text(text):
+# The Action's manifest as GitHub reads it, from 2026-09-26.
+#
+# Until that day the manifest was read as its raw lines, comments and the `run:` line aside, and only
+# a run block was decoded, by a reader of its own. So a claim in a step name or an env value written
+# in YAML's escapes, "Receipts are \x61dmissible evidence", was judged with the backslash in it and
+# named nothing, while GitHub decodes it and shows "admissible" on the job page, or in the job
+# summary through a run block that echoes the value. Every string form YAML has does the same to a
+# reader of lines: an escape of any width, a quote doubled inside single quotes, a folded or a literal
+# block, a plain scalar over two lines, a string spelled once under an anchor and shown again by its
+# alias, a merge key, a tag. So the file is read by a YAML loader, which is the reading GitHub makes,
+# and the rules are handed what it decodes: every scalar in the file, keys and values alike, each its
+# own paragraph, in the order the file writes them. That takes in every step name, description,
+# input description and default, output description, `with:` input, `if:` string, env value and run
+# block without a list of the fields a reader is shown, because a list is what the next field would
+# walk round. A string tagged as binary is read as the text it decodes to, and as written where it
+# decodes to nothing. A file that does not load fails the run, since GitHub refuses it too, and is
+# read as its lines as well, the way it was read before, so a claim written into it is still named.
+#
+# What this cannot see is a string GitHub puts together at run time, an expression such as format()
+# handed pieces that name nothing, which is the same limit the job summary's runs state.
+YAML_BINARY = 'tag:yaml.org,2002:binary'
+
+
+def a_yaml_loader(name):
+    """PyYAML, or unreadable. Nothing else here needs a package outside the standard library, so a
+    Python without it says so rather than stopping with a traceback."""
+    try:
+        import yaml
+    except ImportError as e:
+        raise Unreadable(f'{name} is read as GitHub reads it, through a YAML loader, and PyYAML is not '
+                         f'installed for this Python, so it was not read') from e
+    return yaml
+
+
+def yaml_documents(text, name):
+    """The node graph of every document in a YAML file, escapes, blocks, anchors and tags resolved."""
+    yaml = a_yaml_loader(name)
+    try:
+        return list(yaml.compose_all(text, Loader=yaml.SafeLoader))
+    except yaml.YAMLError as e:
+        raise NotYaml(f'{name} does not load as YAML, so GitHub would refuse it too: '
+                      f'{" ".join(str(e).split())[:200]}') from e
+
+
+class NotYaml(Unreadable):
+    """A file named as YAML that does not load as YAML."""
+
+
+# The manifests read this run that did not load, each a failure of its own. A manifest that does not
+# load is read as its lines as well, the way it was read until 2026-09-26, so a claim in a broken file
+# is still named; what fails the run is the load, whether or not a claim is there.
+NOT_LOADED = []
+
+
+def yaml_lines(text):
+    """A file that does not load, as its lines: comments and the `run:` line aside."""
     return '\n'.join(line.strip() for line in text.splitlines()
                      if not line.strip().startswith('#') and not line.strip().startswith('run:'))
+
+
+def yaml_walk(text, name):
+    """Every node of a YAML file once, in the order the file writes them, as (node, the key it sits
+    under or None). A node an alias names again is not walked twice."""
+    yaml = a_yaml_loader(name)
+    seen, out = set(), []
+
+    def walk(node, key):
+        if id(node) in seen:
+            return
+        seen.add(id(node))
+        out.append((node, key))
+        if isinstance(node, yaml.SequenceNode):
+            for item in node.value:
+                walk(item, key)
+        elif isinstance(node, yaml.MappingNode):
+            for k, v in node.value:
+                walk(k, None)
+                walk(v, k.value if isinstance(k, yaml.ScalarNode) else None)
+
+    for document in yaml_documents(text, name):
+        walk(document, None)
+    return out
+
+
+def yaml_strings(text, name):
+    """Every string a YAML file hands GitHub, decoded as GitHub decodes it."""
+    import base64
+    import binascii
+    yaml = a_yaml_loader(name)
+    out = []
+    for node, _ in yaml_walk(text, name):
+        if not isinstance(node, yaml.ScalarNode):
+            continue
+        said = node.value
+        if node.tag == YAML_BINARY:
+            try:
+                said = base64.b64decode(''.join(node.value.split()), validate=True).decode('utf-8', 'replace')
+            except (binascii.Error, ValueError):
+                pass
+        out.append(said)
+    return out
+
+
+def yaml_text(text, name='action.yml'):
+    return '\n\n'.join(s for s in yaml_strings(text, name) if s.strip())
 
 
 # One line the script writes out: echo or printf, with its words in either kind of quote, and a
@@ -1181,9 +1287,22 @@ def shell_paragraphs(source, depth=0):
     return paragraphs
 
 
-def run_blocks(text):
-    """The shell of every `run:` in a workflow or an action's manifest, as a list of sources, a block
-    scalar and a one-line value alike."""
+def run_blocks(text, name='action.yml'):
+    """The shell of every `run:` in a workflow or an action's manifest, as a list of sources, decoded
+    by the same YAML load as everything else in the file, so a run block is the string GitHub hands
+    the shell in whatever form it was written, an alias to an anchor included."""
+    yaml = a_yaml_loader(name)
+    found = []
+    for node, _ in yaml_walk(text, name):
+        if isinstance(node, yaml.MappingNode):
+            found += [v.value for k, v in node.value
+                      if isinstance(k, yaml.ScalarNode) and k.value == 'run' and isinstance(v, yaml.ScalarNode)]
+    return found
+
+
+def run_blocks_as_lines(text):
+    """The shell of every `run:` in a manifest that does not load, found line by line as it was until
+    2026-09-26: a block scalar and a one-line value alike."""
     lines = text.splitlines()
     found, k = [], 0
     while k < len(lines):
@@ -1212,7 +1331,13 @@ def run_blocks(text):
 def what_the_source_could_write(text, name):
     """Every paragraph a shell script, or the run blocks of a manifest, could write, reached or not,
     with the words each can come to, for the legal weight rule."""
-    sources = run_blocks(text) if name.endswith(('.yml', '.yaml')) else [text.replace('\r\n', '\n')]
+    if name.endswith(('.yml', '.yaml')):
+        try:
+            sources = run_blocks(text, name)
+        except NotYaml:
+            sources = run_blocks_as_lines(text)
+    else:
+        sources = [text.replace('\r\n', '\n')]
     return [unit for source in sources for unit in shell_paragraphs(source)]
 
 
@@ -2024,9 +2149,13 @@ SPELLED_OUT = re.compile(r'(?<![^\W\d_])(?:[^\W\d_][.\-_ |*/\u00b7]+){2,}[^\W\d_
 
 
 def fold(text):
-    """The text as a person reads it, for the scope and nothing else."""
+    """The text as a person reads it, for the scope and nothing else. A control character that is not
+    a space draws nothing either, and from 2026-09-26 it is taken out with the rest: YAML writes one
+    as `\\a` inside a quoted word, and "admis\\asible" in a step name passed while a page showed it
+    whole."""
     text = unicodedata.normalize('NFKC', text)
-    text = ''.join(ch for ch in text if unicodedata.category(ch) != 'Cf' and ord(ch) not in INVISIBLE)
+    text = ''.join(ch for ch in text if unicodedata.category(ch) != 'Cf' and ord(ch) not in INVISIBLE
+                   and not (unicodedata.category(ch) == 'Cc' and not ch.isspace()))
     text = ''.join(ch for ch in unicodedata.normalize('NFKD', text) if not unicodedata.combining(ch))
     return words_of(unicodedata.normalize('NFC', text.translate(CONFUSABLE)))
 
@@ -2901,6 +3030,7 @@ def surfaces(files, site, floor=SENTENCE_FLOOR):
     yield; the shipped surfaces are held to SENTENCE_FLOOR and a file named on the command line,
     which may be one seed sentence, to one."""
     out = []
+    NOT_LOADED.clear()
     for path in files:
         full = Path(path) if Path(path).is_absolute() else ROOT / path
         if not full.is_file():
@@ -2913,7 +3043,11 @@ def surfaces(files, site, floor=SENTENCE_FLOOR):
             text = markdown_text(text, 'cannot-prove' in name)
         elif name.endswith(('.yml', '.yaml')):
             out += [(f'{path}{SOURCE_READ}', u) for u in source_units(text, name)]
-            text = yaml_text(text)
+            try:
+                text = yaml_text(text, name)
+            except NotYaml as e:
+                NOT_LOADED.append(f'{path}: {e}. Its lines were read as written as well, and it fails until it loads')
+                text = yaml_lines(text)
         elif name.endswith('.sh'):
             if name in SUMMARY_SCRIPTS:
                 shown, unreached = what_a_run_shows(full, floor)
@@ -6742,6 +6876,7 @@ def another_tree(tree, pattern, policy):
     # A tree's surfaces are named to the legal weight rule with `tree:` before their path, so an
     # entry for this repository's README is not an entry for the README of a tree it reads.
     problems = contradictions(read_from, policy, None, lambda where: 'tree:' + where)
+    problems += list(NOT_LOADED)
     split = [(where, piece) for where, unit in not_above_the_list(read_from) for piece in pieces(unit)]
     problems += the_ceiling_is_stated(split)
     return len(split), len(files), problems
@@ -6960,6 +7095,119 @@ def the_summary_source_is_read_reached_or_not():
     return faults
 
 
+# A claim in every string form YAML has, each hiding a word of the claim from a reader of lines, and
+# where in the manifest it goes: a step at the end of the steps, an input or an output. Each carries
+# its own number, 6901 upward in the order written, so its refusal is known to be its own.
+MANIFEST_SHAPES = [
+    ('a double-quoted \\x escape', 'step', r'    - name: "Receipts are \x61dmissible evidence, 6901."'),
+    ('a double-quoted \\u escape', 'step', r'    - name: "Receipts are admissible evidence, 6902."'),
+    ('a double-quoted \\U escape', 'step', r'    - name: "Receipts are \U00000061dmissible evidence, 6903."'),
+    ('a double-quoted \\N escape', 'step', r'    - name: "Receipts are\Nadmissible evidence, 6904."'),
+    ('a double-quoted \\t escape', 'step', r'    - name: "Receipts are\tadmissible evidence, 6905."'),
+    ('a double-quoted \\_ escape', 'step', r'    - name: "Receipts are\_admissible evidence, 6906."'),
+    ('a double-quoted line break escaped', 'step', '    - name: "Receipts are ad\\\n        missible evidence, 6907."'),
+    ('single quotes doubled', 'step', "    - name: 'Receipts are ''admissible'' evidence, 6908.'"),
+    ('a folded block', 'step', '    - name: >-\n        Receipts are\n        admissible evidence, 6909.'),
+    ('a literal block', 'step', '    - name: |\n        Receipts are admissible\n        evidence, 6910.'),
+    ('a plain scalar over two lines', 'step', '    - name: Receipts are\n        admissible evidence, 6911.'),
+    ('an anchor and its alias', 'step', '    - env:\n        TW_NOTE: &claim "Receipts are \\x61dmissible evidence, 6912."\n'
+                                         '      name: *claim'),
+    ('a merge key', 'step', '    - name: Merged\n      env:\n        <<: {TW_NOTE: "Receipts are \\x61dmissible evidence, 6913."}'),
+    ('a !!str tag', 'step', r'    - name: !!str "Receipts are \x61dmissible evidence, 6914."'),
+    ('a !!binary tag', 'step', '    - name: !!binary UmVjZWlwdHMgYXJlIGFkbWlzc2libGUgZXZpZGVuY2UsIDY5MTUu'),
+    ('a key in escapes', 'step', '    - name: A key\n      env:\n        "Receipts are \\x61dmissible evidence, 6916": "1"'),
+    ('a flow mapping', 'step', r'    - {name: "Receipts are \x61dmissible evidence, 6917.", shell: bash, run: "true"}'),
+    ('a with: input', 'step', '    - uses: actions/github-script@v7\n      with:\n'
+                              '        script: "core.summary.addRaw(\'Receipts are \\x61dmissible evidence, 6918.\').write()"'),
+    ('an if: string', 'step', '    - name: Conditional\n      if: "contains(\'x\', \'Receipts are \\x61dmissible evidence, 6919.\')"'),
+    ('an input description', 'input', '  planted:\n    description: "Receipts are \\x61dmissible evidence, 6920."\n    required: false'),
+    ('an input default', 'input', '  planted:\n    description: A planted input.\n    required: false\n'
+                                  '    default: "Receipts are \\x61dmissible evidence, 6921."'),
+    ('an output description', 'output', '  planted:\n    description: "Receipts are \\x61dmissible evidence, 6922."\n'
+                                        '    value: x'),
+    ('a run block in escapes', 'step', '    - name: Escaped run\n      run: "echo \\"Receipts are \\x61dmissible evidence, 6923.\\""'),
+    ('a run block by alias', 'step', '    - name: Aliased run\n      env:\n'
+                                     '        TW_CMD: &cmd "echo Receipts are \\x61dmissible evidence, 6924."\n      run: *cmd'),
+    ('a run block by alias, built from pieces', 'step', '    - name: Aliased pieces\n      env:\n'
+                                                        '        TW_CMD: &pieces "a=adm; b=issible; echo \\"Receipts are $a$b evidence, 6925.\\""\n'
+                                                        '      run: *pieces'),
+    ('a control character escaped inside the word', 'step', r'    - name: "Receipts are admis\asible evidence, 6926."'),
+]
+# The same forms saying something honest, which every rule has to pass.
+MANIFEST_HONEST = [
+    ('an escape', 'step', r'    - name: "\x42uild the agent once more"'),
+    ('a folded block', 'step', '    - name: >-\n        Build the agent\n        once more'),
+    ('an anchor and its alias', 'step', '    - env:\n        TW_NOTE: &note "\\x42uild the agent once more"\n      name: *note'),
+    ('a merge key', 'step', '    - name: Merged\n      env:\n        <<: {TW_NOTE: "\\x42uild the agent once more"}'),
+    ('a !!binary tag', 'step', '    - name: !!binary QnVpbGQgdGhlIGFnZW50IG9uY2UgbW9yZS4='),
+]
+
+
+def planted_manifest(manifest, where, snippet):
+    """The shipped manifest with one step, input or output added where GitHub would read it."""
+    if where == 'step':
+        at = manifest.index('\nbranding:')
+        tail = '' if re.search(r'\b(run|uses):', snippet) else '\n      shell: bash\n      run: "true"'
+        return manifest[:at].rstrip('\n') + '\n\n' + snippet + tail + '\n' + manifest[at:]
+    at = manifest.index('\noutputs:' if where == 'input' else '\nruns:')
+    return manifest[:at].rstrip('\n') + '\n' + snippet + '\n' + manifest[at:]
+
+
+def manifest_refusals(manifest):
+    """Every paragraph of a manifest the legal weight rule refuses, read as the surfaces read it."""
+    refused = [p for p in sentences(yaml_text(manifest, 'action.yml')) if legal_weight(p, 'action.yml')]
+    refused += [' '.join((str(u),) + tuple(u.more)) for u in source_units(manifest, 'action.yml')
+                if source_faults(u, 'action.yml')]
+    return refused
+
+
+def the_manifest_is_read_as_github_decodes_it():
+    """Whether a claim in the manifest is refused in every string form YAML has, as GitHub decodes
+    it, whether the same forms said honestly pass, and whether a manifest that does not load is
+    unreadable rather than read as lines."""
+    faults = []
+    manifest = (ROOT / 'action.yml').read_text(encoding='utf-8').replace('\r\n', '\n')
+    if manifest_refusals(manifest):
+        faults.append(f'the shipped manifest is refused as GitHub decodes it: {manifest_refusals(manifest)[:1]}')
+    for number, (label, where, snippet) in enumerate(MANIFEST_SHAPES, start=6901):
+        number = str(number)
+        planted = planted_manifest(manifest, where, snippet)
+        try:
+            refused = manifest_refusals(planted)
+        except Unreadable as e:
+            faults.append(f'a claim in {label} made a manifest that does not load: {e}')
+            continue
+        if not [p for p in refused if number in p and 'admissible' in fold(p)]:
+            faults.append(f'a claim in {label} in the manifest was not refused as GitHub decodes it')
+    for label, where, snippet in MANIFEST_HONEST:
+        try:
+            refused = manifest_refusals(planted_manifest(manifest, where, snippet))
+        except Unreadable as e:
+            faults.append(f'an honest line in {label} made a manifest that does not load: {e}')
+            continue
+        if refused:
+            faults.append(f'an honest line in {label} in the manifest was refused: {refused[:1]}')
+    # A manifest that does not load fails the run, and a claim written into it is still named, read as
+    # its lines. The claim sits at the head of the file as a line of its own, which breaks the load.
+    import tempfile
+    try:
+        yaml_text(manifest.replace('\nbranding:', '\n  - "never closed\nbranding:'), 'action.yml')
+        faults.append('a manifest that does not load was read as though it did')
+    except NotYaml:
+        pass
+    broken = manifest.replace('\ninputs:', '\nReceipts meet QXR 6927; the rest follows.\n\ninputs:', 1)
+    with tempfile.TemporaryDirectory() as tmp:
+        planted = Path(tmp) / 'action.yml'
+        planted.write_text(broken, encoding='utf-8', newline='\n')
+        read_from, _ = surfaces([str(planted)], None, 1)
+        failed = list(NOT_LOADED)
+    if not failed:
+        faults.append('a manifest that does not load did not fail the run')
+    if not [u for w, u in read_from if 'QXR 6927' in u and legal_weight(u, 'action.yml')]:
+        faults.append('a claim in a manifest that does not load was not read as its lines')
+    return faults
+
+
 IN_LEGAL_SCOPE = ['FINRA 4511', 'FINRA Rule 6820', 'SEC 17a-4', 'SEC Rule 613', 'the CAT', 'the CFTC', 'ESMA', 'the FCA',
                   'MiFID II', 'RTS 25', 'eIDAS', 'a QTSP', 'the AI Act', 'Article 12', '21 CFR Part 11', 'HIPAA', 'SOX',
                   'GDPR', 'DORA', 'NIS2', 'PCI DSS', 'SOC 2', 'ISO 27001', 'NIST SP 800-53', 'FIPS 140', 'Regulation 2024/1689',
@@ -7057,6 +7305,7 @@ def the_legal_register_is_closed(policy):
             faults.append(f'this product\'s own words were put in scope by {legal_terms(sentence)}: {sentence}')
     faults += the_summary_is_read_as_it_is_shown()
     faults += the_summary_source_is_read_reached_or_not()
+    faults += the_manifest_is_read_as_github_decodes_it()
     # The places on a surface the rule did not read until the night of 2026-09-25: a line holding only
     # a no-break space, which Markdown does not end a paragraph on, the job summary written with the
     # other quote or a redirect, and the limitation list's version notes.
@@ -7241,6 +7490,7 @@ def main(argv):
         print(f'policy sentences: a surface could not be read: {e}', file=sys.stderr)
         return 2
     problems = contradictions(read_from, policy, landing)
+    problems += list(NOT_LOADED)
     # The figures and the ceiling are read in pieces, as they always were, so a paragraph handed
     # over whole for the legal weight rule is read across its sentences by nothing here.
     read_from = [(where, piece) for where, unit in not_above_the_list(read_from) for piece in pieces(unit)]

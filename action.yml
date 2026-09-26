@@ -156,7 +156,7 @@ runs:
         # From source, on the runner. There is no released binary to download yet, and a step that
         # fetched one from somewhere would be a step whose trust rests on that somewhere. Locked to
         # the committed Cargo.lock, so the tree a stranger pinned at a tag builds the crates that
-        # tag was audited with rather than whatever the registry resolves on the day.
+        # tag was built and tested with rather than whatever the registry resolves on the day.
         cargo build --release --locked --manifest-path "${{ github.action_path }}/Cargo.toml" -p timewitness-cli
 
     - name: Stamp
