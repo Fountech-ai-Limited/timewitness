@@ -127,7 +127,7 @@ sentences=(
   # Added 2026-09-09. The agent figures and the one-shot figures were taken
   # on the same desktop twelve minutes apart on purpose, so the comparison is a measurement
   # rather than two measurements from different days.
-  "Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms wide over three readings at 13:27 UTC, against 161.1 ms, 159.4 ms and 162.2 ms wide from the one-shot command on the same machine twelve minutes earlier."
+  "Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms wide over three readings at 13:27 UTC, against 161.1 ms, 159.4 ms and 162.2 ms wide from one-shot runs on that machine twelve minutes earlier."
   "What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit."
   # Replaced 2026-09-09, when a resident agent went into the tree, and again on 2026-09-25, when
   # `timewitness agent install` went in. The sentence it replaces said the agent installs no service
