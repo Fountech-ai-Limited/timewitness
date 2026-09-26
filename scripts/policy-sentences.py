@@ -126,7 +126,11 @@ number, a body's name, a Latin tag, the words of the law in eight languages, and
 script these pages are not written in. The same day the job summary stopped being read from its
 source: the script is run under bash, against a stand-in binary, once for each way it can end, and the
 rule reads what it printed, because eight ways of writing a line in shell had put a claim in front of
-a reader that a reader of source never saw. What it still cannot see is a claim that names nothing in its scope at all:
+a reader that a reader of source never saw. Later that day the source came back as a second reading
+beside the runs rather than instead of them: a run reads only the paths it takes, and six claims on
+one line with a test that ran were never printed. Every string the script and the Action's run
+blocks hold is now read whether or not a run reaches it, and there is a run for each event, runner
+and input value the script reads. What it still cannot see is a claim that names nothing in its scope at all:
 "your clocks sit where the rules want them" names no rule, and a bare "rule" is in forty paragraphs
 of the list about the agent's own rules, so it is not on the lists.
 
@@ -182,6 +186,7 @@ import os
 import re
 import shutil
 import sys
+import textwrap
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -652,8 +657,9 @@ def what_a_run_shows(full, floor=SENTENCE_FLOOR):
 
         # The runs share nothing but the script and the stand-in, so they run side by side: one after
         # another they took twenty seconds on Windows, where every process bash starts is slow.
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(SUMMARY_RUNS)) as pool:
-            done = list(pool.map(lambda job: one_run(job[0], *job[1]), enumerate(SUMMARY_RUNS)))
+        runs = summary_runs(source)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(RUN_WORKERS, len(runs))) as pool:
+            done = list(pool.map(lambda job: one_run(job[0], *job[1]), enumerate(runs)))
         for n, (here, run) in enumerate(done):
             texts = []
             summary = (here / 'summary.md')
@@ -692,6 +698,633 @@ def what_a_run_shows(full, floor=SENTENCE_FLOOR):
     unreached = [' '.join(s) for s in stretches]
     return '\n\n'.join(dict.fromkeys(words_of(p) for p in shown)), unreached
 
+
+# The job summary as its source could write it, reached or not, from 2026-09-26.
+#
+# The runs above know a line was reached when bash traced it, and bash traces a line, not a command.
+# On 2026-09-26 six claims naming FINRA 6820 passed because each sat on one line with a test that
+# ran: a one-line if, a case, a `||`, a while, a trap. The test was traced, so the line counted as
+# reached, and the echo after it never printed. Bash does print three of them under a scheduled
+# event, a Windows runner or an input somebody sets, and no run here was either.
+#
+# So the source is read as well, and control flow plays no part in it. Every quoted string, every
+# here-document body, and every word handed to a command, anywhere in the file and whether or not
+# any run reaches it, is held to the legal weight rule as a line of the summary. The lines echo and
+# printf write one after another are one paragraph, as they are in the summary, so a register entry
+# written over several lines still reads whole. Beside a line's own words go the words it can come
+# to when it runs, where the file says what they are: a string trap, eval or `bash -c` runs, a
+# command substitution, printf's format filled from its arguments, an escape spelled out, a base64
+# string decoded, and a variable given each value the file assigns it. Those are held to the rule
+# where they name something the paragraph's own words do not, so one word is not refused twice.
+#
+# A word that is not prose, a path, a flag, a format with no words in it, falls out of scope by the
+# same kind rules as everything else: a variable's name, a digest and a colour name nothing. What
+# this still cannot read is a claim that exists only at run time from pieces the file names
+# nowhere, such as one fetched over the network, and the runs are what read those.
+SOURCE_READ = ' as its source could write it, reached or not'
+
+SHELL_OPERATOR = re.compile(r';;&|;;|;&|&&|\|\||\|&|&>>|&>|<<<|<<-|<<|>>|>&|<&|>\||<>|[;&|()<>]')
+# The reserved words after which bash expects a command, and the others.
+SHELL_THEN_A_COMMAND = {'if', 'then', 'else', 'elif', 'while', 'until', 'do', '!', '{', '}', 'time', 'fi', 'done',
+                        'esac'}
+SHELL_RESERVED = SHELL_THEN_A_COMMAND | {'case', 'for', 'select', 'function', '[['}
+SHELL_ASSIGNMENT = re.compile(r'^([A-Za-z_]\w*)(?:\[[^]]*\])?\+?=')
+SHELL_WRITERS = {'echo', 'printf'}
+SHELL_DECLARERS = {'local', 'declare', 'typeset', 'export', 'readonly'}
+SHELL_REFERENCE = re.compile(r'\$\{[#!]?([A-Za-z_]\w*)|\$([A-Za-z_]\w*)')
+PRINTF_SPEC = re.compile(r'%[-+ #0-9.*]*[a-zA-Z]')
+BASE64_RUN = re.compile(r'[A-Za-z0-9+/]{16,}={0,2}')
+SHELL_ESCAPE = re.compile(r'\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|0[0-7]{0,3}|[1-7][0-7]{0,2}|.)', re.S)
+SHELL_ESCAPED = {'n': '\n', 't': '\t', 'r': '\r', 'a': '\a', 'b': '\b', 'f': '\f', 'v': '\v', 'e': '\x1b', 'E': '\x1b'}
+# How deep a string run as a command inside a string run as a command is read, and how many ways a
+# line's variables are filled in. Both are far past anything the script does; they stop a file
+# built to explode from hanging the check.
+SHELL_DEPTH = 4
+SHELL_VARIANTS = 64
+
+
+def shell_unescape(text):
+    """A string with its backslash escapes spelled out, as $'...', echo -e and printf write them."""
+    def one(m):
+        e = m.group(1)
+        if e[0] in 'xuU' and len(e) > 1:
+            try:
+                return chr(int(e[1:], 16))
+            except (ValueError, OverflowError):
+                return m.group()
+        if e[0].isdigit():
+            return chr(int(e, 8) % 256)
+        return SHELL_ESCAPED.get(e, e)
+    return SHELL_ESCAPE.sub(one, text)
+
+
+def _shell_quoted_end(src, i):
+    """Where the quoted string opening at src[i] ends, one past its closing quote. An unclosed one
+    runs to the end of the file, so what it holds is read rather than dropped."""
+    n, q = len(src), src[i]
+    if q == "'":
+        j = src.find("'", i + 1)
+        return n if j < 0 else j + 1
+    j = i + 1
+    while j < n:
+        c = src[j]
+        if c == '\\':
+            j += 2
+            continue
+        if c == q:
+            return j + 1
+        if q == '"' and c == '$' and src[j + 1:j + 2] in ('(', '{'):
+            j = _shell_closing(src, j + 1) + 1
+            continue
+        if q == '"' and c == '`':
+            j = _shell_quoted_end(src, j)
+            continue
+        j += 1
+    return n
+
+
+def _shell_closing(src, i):
+    """Where the bracket at src[i], ( or {, is closed, stepping over quotes; the end of the file where
+    nothing closes it."""
+    opening = src[i]
+    closing = ')' if opening == '(' else '}'
+    depth, n, j = 0, len(src), i
+    while j < n:
+        c = src[j]
+        if c == '\\':
+            j += 2
+            continue
+        if c in '\'"`':
+            j = _shell_quoted_end(src, j)
+            continue
+        if c == opening:
+            depth += 1
+        elif c == closing:
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    return n
+
+
+def _shell_double_quoted(body):
+    """What bash makes of the inside of a double-quoted string, expansions left as written, and the
+    commands substituted inside it."""
+    out, inner, k, n = [], [], 0, len(body)
+    while k < n:
+        c = body[k]
+        if c == '\\' and k + 1 < n:
+            nxt = body[k + 1]
+            if nxt == '\n':
+                k += 2
+                continue
+            out.append(nxt if nxt in '$`"\\' else c + nxt)
+            k += 2
+            continue
+        if c == '$' and body[k + 1:k + 2] in ('(', '{'):
+            j = _shell_closing(body, k + 1)
+            if body[k + 1] == '(':
+                inner.append(body[k + 2:j])
+            out.append(body[k:j + 1])
+            k = j + 1
+            continue
+        if c == '`':
+            j = _shell_quoted_end(body, k)
+            inner.append(body[k + 1:j - 1])
+            out.append(body[k:j])
+            k = j
+            continue
+        out.append(c)
+        k += 1
+    return ''.join(out), inner
+
+
+def _shell_word(src, i):
+    """One shell word from src[i], as (end, what bash hands the command with expansions left as
+    written, strings in it that bash may run as commands, array elements where it assigns an array)."""
+    n, out, inner, elements = len(src), [], [], None
+    while i < n:
+        c = src[i]
+        if c in ' \t\n;&|()<>':
+            if c in '<>' and src[i + 1:i + 2] == '(':
+                j = _shell_closing(src, i + 1)
+                inner.append(src[i + 2:j])
+                out.append(src[i:j + 1])
+                i = j + 1
+                continue
+            if c == '(' and SHELL_ASSIGNMENT.match(''.join(out)) and ''.join(out).endswith('='):
+                j = _shell_closing(src, i)
+                elements = [w for w, _, _, _ in shell_words(src[i + 1:j])]
+                out.append(' '.join(elements))
+                i = j + 1
+                continue
+            break
+        if c == '\\':
+            if src[i + 1:i + 2] == '\n':
+                i += 2
+                continue
+            out.append(src[i + 1:i + 2])
+            i += 2
+            continue
+        if c == "'":
+            j = _shell_quoted_end(src, i)
+            literal = src[i + 1:j - 1] if src[j - 1:j] == "'" and j - 1 > i else src[i + 1:j]
+            out.append(literal)
+            inner.append(literal)
+            i = j
+            continue
+        if c == '$' and src[i + 1:i + 2] == "'":
+            j = i + 2
+            while j < n and src[j] != "'":
+                j += 2 if src[j] == '\\' else 1
+            literal = shell_unescape(src[i + 2:j])
+            out.append(literal)
+            inner.append(literal)
+            i = j + 1
+            continue
+        if c == '"' or (c == '$' and src[i + 1:i + 2] == '"'):
+            if c == '$':
+                i += 1
+            j = _shell_quoted_end(src, i)
+            body = src[i + 1:j - 1] if src[j - 1:j] == '"' and j - 1 > i else src[i + 1:j]
+            text, subs = _shell_double_quoted(body)
+            out.append(text)
+            inner += [text] + subs
+            i = j
+            continue
+        if c == '$' and src[i + 1:i + 2] in ('(', '{'):
+            j = _shell_closing(src, i + 1)
+            if src[i + 1] == '(':
+                inner.append(src[i + 2:j])
+            out.append(src[i:j + 1])
+            i = j + 1
+            continue
+        if c == '`':
+            j = _shell_quoted_end(src, i)
+            inner.append(src[i + 1:j - 1])
+            out.append(src[i:j])
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    return i, ''.join(out), inner, elements
+
+
+def shell_items(src, first_line=1):
+    """Every word of a piece of shell with the line it starts on and the part it plays, as
+    (line, role, text, strings in it bash may run, array elements), and every here-document line as
+    (line, 'body', text, [], None). The roles: 'name' for the command, 'reserved' for a reserved
+    word, 'target' and 'fd' for a redirection's file and number, 'delimiter' for a here-document's,
+    'assign' for an assignment, and 'word' for anything else a command is handed, a case's
+    patterns among them."""
+    items, pending = [], []
+    n, i, line = len(src), 0, first_line
+    command, expect = True, None
+    # Each case still open, and where in it the next word is: its subject, a pattern, or a command.
+    cases = []
+    while i < n:
+        c = src[i]
+        if c == '\n':
+            i += 1
+            line += 1
+            for delimiter, tabs in pending:
+                while i < n:
+                    end = src.find('\n', i)
+                    end = n if end < 0 else end
+                    text = src[i:end].lstrip('\t') if tabs else src[i:end]
+                    i, at = min(end + 1, n), line
+                    line += 1
+                    if text == delimiter:
+                        break
+                    items.append((at, 'body', text, [], None))
+            pending, command = [], True
+            continue
+        if c in ' \t\r':
+            i += 1
+            continue
+        if c == '\\' and src[i + 1:i + 2] == '\n':
+            i += 2
+            line += 1
+            continue
+        if c == '#':
+            end = src.find('\n', i)
+            i = n if end < 0 else end
+            continue
+        op = SHELL_OPERATOR.match(src, i)
+        if op and not (op.group() in '<>' and src[i + 1:i + 2] == '('):
+            i = op.end()
+            o = op.group()
+            if o in ('<<', '<<-'):
+                expect = ('delimiter', o == '<<-')
+            elif o == '<<<':
+                expect = 'here-string'
+            elif o[-1] in '<>' or o in ('>&', '<&', '&>', '&>>', '>|', '<>'):
+                expect = 'target'
+            else:
+                command = True
+                if cases and cases[-1] == 'pattern' and o == ')':
+                    cases[-1] = 'command'
+                elif cases and cases[-1] == 'command' and o in (';;', ';&', ';;&'):
+                    cases[-1] = 'pattern'
+            continue
+        at = line
+        j, text, inner, elements = _shell_word(src, i)
+        line += src.count('\n', i, j)
+        if text.isdigit() and src[j:j + 1] in ('<', '>'):
+            role = 'fd'
+        elif isinstance(expect, tuple):
+            pending.append((text, expect[1]))
+            role, inner = 'delimiter', []
+        elif expect == 'target':
+            role = 'target'
+        elif expect == 'here-string':
+            role = 'word'
+        elif cases and cases[-1] == 'subject':
+            role = 'word'
+            if text == 'in':
+                cases[-1] = 'pattern'
+        elif cases and cases[-1] != 'subject' and text == 'esac' and (command or cases[-1] == 'pattern'):
+            role, command = 'reserved', False
+            cases.pop()
+        elif cases and cases[-1] == 'pattern':
+            role = 'word'
+        elif command and text in SHELL_RESERVED:
+            role, command = 'reserved', text in SHELL_THEN_A_COMMAND
+            if text == 'case':
+                cases.append('subject')
+        elif command and SHELL_ASSIGNMENT.match(text):
+            role = 'assign'
+        elif command:
+            role, command = 'name', False
+        else:
+            role = 'word'
+        expect = None
+        items.append((at, role, text, inner, elements))
+        i = j if j > i else i + 1
+    return items
+
+
+def shell_words(src):
+    """Every word in a piece of shell, as `shell_items` gives them, the command's own name included."""
+    return [(text, role, inner, elements) for _, role, text, inner, elements in shell_items(src)
+            if role not in ('body', 'delimiter')]
+
+
+def shell_assignments(items):
+    """Each value the file gives a variable, by name: an assignment, a declaration, an array's
+    elements, a for loop's list and printf -v."""
+    values = collections.defaultdict(list)
+    name_of = None
+    previous = []
+    for _, role, text, _, elements in items:
+        if role == 'name':
+            name_of, previous = os.path.basename(text), []
+            continue
+        if role == 'assign' or (role == 'word' and name_of in SHELL_DECLARERS):
+            m = SHELL_ASSIGNMENT.match(text)
+            if m:
+                values[m.group(1)] += (elements or []) + [text[m.end():]]
+        if role == 'word' and name_of == 'printf' and len(previous) >= 2 and previous[-2] == '-v':
+            values[previous[-1]].append(PRINTF_SPEC.sub(' ', text))
+        if role == 'word':
+            previous.append(text)
+    for k, (_, role, text, _, _) in enumerate(items):
+        if role == 'reserved' and text in ('for', 'select') and k + 1 < len(items):
+            loop = items[k + 1][2]
+            for _, r, t, _, _ in items[k + 3:]:
+                if r != 'word':
+                    break
+                values[loop].append(t)
+    return {k: list(dict.fromkeys(v))[:8] for k, v in values.items()}
+
+
+def shell_filled(text, values):
+    """Each way a line's words read with its variables given the values the file assigns them."""
+    ways = [text]
+    for _ in range(8):
+        grown = []
+        for way in ways:
+            names = [a or b for a, b in SHELL_REFERENCE.findall(way) if (a or b) in values]
+            if not names:
+                grown.append(way)
+                continue
+            name = names[0]
+            pattern = re.compile(r'\$\{[#!]?' + name + r'(?:\[[^]]*\])?[^}]*\}|\$' + name + r'(?!\w)')
+            grown += [pattern.sub(lambda _m, v=v: v, way) for v in values[name]]
+        ways = list(dict.fromkeys(grown))[:SHELL_VARIANTS]
+    return [w for w in ways if w != text]
+
+
+def printf_filled(words):
+    """printf's format with its arguments put where its conversions are, as far as the source says."""
+    if not words:
+        return ''
+    fmt, args = words[0], list(words[1:])
+    if not PRINTF_SPEC.search(fmt):
+        return shell_unescape(fmt)
+    rounds, out = 0, []
+    while True:
+        def one(m):
+            if m.group().endswith('%'):
+                return '%'
+            return args.pop(0) if args else ''
+        out.append(shell_unescape(PRINTF_SPEC.sub(one, fmt)))
+        rounds += 1
+        if not args or rounds > 8:
+            return ' '.join(out)
+
+
+def base64_said(text):
+    """What any base64 run in a string decodes to, where it decodes to words."""
+    import base64
+    found = []
+    for m in BASE64_RUN.finditer(text):
+        run = m.group()
+        run += '=' * (-len(run) % 4)
+        try:
+            said = base64.b64decode(run, validate=True).decode('utf-8')
+        except (ValueError, UnicodeDecodeError):
+            continue
+        # Words, not bytes that happen to be printable: a sentence has spaces and is mostly letters.
+        letters = sum(ch.isalpha() or ch == ' ' for ch in said)
+        if ' ' in said.strip() and letters >= 0.8 * len(said) and all(ch.isprintable() or ch in '\n\t' for ch in said):
+            found.append(said)
+    return found
+
+
+def shell_paragraphs(source, depth=0):
+    """What a piece of shell could put in front of a reader, whatever runs, as a list of
+    (paragraph, words it can come to at run time).
+
+    A paragraph is the words of one source line, or of a run of lines each of which echo or printf
+    writes, with a here-document's lines among them. A bare echo, a blank line of a here-document
+    and any line doing something else end the run. Comments and blank lines are nothing."""
+    items = shell_items(source)
+    values = shell_assignments(items)
+    lines = collections.OrderedDict()
+    name_of, skip, fresh, handed = None, 0, False, None
+
+    def entry(at):
+        return lines.setdefault(at, {'words': [], 'writes': False, 'inner': [], 'printf': []})
+
+    for at, role, text, inner, _ in items:
+        e = entry(at)
+        e['inner'] += inner
+        if role == 'body':
+            e['words'].append(text)
+            e['writes'] = True
+            continue
+        if role == 'name':
+            name_of, skip, fresh, handed = os.path.basename(text), 0, True, None
+            if name_of in SHELL_WRITERS:
+                e['writes'] = True
+            if name_of == 'printf':
+                handed = []
+                e['printf'].append(handed)
+            continue
+        if role in ('reserved', 'target', 'fd', 'delimiter'):
+            continue
+        if role == 'assign':
+            e['words'].append(text[SHELL_ASSIGNMENT.match(text).end():])
+            continue
+        # A word handed to a command. Echo's options, and printf's -v with the name it takes, are not
+        # words anybody is shown.
+        first, fresh = fresh, False
+        if name_of == 'echo' and first and re.fullmatch(r'-[neE]+', text):
+            fresh = True
+            continue
+        if name_of == 'printf' and (skip or text in ('-v', '--')):
+            skip = 1 if text == '-v' else 0
+            fresh = True
+            continue
+        if handed is not None:
+            handed.append(text)
+        if text in SHELL_WRITERS:
+            e['writes'] = True
+        e['words'].append(text)
+
+    paragraphs, current, extra = [], [], []
+
+    def close():
+        if current:
+            paragraphs.append((' '.join(current), list(extra)))
+        current.clear()
+        extra.clear()
+
+    for at, e in lines.items():
+        said = ' '.join(w for w in e['words'] if w.strip())
+        more = []
+        if said:
+            more += shell_filled(said, values)
+            if '\\' in said:
+                more.append(shell_unescape(said))
+            more += base64_said(said)
+        for words in e['printf']:
+            if words:
+                more.append(printf_filled(words))
+        if depth < SHELL_DEPTH:
+            for piece in e['inner']:
+                if piece.strip():
+                    for p, m in shell_paragraphs(piece, depth + 1):
+                        more += [p] + m
+                    more += base64_said(piece)
+        if e['writes'] and said:
+            current.append(said)
+            extra.extend(more)
+            continue
+        close()
+        if said:
+            paragraphs.append((said, more))
+        elif more:
+            paragraphs.append(('', more))
+    close()
+    return paragraphs
+
+
+def run_blocks(text):
+    """The shell of every `run:` in a workflow or an action's manifest, as a list of sources, a block
+    scalar and a one-line value alike."""
+    lines = text.splitlines()
+    found, k = [], 0
+    while k < len(lines):
+        m = re.match(r'^(\s*)(-\s+)?run:\s*(.*?)\s*$', lines[k])
+        if not m:
+            k += 1
+            continue
+        parent = len(m.group(1))
+        value = m.group(3)
+        k += 1
+        if re.fullmatch(r'[|>][-+0-9]*(?:\s+#.*)?', value):
+            body = []
+            while k < len(lines) and (not lines[k].strip() or len(lines[k]) - len(lines[k].lstrip()) > parent):
+                body.append(lines[k])
+                k += 1
+            found.append(textwrap.dedent('\n'.join(body)))
+        elif value.startswith("'") and value.endswith("'") and len(value) > 1:
+            found.append(value[1:-1].replace("''", "'"))
+        elif value.startswith('"') and value.endswith('"') and len(value) > 1:
+            found.append(shell_unescape(value[1:-1]))
+        else:
+            found.append(value)
+    return found
+
+
+def what_the_source_could_write(text, name):
+    """Every paragraph a shell script, or the run blocks of a manifest, could write, reached or not,
+    with the words each can come to, for the legal weight rule."""
+    sources = run_blocks(text) if name.endswith(('.yml', '.yaml')) else [text.replace('\r\n', '\n')]
+    return [unit for source in sources for unit in shell_paragraphs(source)]
+
+
+class Written(str):
+    """A paragraph the source could write, carrying in `more` the words its lines can come to when
+    they run. It is a string, so everything that reads a surface's units reads it as one."""
+    more = ()
+
+
+_TERMS = {}
+
+
+def terms_of(text):
+    """`legal_terms`, remembered, since a planted copy of the script is mostly the shipped one."""
+    if text not in _TERMS:
+        _TERMS[text] = tuple(legal_terms(text)) if text else ()
+    return _TERMS[text]
+
+
+def source_units(text, name):
+    """The paragraphs `what_the_source_could_write` finds that the legal weight rule has anything to
+    say about, as `Written` strings."""
+    units = []
+    for paragraph, more in what_the_source_could_write(text, name):
+        if terms_of(paragraph) or any(terms_of(m) for m in dict.fromkeys(more)):
+            unit = Written(paragraph)
+            unit.more = tuple(dict.fromkeys(more))
+            units.append(unit)
+    return units
+
+
+def source_faults(unit, where):
+    """The legal weight rule over one paragraph the source could write and the words it can come to."""
+    paragraph, more = str(unit), getattr(unit, 'more', ())
+    found = legal_weight(paragraph, where) if terms_of(paragraph) else []
+    named = set(terms_of(paragraph))
+    for said in more:
+        if set(terms_of(said)) - named:
+            found += [f'{f} (as the line can come to at run time: "{words_of(said)[:160]}")'
+                      for f in legal_weight(said, where)]
+    return found
+
+# The runs a job can be, past the ways the script ends, from 2026-09-26. A branch can wait on the
+# event that started the workflow, on the runner's system or on an input somebody set, and until
+# that day every run here went with all of those unset. So each variable the script reads gets runs
+# of its own: every event GitHub names for the event, every system and architecture a runner
+# reports for those, and for anything else, once set and once at each word the lines reading it hold
+# it against. A value nothing in the script reads cannot change what it prints, so a variable the
+# script never names gets no run, unless the script reads variables by a name it builds, lists them,
+# or hands its text to eval or another file, and then every one gets its runs. Each run changes one
+# thing, so a branch waiting on two at once is read only as its source, above.
+GITHUB_EVENTS = ('branch_protection_rule', 'check_run', 'check_suite', 'create', 'delete', 'deployment',
+                 'deployment_status', 'discussion', 'discussion_comment', 'fork', 'gollum', 'issue_comment', 'issues',
+                 'label', 'merge_group', 'milestone', 'page_build', 'public', 'pull_request', 'pull_request_review',
+                 'pull_request_review_comment', 'pull_request_target', 'push', 'registry_package', 'release',
+                 'repository_dispatch', 'schedule', 'status', 'watch', 'workflow_call', 'workflow_dispatch',
+                 'workflow_run')
+RUNNER_VALUES = {'GITHUB_EVENT_NAME': GITHUB_EVENTS, 'RUNNER_OS': ('Linux', 'Windows', 'macOS'),
+                 'RUNNER_ARCH': ('X86', 'X64', 'ARM', 'ARM64'), 'RUNNER_ENVIRONMENT': ('github-hosted', 'self-hosted'),
+                 'RUNNER_DEBUG': ('1',), 'GITHUB_ACTIONS': ('true',), 'CI': ('true',)}
+# What every run sets itself, so a run of its own for it would only break the run.
+RUN_PINNED = {'TW_SUBJECT', 'TW_ACTION_PATH', 'TW_OUTPUT', 'TW_KEY', 'GITHUB_STEP_SUMMARY', 'GITHUB_OUTPUT', 'TW_TRACE',
+              'TW_SCRIPT', 'HOME', 'TMPDIR', 'PATH', 'http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'no_proxy'}
+# The commands that read a variable without its name written out, or run text as a script.
+READS_ANY_VARIABLE = {'eval', 'env', 'printenv', 'compgen', 'source', '.', 'bash', 'sh'}
+LISTS_VARIABLES = {'set', 'declare', 'typeset', 'export', 'readonly', 'local'}
+# Most runs of bash at once. Past this, Windows spends the time starting processes.
+RUN_WORKERS = 16
+
+
+def summary_runs(source):
+    """Every run the summary script is given: the ways it ends, then one run for each value of each
+    variable it reads."""
+    items = shell_items(source)
+    read_on = collections.defaultdict(set)
+    for at, _, text, _, _ in items:
+        read_on[at] |= {a or b for a, b in SHELL_REFERENCE.findall(text)}
+    held = collections.defaultdict(list)
+    any_variable, case_of, command = False, None, None
+    for k, (at, role, text, _, _) in enumerate(items):
+        names = {a or b for a, b in SHELL_REFERENCE.findall(text)}
+        if '${!' in text:
+            any_variable = True
+        if role == 'name':
+            command = os.path.basename(text)
+            following = items[k + 1][1] if k + 1 < len(items) else None
+            if command in READS_ANY_VARIABLE or (command in LISTS_VARIABLES and (
+                    following != 'word' or items[k + 1][2] == '-p')):
+                any_variable = True
+        if role == 'reserved' and text == 'case':
+            case_of = set()
+        elif role == 'reserved' and text == 'esac':
+            case_of = None
+        elif case_of is not None and not case_of and names:
+            case_of = names
+        for name in names:
+            held[name]
+        if role == 'word' and '$' not in text and text.strip() and not re.search(r'\s', text) and len(text) <= 40:
+            word = text.strip('*?[]|')
+            for name in read_on[at] | (case_of or set()):
+                held[name].append(word)
+    runs = list(SUMMARY_RUNS)
+    given = {(k, v) for _, inputs in runs for k, v in inputs.items()}
+    for name in sorted(set(held) | (set(RUNNER_VALUES) if any_variable else set())):
+        if name in RUN_PINNED or not re.fullmatch(r'[A-Z][A-Z0-9_]*', name):
+            continue
+        words = list(RUNNER_VALUES.get(name, ())) + ['1'] + [w for w in held.get(name, ()) if w]
+        for word in list(dict.fromkeys(words))[:len(RUNNER_VALUES.get(name, ())) + 8]:
+            if (name, word) not in given:
+                runs.append((f'with {name} {word}', {name: word}))
+                given.add((name, word))
+    return runs
 
 def site_strings(node, key=''):
     if isinstance(node, dict):
@@ -2210,8 +2843,9 @@ def piece_faults(sentence, policy, landing=None, read=None):
 # Where a paragraph only the legal weight rule reads came from: the list's version notes.
 ABOVE_THE_LIST = ' above its first heading'
 # The places a paragraph is read from that only the legal weight rule reads: the list's version
-# notes, what a run of the job summary script shows, and the lines of it no run reached.
-LEGAL_ONLY = (ABOVE_THE_LIST, AS_SHOWN, NOT_REACHED)
+# notes, what a run of the job summary script shows, the lines of it no run reached, and what its
+# source could write whether or not a run reaches it.
+LEGAL_ONLY = (ABOVE_THE_LIST, AS_SHOWN, NOT_REACHED, SOURCE_READ)
 
 
 def contradictions(read_from, policy, landing, name=None):
@@ -2235,7 +2869,9 @@ def contradictions(read_from, policy, landing, name=None):
                                 f'{Path(__file__).name} that reaches them, or move them where a run does:\n'
                                 f'    "{unit[:220]}"')
             continue
-        if where.endswith(ABOVE_THE_LIST):
+        if where.endswith(SOURCE_READ):
+            found = [(fault, unit or unit.more[0]) for fault in source_faults(unit, name(where[:-len(SOURCE_READ)]))]
+        elif where.endswith(ABOVE_THE_LIST):
             found = [(fault, unit) for fault in legal_weight(unit, name(where))]
         elif where.endswith(AS_SHOWN):
             found = [(fault, unit) for fault in legal_weight(unit, name(where[:-len(AS_SHOWN)]))]
@@ -2275,13 +2911,15 @@ def surfaces(files, site, floor=SENTENCE_FLOOR):
         if name.endswith('.md'):
             notes = list_notes(text) if 'cannot-prove' in name else ''
             text = markdown_text(text, 'cannot-prove' in name)
-        elif name.endswith('.yml'):
+        elif name.endswith(('.yml', '.yaml')):
+            out += [(f'{path}{SOURCE_READ}', u) for u in source_units(text, name)]
             text = yaml_text(text)
         elif name.endswith('.sh'):
             if name in SUMMARY_SCRIPTS:
                 shown, unreached = what_a_run_shows(full, floor)
                 out += [(f'{path}{AS_SHOWN}', s) for s in sentences(shown)]
                 out += [(f'{path}{NOT_REACHED}', s) for s in unreached if legal_terms(s)]
+            out += [(f'{path}{SOURCE_READ}', u) for u in source_units(text, name)]
             text = summary_text(text)
         elif name.endswith('.json'):
             text = '\n\n'.join(s for _, s in site_strings(json.loads(text)))
@@ -6205,11 +6843,21 @@ def the_summary_is_read_as_it_is_shown():
         ('echo -e over two lines', 'echo -e "Receipts meet\\nQXR 6808 out of the box."'),
         ('built from pieces', 'q=QX; echo "Receipts meet ${q}R 6809 out of the box."'),
     ]
+    # Four claims only a run under one job's values prints, each written in small letters and put in
+    # capitals by tr, so the source names nothing and only what bash writes can refuse them.
+    waiting = [
+        ('on a scheduled event', 'if [ "${GITHUB_EVENT_NAME:-}" = schedule ]; then echo "receipts meet qxr 6891." | tr a-z A-Z; fi'),
+        ('on a Windows runner', 'case "${RUNNER_OS:-}" in Windows) echo "receipts meet qxr 6892." | tr a-z A-Z ;; esac'),
+        ('with an input set to a word the script tests for', '[ "${TW_ROUNDS:-16}" = 32 ] && echo "receipts meet qxr 6893." | tr a-z A-Z'),
+        ('on a macOS runner, in a case over lines', 'case "${RUNNER_OS:-}" in\n    macOS)\n        echo "receipts meet qxr 6894." | tr a-z A-Z\n        ;;\nesac'),
+    ]
     shipped = (ROOT / 'scripts' / 'action-stamp.sh').read_text(encoding='utf-8').replace('\r\n', '\n')
-    hidden = 'if [ "${TW_EVENT:-}" = never-taken ]; then\n    echo "Receipts meet QXR 6820 on this branch."\nfi\n'
+    # A branch waiting on the year 1970, which no run is given.
+    hidden = 'if [ "$(date +%Y)" = 1970 ]; then\n    echo "Receipts meet QXR 6820 on this branch."\nfi\n'
     with tempfile.TemporaryDirectory() as tmp:
         script = Path(tmp) / 'action-stamp.sh'
-        planted = shipped.rstrip('\n') + '\n' + ''.join(f'echo\n{line}\n' for _, line in shapes) + hidden
+        planted = (shipped.rstrip('\n') + '\n' + ''.join(f'echo\n{line}\n' for _, line in shapes + waiting)
+                   + 'true\n' + hidden)
         script.write_text(planted, encoding='utf-8', newline='\n')
         try:
             shown, unreached = what_a_run_shows(script)
@@ -6218,10 +6866,97 @@ def the_summary_is_read_as_it_is_shown():
     for n, (label, _) in enumerate(shapes, start=1):
         if f'Receipts meet QXR 68{n:02d} out of the box.' not in shown:
             faults.append(f'a claim written {label} was not read the way bash prints it')
+    for n, (label, _) in enumerate(waiting, start=91):
+        if f'RECEIPTS MEET QXR 68{n}.' not in shown:
+            faults.append(f'a claim bash prints only {label} was not read, so no run was that job')
+        elif not [f for f in legal_weight(f'RECEIPTS MEET QXR 68{n}.', 'scripts/action-stamp.sh')]:
+            faults.append(f'a claim bash prints only {label} was read and not refused')
     if not [u for u in unreached if 'QXR 6820 on this branch' in u and legal_terms(u)]:
         faults.append('a claim in a branch no run takes did not come back as a line no run reached')
     if [u for u in unreached if legal_terms(u) and 'QXR' not in u]:
         faults.append(f'the shipped script has lines in scope no run reaches: {[u for u in unreached if legal_terms(u)][:2]}')
+    return faults
+
+
+def the_summary_source_is_read_reached_or_not():
+    """Whether a claim anywhere in the job summary script, or in a run block of the manifest, is
+    refused whatever the control flow in front of it, and whether the shipped copies pass.
+
+    Each line below writes a claim in a place no run of the script reaches, or builds it in a way
+    the source spells out. The first fifteen are the shapes a blind set found on 2026-09-26, six of
+    which passed; the rest are shapes it did not try. Each is put alone at the end of the shipped
+    script, after a bare echo, and has to come back refused with its own number in the words."""
+    import base64
+    hidden = base64.b64encode(b'Receipts meet QXR 6857 out of the box.').decode()
+    out = '>> "$GITHUB_STEP_SUMMARY"'
+    shapes = [
+        ('a one-line if on the event', f'if [ "${{GITHUB_EVENT_NAME:-}}" = "schedule" ]; then echo "Receipts meet QXR 6851 out of the box." {out}; fi'),
+        ('a case on the runner', f'case "${{RUNNER_OS:-}}" in Windows) echo "Receipts meet QXR 6852 out of the box." {out} ;; esac'),
+        ('a function nobody calls', f'tw_never_called() {{ echo "Receipts meet QXR 6853 out of the box." {out}; }}'),
+        ('a here-document', f"cat {out} <<'EOS'\nReceipts meet QXR 6854 out of the box.\nEOS"),
+        ('pieces in variables', f'a=QX; b=R; echo "Receipts meet $a$b 6855 out of the box." {out}'),
+        ('printf with its words as arguments', f"printf 'Receipts meet %s %s out of the box.\\n' QXR 6856 {out}"),
+        ('base64', f'echo "{hidden}" | base64 -d {out}'),
+        ('a workflow command', 'echo "::notice::Receipts meet QXR 6858 out of the box."'),
+        ('after false &&', f'false && echo "Receipts meet QXR 6859 out of the box." {out}'),
+        ('a day that never comes', f'if [ "$(date +%u)" = "8" ]; then echo "Receipts meet QXR 6860 out of the box." {out}; fi'),
+        ('after ||', f'[ -z "${{TW_NEVER:-}}" ] || echo "Receipts meet QXR 6861 out of the box." {out}'),
+        ('the summary under another name', 'S="$GITHUB_STEP_SUMMARY"; echo "Receipts meet QXR 6862 out of the box." >> "$S"'),
+        ('a file descriptor', 'exec 3>>"$GITHUB_STEP_SUMMARY"; echo "Receipts meet QXR 6863 out of the box." >&3'),
+        ('a loop that never runs', f'while false; do echo "Receipts meet QXR 6864 out of the box." {out}; done'),
+        ('a trap', f"trap 'echo \"Receipts meet QXR 6865 out of the box.\" {out}' ERR"),
+        ('a function body over lines', f'tw_later() {{\n    echo "Receipts meet QXR 6866 out of the box." {out}\n}}'),
+        ('a subshell', f'false && ( echo "Receipts meet QXR 6867 out of the box." {out} )'),
+        ('a command substitution', 'said=$(echo "Receipts meet QXR 6868 out of the box.")'),
+        ('an array', 'claims=("Receipts meet QXR 6869 out of the box." "and a second")'),
+        ('printf -v', "printf -v line 'Receipts meet %s out of the box.' 'QXR 6870'"),
+        ('a here-string', f'false && cat <<< "Receipts meet QXR 6871 out of the box." {out}'),
+        ('an eval', "false && eval 'echo \"Receipts meet QXR 6872 out of the box.\"'"),
+        ('bash -c with the name split by quotes', "false && bash -c 'echo \"Receipts meet S\"\"EC 17a-4, 6873.\"'"),
+        ('an ANSI-C escape', "[ -n \"${TW_NEVER:-}\" ] && echo $'Receipts meet \\x51XR 6874 out of the box.'"),
+        ('a name in two variables of ours', 'a=S; b=EC; false && echo "Receipts meet $a$b 17a-4, 6875."'),
+        ('a name over two echoes', f'if false; then\n    echo -n "Receipts meet QX" {out}\n    echo "R 6876 out of the box." {out}\nfi'),
+        ('an octal escape in a format', "false && printf 'Receipts meet \\121XR %s\\n' 6877"),
+        ('a process substitution', 'false && cat <(echo "Receipts meet QXR 6878 out of the box.")'),
+        ('backticks', 'x=`echo "Receipts meet QXR 6879 out of the box."`'),
+        ('a here-document nobody reads', ": <<'NOTE'\nReceipts meet QXR 6880 out of the box.\nNOTE"),
+        ('escaped spaces', 'false && echo Receipts\\ meet\\ QXR\\ 6881\\ out\\ of\\ the\\ box.'),
+        ('a for loop over the claim', 'for line in "Receipts meet QXR 6882 out of the box."; do :; done'),
+        # Five whose words as written name nothing, so only what the line comes to when it runs can
+        # refuse them.
+        ('a name in two variables in small letters', 'a=fin; b=ra; false && echo "Receipts meet $a$b rules, 6885."'),
+        ('a name split by quotes inside bash -c', "false && bash -c 'echo \"Receipts meet fin\"\"ra rules, 6886.\"'"),
+        ('a name spelled in an octal escape', "false && printf 'Receipts meet \\146inra rules, 6887.\\n'"),
+        ('a name put together by printf', "false && printf 'Receipts meet %s%s rules, 6888.\\n' fin ra"),
+        ('a name split by quotes in a command substitution', 'said=$(echo "Receipts meet fin""ra rules, 6889.")'),
+    ]
+    faults = []
+    shipped = (ROOT / 'scripts' / 'action-stamp.sh').read_text(encoding='utf-8').replace('\r\n', '\n')
+    where = 'scripts/action-stamp.sh'
+    for label, line in shapes:
+        number = re.findall(r'68\d\d', line)[-1] if label != 'base64' else '6857'
+        planted = shipped.rstrip('\n') + '\necho\n' + line + '\n'
+        refused = [u for u in source_units(planted, 'action-stamp.sh') if source_faults(u, where)
+                   and any(number in s for s in (str(u),) + tuple(u.more))]
+        if not refused:
+            faults.append(f'a claim written as {label} was not refused as the source could write it')
+    # The shipped copies pass, and the one register entry the script writes is read whole.
+    units = source_units(shipped, 'action-stamp.sh')
+    if [u for u in units if source_faults(u, where)]:
+        faults.append(f'the shipped script is refused as its source reads: {[str(u)[:80] for u in units if source_faults(u, where)]}')
+    if not [u for u in units if str(u).startswith('This receipt does not prevent anything.') and str(u).endswith('engineering.')]:
+        faults.append('the register entry the script writes over four echoes was not read as one paragraph')
+    manifest = (ROOT / 'action.yml').read_text(encoding='utf-8')
+    if [u for u in source_units(manifest, 'action.yml') if source_faults(u, 'action.yml')]:
+        faults.append('the shipped manifest is refused as its run blocks read')
+    # A run block of the manifest, one written on its line and one as a block, each with a claim.
+    for label, block in (('on its line', '      run: echo "::warning::Receipts meet QXR 6883 out of the box."\n'),
+                         ('as a block', '      run: |\n        if false; then\n          echo "Receipts meet QXR 6884."\n'
+                                        '        fi\n')):
+        number = re.findall(r'68\d\d', block)[0]
+        planted = manifest.replace('\nbranding:', f'\n    - name: planted\n      shell: bash\n{block}\nbranding:')
+        if not [u for u in source_units(planted, 'action.yml') if source_faults(u, 'action.yml') and number in str(u)]:
+            faults.append(f'a claim in a run block written {label} was not refused')
     return faults
 
 
@@ -6321,6 +7056,7 @@ def the_legal_register_is_closed(policy):
         if legal_terms(sentence):
             faults.append(f'this product\'s own words were put in scope by {legal_terms(sentence)}: {sentence}')
     faults += the_summary_is_read_as_it_is_shown()
+    faults += the_summary_source_is_read_reached_or_not()
     # The places on a surface the rule did not read until the night of 2026-09-25: a line holding only
     # a no-break space, which Markdown does not end a paragraph on, the job summary written with the
     # other quote or a redirect, and the limitation list's version notes.
