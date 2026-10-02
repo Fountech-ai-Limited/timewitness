@@ -1,0 +1,225 @@
+//! Trust material a reader supplies, and the material that ships.
+//!
+//! "Offline-capable" is only a real property if there is a documented way to hand the verifier the
+//! keys it checks against. Otherwise every run quietly needs a network call to look one up, and the
+//! claim is an aspiration.
+//!
+//! So there are two routes and a reader picks. [`published`] is the set that ships: three Roughtime
+//! server keys, one drand chain and two timestamp authority certificate pins, every one of them
+//! published by a third party who has never heard of this product. [`parse`] reads a reader's own
+//! set out of a plain text file, which is what somebody who would rather not take our word for which
+//! keys are which uses.
+//!
+//! Shipping a key is not being the root of trust for it. Each one is a public fact a reader can
+//! compare against its publisher's own list, and the file format exists so that comparing is not the
+//! only option.
+//!
+//! ## The file
+//!
+//! One anchor per line, blank lines and lines starting with `#` ignored, fields separated by spaces:
+//!
+//! ```text
+//! roughtime <name> <32 bytes of hex>
+//! drand     <name> <32 bytes of hex, the chain hash> <96 bytes of hex, the group key> <period seconds> <genesis unix second>
+//! rfc3161   <name> <32 bytes of hex, a certificate digest> [more certificate digests]
+//! ```
+
+use timewitness_core::evidence::drand::Chain;
+use timewitness_core::evidence::rfc3161::{self, Authority};
+use timewitness_core::evidence::roughtime;
+use timewitness_receipt::anchors::TrustAnchors;
+
+/// The anchors that ship with this code.
+///
+/// Everything on this list is published by somebody else and none of it is ours. The reader who
+/// wants to check that for themselves compares each against the publisher's own list; the reader who
+/// would rather not trust the shipped copy supplies a file instead.
+#[must_use]
+pub fn published() -> TrustAnchors {
+    let mut anchors = TrustAnchors::none().with_drand(Chain::quicknet());
+    for key in roughtime::published_keys() {
+        anchors = anchors.with_roughtime(key.name, key.long_term_public_key);
+    }
+    for authority in rfc3161::published_authorities() {
+        anchors = anchors.with_authority(authority);
+    }
+    anchors
+}
+
+/// Why a trust material file could not be read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AnchorError {
+    /// Which line, counting from one, so a reader can go straight to it.
+    pub line: usize,
+    /// What is wrong with it.
+    pub detail: String,
+}
+
+impl core::fmt::Display for AnchorError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "line {}: {}", self.line, self.detail)
+    }
+}
+
+impl std::error::Error for AnchorError {}
+
+/// Read a reader's own trust material.
+///
+/// Refuses rather than skipping. A line nobody could parse is a key the reader meant to trust, and
+/// dropping it silently would leave them checking a receipt against less than they think, which is
+/// the one failure this whole crate is built to avoid.
+pub fn parse(text: &str) -> Result<TrustAnchors, AnchorError> {
+    let mut anchors = TrustAnchors::none();
+
+    for (index, raw) in text.lines().enumerate() {
+        let line = index + 1;
+        let trimmed = raw.split('#').next().unwrap_or("").trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = trimmed.split_whitespace().collect();
+        let fail = |detail: String| AnchorError { line, detail };
+
+        match fields[0] {
+            "roughtime" => {
+                if fields.len() != 3 {
+                    return Err(fail(
+                        "a roughtime anchor is the word, a name and thirty-two bytes of hex".into(),
+                    ));
+                }
+                let key = fixed::<32>(fields[2]).map_err(&fail)?;
+                anchors = anchors.with_roughtime(fields[1].to_string(), key);
+            }
+            "drand" => {
+                if fields.len() != 6 {
+                    return Err(fail(
+                        "a drand anchor is the word, a name, the chain hash, the group key, the \
+                         period in seconds and the genesis second"
+                            .into(),
+                    ));
+                }
+                anchors = anchors.with_drand(Chain {
+                    // The chain's name is compiled into a receipt's report rather than compared, so
+                    // it is leaked here as a static string the reader chose.
+                    name: Box::leak(fields[1].to_string().into_boxed_str()),
+                    hash: fixed::<32>(fields[2]).map_err(&fail)?,
+                    public_key: fixed::<96>(fields[3]).map_err(&fail)?,
+                    period_seconds: fields[4]
+                        .parse()
+                        .map_err(|_| fail("the period is not a whole number of seconds".into()))?,
+                    genesis_time: fields[5]
+                        .parse()
+                        .map_err(|_| fail("the genesis time is not a Unix second".into()))?,
+                });
+            }
+            "rfc3161" => {
+                if fields.len() < 3 {
+                    return Err(fail(
+                        "an rfc3161 anchor is the word, a name and at least one certificate digest"
+                            .into(),
+                    ));
+                }
+                let mut certificates = Vec::new();
+                for field in &fields[2..] {
+                    certificates.push(fixed::<32>(field).map_err(&fail)?);
+                }
+                anchors = anchors.with_authority(Authority {
+                    name: fields[1].to_string(),
+                    // A verifier never fetches, so there is nowhere to ask and the address is empty
+                    // rather than invented.
+                    url: String::new(),
+                    accepted_certificates: certificates,
+                });
+            }
+            other => {
+                return Err(fail(format!(
+                    "{other:?} is not a kind of anchor. This reads roughtime, drand and rfc3161"
+                )))
+            }
+        }
+    }
+
+    Ok(anchors)
+}
+
+/// Exactly `N` bytes of lower or upper case hexadecimal.
+fn fixed<const N: usize>(text: &str) -> Result<[u8; N], String> {
+    let bytes = unhex(text)?;
+    <[u8; N]>::try_from(bytes.as_slice()).map_err(|_| {
+        format!(
+            "{N} bytes of hex were expected and {} arrived",
+            text.len() / 2
+        )
+    })
+}
+
+fn unhex(text: &str) -> Result<Vec<u8>, String> {
+    if text.len() % 2 != 0 {
+        return Err("hexadecimal comes in pairs and this has an odd number of digits".to_string());
+    }
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() / 2);
+    for pair in bytes.chunks(2) {
+        let hi = digit(pair[0])?;
+        let lo = digit(pair[1])?;
+        out.push((hi << 4) | lo);
+    }
+    Ok(out)
+}
+
+fn digit(b: u8) -> Result<u8, String> {
+    match b {
+        b'0'..=b'9' => Ok(b - b'0'),
+        b'a'..=b'f' => Ok(b - b'a' + 10),
+        b'A'..=b'F' => Ok(b - b'A' + 10),
+        other => Err(format!(
+            "{:?} is not a hexadecimal digit",
+            char::from(other)
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_shipped_set_holds_all_three_kinds() {
+        let anchors = published();
+        assert_eq!(anchors.roughtime_servers.len(), 3);
+        assert_eq!(anchors.drand_chains.len(), 1);
+        assert_eq!(anchors.timestamp_authorities.len(), 2);
+    }
+
+    #[test]
+    fn a_reader_can_supply_their_own() {
+        let text = "\
+# my own list
+roughtime somewhere 4b70337d92790a349d909db564919bc6a7583ff4a813c7d7298d3e6a272c7a12
+rfc3161 an-authority 2da09da7f4131f9fe72db6c5e6e9c9656755af043f1ea742cc0d2120e141ebfc
+";
+        let anchors = parse(text).expect("two well-formed lines");
+        assert_eq!(anchors.roughtime_servers.len(), 1);
+        assert_eq!(anchors.timestamp_authorities.len(), 1);
+        assert_eq!(anchors.count(), 2);
+    }
+
+    #[test]
+    fn a_line_nobody_can_parse_refuses_rather_than_being_skipped() {
+        // Skipping it would leave the reader checking against less than they think they are.
+        let err = parse("roughtime somewhere not-hex").expect_err("that is not a key");
+        assert_eq!(err.line, 1);
+
+        let err = parse("\n\nsomething-else name 00").expect_err("that is not a kind of anchor");
+        assert_eq!(err.line, 3);
+
+        let err = parse("roughtime only-two-fields").expect_err("a key is missing");
+        assert!(err.detail.contains("thirty-two bytes"), "{}", err.detail);
+    }
+
+    #[test]
+    fn a_key_of_the_wrong_length_is_refused() {
+        let err = parse("roughtime somewhere 4b70").expect_err("four hex digits is not a key");
+        assert!(err.detail.contains("32 bytes"), "{}", err.detail);
+    }
+}

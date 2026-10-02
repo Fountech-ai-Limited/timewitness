@@ -1,0 +1,145 @@
+name: TimeWitness
+description: >-
+  Stamp a build, test, signing or provenance event with a bounded-time receipt, and put it where the
+  provenance that already ships can carry it.
+
+# The SPDX identifier sits here as well as in `LICENSE` and in `Cargo.toml` because this file is the
+# surface a stranger installs, and the tooling that audits what a workflow pulled in reads the
+# manifest rather than the repository around it. GitHub's own action schema does not define this
+# key, so it was watched being accepted rather than assumed: a copy of this manifest with an echo in
+# place of `runs:` was pushed and run, and the step ran.
+license: Apache-2.0
+
+# One line in a workflow file is the whole of what installing this costs. Every input below has a
+# default that works, there is no configuration file, and there is no secret to set: an agent key is
+# generated on the runner where none is supplied, and the receipt says so rather than implying that
+# the key means something it does not.
+#
+# What it cannot do is in the workflow summary it writes, every run, in the same words the shipped
+# list of limitations uses. The most important of them here: the width a runner gets is set by which
+# time sources that runner can reach, and not by its hardware. A runner reaching only the public
+# Roughtime servers is seconds wide whatever else is done to it, because those state their own
+# uncertainty as a radius in whole seconds. One with ordinary NTP servers in the round is
+# milliseconds: ours read 211.3 ms on 2026-09-09 at sixteen rounds, and 16.219 s on 2026-09-08 at
+# the four rounds this file shipped that day, against Roughtime alone. Neither is a figure for
+# anybody else's runner, and this comment said the seconds one was the only outcome until
+# 2026-09-10, which was true when it was written and stopped being true on 2026-09-09.
+
+inputs:
+  subject:
+    description: >-
+      The file to stamp. Whatever the step before this one produced: an archive, a binary, an image
+      digest written to a file, an in-toto statement.
+    required: true
+  event:
+    description: >-
+      What happened, for the person reading the provenance later. One of build, test, signing or
+      provenance, or anything else that describes the step.
+    required: false
+    default: build
+  output:
+    description: The receipt to write.
+    required: false
+    default: timewitness-receipt.cbor
+  key:
+    description: >-
+      A 32 byte agent key. One is generated on the runner where this file does not exist, which is
+      what keeps the install to one line. A generated key proves that one agent signed this receipt
+      and nothing about who that agent was, and there is no public key log to check it against yet.
+      Supply your own, from a secret, where you want a key that persists across runs.
+    required: false
+    default: timewitness-agent.key
+  rounds:
+    description: >-
+      How many times to poll the time sources before reading, and a longer wait. Below three the
+      model cannot fit a line, so the scatter of its own measurements is never measured and never
+      enters the width: the third round widens the bound and it narrows again from there. Measured
+      on 2026-09-08 against the three public Roughtime servers, two passes each: 6.2 s of width at
+      one round, 17.4 s at three, 16.4 s at four, 12.0 s at sixteen and 10.4 s at thirty-two.
+      Sixteen is the default because it takes about six seconds and each further second after it
+      buys less than a quarter of a second of width.
+    required: false
+    default: "16"
+  max-width:
+    description: >-
+      The widest interval this agent will sign for, in nanoseconds. The default is thirty seconds,
+      which is what a runner with only public Roughtime servers can honestly reach. Past it the
+      Action fails rather than issuing a receipt whose bound says nothing.
+    required: false
+    default: "30000000000"
+  previous:
+    description: >-
+      The receipt from the step before this one, where you are stamping several events in one
+      workflow run. The new receipt links back to it.
+    required: false
+    default: ""
+  sequence:
+    description: Where this receipt sits in that chain.
+    required: false
+    default: "1"
+  provenance:
+    description: >-
+      An SLSA provenance or in-toto statement to write the receipt into, as a predicate field. The
+      file is edited where it exists and left alone where it does not.
+    required: false
+    default: ""
+  image:
+    description: >-
+      A container image to label with the receipt. Where this is set the Action writes the label
+      arguments to its `labels` output rather than touching a registry, so the build that owns the
+      image applies them.
+    required: false
+    default: ""
+
+outputs:
+  receipt:
+    description: The path to the signed receipt.
+    value: ${{ steps.stamp.outputs.receipt }}
+  earliest-ns:
+    description: The earliest UTC the interval allows, in nanoseconds since the Unix epoch.
+    value: ${{ steps.stamp.outputs.earliest-ns }}
+  latest-ns:
+    description: The latest.
+    value: ${{ steps.stamp.outputs.latest-ns }}
+  width-ns:
+    description: How wide the interval is. This is the claim, and it is not an accuracy.
+    value: ${{ steps.stamp.outputs.width-ns }}
+  attestations:
+    description: How many third-party attestations the receipt carries, of the three roles.
+    value: ${{ steps.stamp.outputs.attestations }}
+  labels:
+    description: >-
+      Container image label arguments carrying the receipt, for the build that owns the image to
+      apply. Empty unless `image` was set.
+    value: ${{ steps.stamp.outputs.labels }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build the agent
+      shell: bash
+      run: |
+        # From source, on the runner. There is no released binary to download yet, and a step that
+        # fetched one from somewhere would be a step whose trust rests on that somewhere.
+        cargo build --release --manifest-path "${{ github.action_path }}/Cargo.toml" -p timewitness-cli
+
+    - name: Stamp
+      id: stamp
+      shell: bash
+      env:
+        TW_SUBJECT: ${{ inputs.subject }}
+        TW_EVENT: ${{ inputs.event }}
+        TW_OUTPUT: ${{ inputs.output }}
+        TW_KEY: ${{ inputs.key }}
+        TW_ROUNDS: ${{ inputs.rounds }}
+        TW_MAX_WIDTH: ${{ inputs.max-width }}
+        TW_PREVIOUS: ${{ inputs.previous }}
+        TW_SEQUENCE: ${{ inputs.sequence }}
+        TW_PROVENANCE: ${{ inputs.provenance }}
+        TW_IMAGE: ${{ inputs.image }}
+        TW_ACTION_PATH: ${{ github.action_path }}
+      run: bash "${{ github.action_path }}/scripts/action-stamp.sh"
+
+branding:
+  icon: clock
+  color: gray-dark

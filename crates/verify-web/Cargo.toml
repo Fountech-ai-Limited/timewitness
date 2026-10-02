@@ -1,0 +1,41 @@
+[package]
+name = "timewitness-verify-web"
+description = "The verifier core as WebAssembly, so the page and the command line check a receipt the same way."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+timewitness-core = { workspace = true }
+timewitness-receipt = { workspace = true }
+timewitness-verify = { workspace = true }
+
+# Nothing on the checking path asks for a random byte. A signature library below reaches for this
+# crate whether or not it uses it, and on this target it refuses to compile without being told where
+# randomness comes from, so it is told.
+#
+# `custom` rather than `js`. The `js` feature would bring in a binding generator, and the module
+# would then arrive with an import to satisfy, which means it no longer runs anywhere a plain
+# WebAssembly engine can load it. What is registered instead refuses, and see `src/randomness.rs` for
+# why refusing is the honest answer rather than a corner cut.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["custom"] }
+
+# Not `workspace = true`, and the one line that differs is the reason. Exporting a function to
+# WebAssembly needs `#[no_mangle]`, which this compiler classes as an unsafe attribute, so the
+# workspace's `forbid` cannot be met by a module that is callable from a page at all. `deny` here,
+# with the four exported functions each allowing it by name, so the exception is four lines a reader
+# can count rather than a crate-wide licence.
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+float_cmp = "warn"

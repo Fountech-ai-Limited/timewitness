@@ -1,0 +1,20 @@
+[package]
+name = "timewitness-agent"
+description = "The resident agent: one clock model held across stamps, and the local boundary a stamp asks it for a reading over."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+timewitness-core = { workspace = true }
+timewitness-sources = { workspace = true }
+timewitness-clock = { workspace = true }
+timewitness-platform = { workspace = true }
+timewitness-receipt = { workspace = true }
+getrandom = { version = "0.2", default-features = false }
+
+[lints]
+workspace = true

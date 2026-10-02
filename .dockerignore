@@ -1,0 +1,15 @@
+# What a container build does not need from this tree.
+#
+# `target/` is the reason this file exists. It runs to gigabytes on a machine that has built the
+# workspace, and a build that uploads it spends its whole time on bytes the build then deletes. A
+# remote build with this file missing sat for twenty minutes on 2026-09-12 and produced nothing.
+target/
+.git/
+
+# The site, which is a repository of its own and has nothing to do with a server binary.
+node_modules/
+
+# Anything a key could be in. Nothing under here should hold one, and a build context is exactly
+# the wrong place to find out otherwise.
+.secrets/
+*.key

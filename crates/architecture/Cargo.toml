@@ -1,0 +1,17 @@
+[package]
+name = "timewitness-architecture"
+description = "Tests that enforce the module boundary, so it is a check rather than a convention."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

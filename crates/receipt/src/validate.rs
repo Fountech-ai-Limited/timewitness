@@ -1,0 +1,985 @@
+//! The validator, which is where the rule that our own word is never third-party evidence stops
+//! being a policy and becomes a check.
+//!
+//! A receipt can be perfectly well formed and still be a lie. The lie available to a product in this
+//! field is always the same one: put the agent's own bound, which is the tightest number in the
+//! receipt and the only one that rests on trusting the agent, where a third party's signature is
+//! supposed to go. Nobody reading the receipt casually would notice, because both are numbers about
+//! time with a label beside them.
+//!
+//! So the checks below refuse three separate versions of that. A scheme that cannot support the role
+//! it claims. A scheme that names something of ours rather than a third party's, network time
+//! security in particular. And a claim of a third-party sandwich by a receipt that does not carry
+//! the three pieces a sandwich is made of, which today means any receipt at all, because nothing
+//! here can verify a signed response yet and a basis that cannot be checked is not granted.
+//!
+//! The rest of the checks are arithmetic: a receipt whose own numbers do not support each other is
+//! refused rather than half believed. That is a longer list than it looks, and every item on it was
+//! built as a correctly signed receipt and accepted before the check went in. A bound narrower than
+//! its own parts. A majority of no sources. A width past the ceiling the receipt states for itself.
+//! A corridor dated a year away from the reading it is offered as support for. None of those is
+//! malformed and none has a bad signature; each is a false claim in a well-formed file, which is the
+//! only kind this format is really up against.
+
+use crate::anchors::TrustAnchors;
+use crate::error::ReceiptError;
+use crate::report::{EntryReport, Outcome, Verified};
+use crate::schema::{AgentClaim, Evidence, Payload, Receipt, Role, FORMAT_VERSION};
+use crate::value::Value;
+use timewitness_core::evidence::{drand, rfc3161, roughtime, Checked};
+use timewitness_core::time::{Nanos, NANOS_PER_SEC};
+use timewitness_core::EpsilonBasis;
+
+/// The widest a third-party sandwich may be before it stops supporting anything.
+///
+/// An agent fetches its beacon and its witness around the moment it stamps, so a real sandwich is
+/// seconds wide. An hour is three orders of magnitude of slack and still refuses evidence lifted
+/// from a different part of the day, which is the shape the fraud takes: a genuine beacon and a
+/// genuine token, both real, both signed, and neither of them about this reading.
+pub const SANDWICH_WIDTH_CEILING: Nanos = 3_600 * NANOS_PER_SEC;
+
+/// Check everything about a receipt except its signature.
+///
+/// The signature is checked in [`crate::cose`], because the two failures are different questions:
+/// this one asks whether the receipt says something allowable, and that one asks whether the agent
+/// really said it.
+pub fn validate(receipt: &Receipt) -> Result<(), ReceiptError> {
+    validate_with(receipt, &TrustAnchors::none()).map(|_| ())
+}
+
+/// Check a receipt against what the verifier has decided to trust.
+///
+/// This is the same function as [`validate`] with one difference, and it is the difference
+/// everything about third-party evidence turns on. Every check a receipt can be held to on its own
+/// is run either way. What the anchors decide is whether the receipt is allowed to say its bound
+/// rests on third-party evidence, and it is allowed to say that only where this code has verified,
+/// against a key chosen in advance, one signature in each of the three roles.
+///
+/// The report it returns says which entries were checked and how. That is not decoration: a
+/// verifier that answers with a single word has hidden the only thing a careful reader wants.
+pub fn validate_with(receipt: &Receipt, anchors: &TrustAnchors) -> Result<Verified, ReceiptError> {
+    check_version(receipt)?;
+    check_payload(receipt)?;
+    check_chain(receipt)?;
+    check_interval(receipt)?;
+    check_breakdown(receipt)?;
+    check_sources(receipt)?;
+    check_against_its_own_policy(receipt)?;
+    for entry in &receipt.evidence {
+        check_evidence_entry(entry)?;
+    }
+    check_evidence_against_the_interval(receipt)?;
+
+    let entries = examine(receipt, anchors)?;
+    let (granted, reason) = decide_basis(receipt, &entries)?;
+
+    Ok(Verified {
+        entries,
+        basis_granted: granted,
+        basis_reason: reason,
+        anchors_held: anchors.count(),
+    })
+}
+
+/// Check the shape of a receipt as a raw value tree, before it has been read into fields.
+///
+/// This exists for the one thing the typed form cannot express: a receipt that has moved the
+/// agent's own claim into an evidence slot, or dressed an evidence entry up as a claim. Once the
+/// bytes are parsed into a `Receipt` those are gone, so the check has to happen on the tree.
+pub fn validate_shape(value: &Value) -> Result<(), ReceiptError> {
+    let claim = value
+        .get("claim")
+        .ok_or_else(|| ReceiptError::Field("there is no claim".into()))?;
+
+    if claim.has("role") {
+        return Err(ReceiptError::OurClaimAsEvidence(
+            "the agent's own claim carries a role, and only third-party evidence has a role"
+                .to_string(),
+        ));
+    }
+    if claim.has("blob") {
+        return Err(ReceiptError::OurClaimAsEvidence(
+            "the agent's own claim carries a signed blob, and there is nothing of anybody else's \
+             in it to sign"
+                .to_string(),
+        ));
+    }
+
+    let evidence = value
+        .get("evidence")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ReceiptError::Field("there is no evidence list".into()))?;
+
+    for entry in evidence {
+        if entry.has("kind") {
+            let kind = entry.get("kind").and_then(Value::as_text).unwrap_or("");
+            return Err(ReceiptError::OurClaimAsEvidence(format!(
+                "an evidence entry carries the discriminant {kind:?}, which belongs to the agent's \
+                 own claim"
+            )));
+        }
+        for required in ["role", "scheme", "at_ns", "blob"] {
+            if !entry.has(required) {
+                return Err(ReceiptError::Field(format!(
+                    "an evidence entry has no {required}"
+                )));
+            }
+        }
+        if entry.has("earliest_ns") || entry.has("latest_ns") || entry.has("breakdown") {
+            return Err(ReceiptError::OurClaimAsEvidence(
+                "an evidence entry carries the fields of the agent's own bound".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn check_version(receipt: &Receipt) -> Result<(), ReceiptError> {
+    if receipt.version != FORMAT_VERSION {
+        return Err(ReceiptError::UnknownVersion(receipt.version));
+    }
+    Ok(())
+}
+
+fn check_payload(receipt: &Receipt) -> Result<(), ReceiptError> {
+    match receipt.payload.expected_length() {
+        None => Err(ReceiptError::Field(format!(
+            "the payload was hashed with {:?}, which this code does not know, so it cannot say \
+             whether the hash is the right length",
+            receipt.payload.algorithm
+        ))),
+        Some(n) if receipt.payload.hash.len() != n => Err(ReceiptError::Inconsistent(format!(
+            "the payload hash is {} bytes and {} produces {n}",
+            receipt.payload.hash.len(),
+            receipt.payload.algorithm
+        ))),
+        Some(_) => Ok(()),
+    }
+}
+
+fn check_chain(receipt: &Receipt) -> Result<(), ReceiptError> {
+    if let Some(prev) = &receipt.chain_previous {
+        if prev.len() != 32 {
+            return Err(ReceiptError::Inconsistent(format!(
+                "the chain link is {} bytes and a receipt hash is 32",
+                prev.len()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn check_interval(receipt: &Receipt) -> Result<(), ReceiptError> {
+    let c = &receipt.claim;
+    if c.earliest > c.latest {
+        return Err(ReceiptError::Inconsistent(
+            "the earliest possible time is after the latest possible time".into(),
+        ));
+    }
+    if receipt.utc_estimate < c.earliest || receipt.utc_estimate > c.latest {
+        return Err(ReceiptError::Inconsistent(
+            "the reading sits outside the interval the receipt claims for it".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn check_breakdown(receipt: &Receipt) -> Result<(), ReceiptError> {
+    let b = &receipt.claim.breakdown;
+    for (name, part) in [
+        ("intersection_half_ns", b.intersection_half),
+        ("network_half_ns", b.network_half),
+        ("scheduling_ns", b.scheduling),
+        ("oscillator_holdover_ns", b.oscillator_holdover),
+        ("model_residual_ns", b.model_residual),
+        ("safety_margin_ns", b.safety_margin),
+    ] {
+        if part < 0 {
+            return Err(ReceiptError::Inconsistent(format!(
+                "{name} is negative, and no part of a width can be"
+            )));
+        }
+    }
+
+    // The stated parts have to account for the width the receipt claims, and they have to account
+    // for no more than it either. Both directions matter and the second one matters most.
+    //
+    // Parts adding to less than the interval describe a bound that was not computed from them.
+    // Parts adding to more than the interval are worse: that receipt is claiming precision its own
+    // arithmetic does not support, which is the overclaim this product exists to refuse, and it is
+    // the direction a product is tempted in rather than the direction it drifts in.
+    //
+    // The slack is two nanoseconds. The model rounds the half intersection up, so a whole width of
+    // odd length comes back one nanosecond over, and one more is left for a term that starts
+    // rounding the same way. Anything further apart than that is a receipt whose own numbers do not
+    // describe each other.
+    let parts = 2 * b.half_width();
+    let width = receipt.width();
+    if parts < width || parts > width + 2 {
+        return Err(ReceiptError::Inconsistent(format!(
+            "the parts of the bound add to {parts} ns and the interval is {width} ns wide"
+        )));
+    }
+    Ok(())
+}
+
+fn check_sources(receipt: &Receipt) -> Result<(), ReceiptError> {
+    let c = &receipt.claim;
+    if c.sources_kept > c.sources_offered {
+        return Err(ReceiptError::Inconsistent(format!(
+            "{} sources were kept out of {} offered",
+            c.sources_kept, c.sources_offered
+        )));
+    }
+    if c.sources_offered as usize != c.sources.len() {
+        return Err(ReceiptError::Inconsistent(format!(
+            "the receipt says {} sources answered and lists {}",
+            c.sources_offered,
+            c.sources.len()
+        )));
+    }
+    let listed_kept = c.sources.iter().filter(|s| s.kept).count() as u32;
+    if listed_kept != c.sources_kept {
+        return Err(ReceiptError::Inconsistent(format!(
+            "the receipt says {} sources were kept and marks {listed_kept}",
+            c.sources_kept
+        )));
+    }
+    // A source cannot be kept and also have told the agent its own clock was wrong. The agent drops
+    // such a source before the intersection is taken, so a receipt marking one as kept describes a
+    // round the shipped code cannot have run.
+    if let Some(s) = c
+        .sources
+        .iter()
+        .find(|s| s.kept && !AgentClaim::was_a_candidate(s))
+    {
+        return Err(ReceiptError::Inconsistent(format!(
+            "source {} said its own clock was not synchronised and the receipt marks it as kept",
+            s.id
+        )));
+    }
+    // The majority is over the sources that could have disagreed with somebody, which is every
+    // source that answered less the ones that said their own clock was wrong. That is the set
+    // Marzullo's guarantee is about and the set the agent applies its own floors to, so it is the
+    // one a reader has to apply this test over as well.
+    //
+    // It was `sources_offered` until that field was corrected to mean what it has always said it
+    // means, which is how many answered. Taking the majority over that number would have refused an
+    // honest round in which half the sources reported themselves unsynchronised: they cannot be in
+    // the denominator of a test about disagreement when nothing they said could disagree with
+    // anybody.
+    //
+    // No exemption for a receipt with no candidates at all. Zero is not a special case that escapes
+    // the test, it is the case the whole design refuses: a bound derived from nothing at all, with
+    // no clock but ours behind it.
+    let candidates = c.candidates();
+    if 2 * (c.sources_kept as usize) <= candidates {
+        return Err(ReceiptError::Inconsistent(format!(
+            "{} of {candidates} sources that could disagree agreed, which is not a majority, so \
+             this bound should never have been issued",
+            c.sources_kept
+        )));
+    }
+    check_operators(receipt)
+}
+
+/// The same majority test, over the parties behind the sources rather than over the names.
+///
+/// A count of sources counts names and names are free: one company answering on nine addresses is
+/// nine entries in the list above, a clean majority, and one chance to be wrong. Marzullo's
+/// guarantee is about faults, a fault happens to a party, so this is the arithmetic the guarantee
+/// actually rests on. The agent refuses such a round; this is the same rule applied from the outside
+/// by somebody who was not there, which is the only version of it a stranger can rely on.
+///
+/// **The count is recomputed here and never read out of the receipt, because the receipt does not
+/// carry one.** A stated count would be the agent's arithmetic and a reader would be checking it
+/// against itself. The operator labels are what the agent observed, and the counting is the reader's
+/// to do, exactly as with the source list beside `sources_kept`.
+///
+/// A receipt naming operators for some sources and not others is read with every unnamed source
+/// sharing one unknown party between them, which lowers the count rather than raising it: a gap in
+/// the labels can only ever cost a receipt this test, never win it.
+///
+/// **A receipt naming nobody at all is read the same way and is not excused.** It was until
+/// 2026-09-10: the test returned early for any such receipt, on the grounds that it predated the
+/// field and should not be held to a format it came before. What that reached was not only the old
+/// receipt. It reached any receipt at all with the labels left off, and such a receipt skipped both
+/// this majority test and the agent's own stated floor, so an agent could state that it signs
+/// nothing under three parties, name none, and be judged to have kept its word.
+///
+/// The old receipt does not need the carve-out and never did. The floor field and the labels went
+/// in together, in one commit on 2026-09-09, so a receipt written before the labels states no floor
+/// either. It has one unknown party behind it, no floor to fall short of, and it passes here on its
+/// own merits with nothing set aside for it.
+///
+/// This is still the agent-kept-its-word question and not the reader's. `timewitness_verify` asks
+/// the reader's, which is whether they should believe the sources failed separately, and it refuses
+/// an unlabelled receipt outright because nothing in one gives them anything to believe it on.
+///
+/// Added 2026-09-09.
+fn check_operators(receipt: &Receipt) -> Result<(), ReceiptError> {
+    let c = &receipt.claim;
+
+    // The counting itself is `AgentClaim::operators`, so this test and the verifier's own floor
+    // cannot drift apart. What each of them does with the answer is different and stays here.
+    let operators = c.operators();
+
+    if 2 * operators.kept <= operators.offered {
+        return Err(ReceiptError::Inconsistent(format!(
+            "the sources that agreed are run by {} of the {} operators that answered, which is \
+             not a majority of them, so this bound should never have been issued",
+            operators.kept, operators.offered
+        )));
+    }
+
+    if let Some(floor) = c.policy.min_operators {
+        if (operators.kept as u32) < floor {
+            // Two sentences for the same arithmetic, because a receipt that named nobody and one
+            // that named one party are different things and a reader deciding what to do next
+            // needs to know which they are holding.
+            return Err(ReceiptError::Inconsistent(if c.names_no_operator() {
+                format!(
+                    "this receipt names no operator for any of its sources and this agent says it \
+                     needs {floor} operators before it will sign at all, so nothing in it shows \
+                     that the agent kept to its own word"
+                )
+            } else {
+                format!(
+                    "{} operators stood behind this bound and this agent says it needs {floor} \
+                     before it will sign at all",
+                    operators.kept
+                )
+            }));
+        }
+    }
+
+    Ok(())
+}
+
+/// Check the receipt against the policy it states for itself.
+///
+/// Every receipt carries the widest interval its agent said it would sign for and the fewest
+/// sources it said it would answer on. Checking a receipt against its own stated numbers is what
+/// the rest of this file does, and these two were being carried and read by nothing.
+///
+/// This is not a check that the policy is a good one. A receipt stating a lax policy and keeping to
+/// it passes here and is judged on the numbers instead, against the floor the reader brought, which
+/// is `crates/verify`. What this catches is an agent that broke its own word, which is a different
+/// and simpler question.
+///
+/// One value is refused outright rather than judged, and it is zero. A ceiling of zero was read as
+/// an absent ceiling, so a receipt stating it was held to no width at all. Zero is also what the
+/// field holds when nobody filled it in, which makes the deliberate reading and the oversight the
+/// same value, and an unset field is not a permission. Read as written it says the agent would sign
+/// no interval of any width, and the receipt in front of the reader is one it signed.
+fn check_against_its_own_policy(receipt: &Receipt) -> Result<(), ReceiptError> {
+    let c = &receipt.claim;
+    if c.policy.max_bound_width <= 0 {
+        return Err(ReceiptError::Inconsistent(format!(
+            "the agent states there is no interval it would sign, a ceiling of {} ns, and then \
+             signed one {} ns wide",
+            c.policy.max_bound_width,
+            receipt.width()
+        )));
+    }
+    if receipt.width() > c.policy.max_bound_width {
+        return Err(ReceiptError::Inconsistent(format!(
+            "the interval is {} ns wide and this agent says it will not sign one wider than {} ns",
+            receipt.width(),
+            c.policy.max_bound_width
+        )));
+    }
+    // Counted over the candidates, because that is the count the agent applies this floor to. It
+    // was over `sources_offered` until that field was corrected to mean how many answered, which
+    // let a round clear the agent's own stated floor on sources that had told it their clocks were
+    // wrong.
+    let candidates = c.candidates();
+    if candidates < c.policy.min_sources as usize {
+        return Err(ReceiptError::Inconsistent(format!(
+            "{candidates} sources answered with a clock they stood behind and this agent says it \
+             needs {} before it will answer at all",
+            c.policy.min_sources
+        )));
+    }
+    // The holdover ceiling, checked the same way and for the same reason. `since_last_sync` is the
+    // age of the newest exchange the interval rests on, so a receipt whose age is past its own
+    // stated ceiling is one the agent's own rules say it should have refused. Nothing outside the
+    // receipt is needed to see it, which is what makes it worth carrying.
+    if let Some(ceiling) = c.policy.max_holdover {
+        if ceiling <= 0 {
+            return Err(ReceiptError::Inconsistent(format!(
+                "the agent states it will extrapolate for {ceiling} ns and then signed a reading \
+                 it took {} ns after the last it heard from a source",
+                c.since_last_sync
+            )));
+        }
+        if c.since_last_sync > ceiling {
+            return Err(ReceiptError::Inconsistent(format!(
+                "the newest exchange behind this interval is {} ns old and this agent says it \
+                 will not extrapolate past {ceiling} ns",
+                c.since_last_sync
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn check_evidence_entry(entry: &Evidence) -> Result<(), ReceiptError> {
+    // Our own word as third-party evidence, refused in its sharpest form. Network time security
+    // improves a clock and can never be portable evidence, because its keys are symmetric and a
+    // client holding one could forge a response to itself.
+    if entry.scheme.is_ours_rather_than_a_third_partys() {
+        return Err(ReceiptError::OurClaimAsEvidence(format!(
+            "an evidence entry carries a {} response, which authenticates with a key we also hold, \
+             so a stranger has no signature to check",
+            entry.scheme.as_str()
+        )));
+    }
+
+    match entry.scheme.proves() {
+        None => Err(ReceiptError::MislabelledEvidence {
+            role: entry.role.as_str().to_string(),
+            scheme: entry.scheme.as_str().to_string(),
+            why: "this format does not know that scheme, and it will not assume a scheme it has \
+                  never heard of proves anything"
+                .to_string(),
+        }),
+        Some(actual) if actual != entry.role => Err(ReceiptError::MislabelledEvidence {
+            role: entry.role.as_str().to_string(),
+            scheme: entry.scheme.as_str().to_string(),
+            why: format!(
+                "a {} response proves {}",
+                entry.scheme.as_str(),
+                actual.as_str()
+            ),
+        }),
+        Some(_) => {
+            if entry.blob.is_empty() {
+                return Err(ReceiptError::Field(format!(
+                    "the {} entry carries no signed response, so there is nothing to check",
+                    entry.scheme.as_str()
+                )));
+            }
+            if let Some(r) = entry.radius {
+                if r < 0 {
+                    return Err(ReceiptError::Inconsistent(format!(
+                        "the {} entry states a radius of {r} ns, and no half width can be negative",
+                        entry.scheme.as_str()
+                    )));
+                }
+            }
+            if entry.role == Role::AuthenticatedUtcCorridor {
+                if entry.nonce.is_none() {
+                    return Err(ReceiptError::Field(
+                        "a corridor entry has no nonce, and without one the response could have \
+                         been signed for somebody else at some other time"
+                            .to_string(),
+                    ));
+                }
+                if entry.radius.is_none() {
+                    // A corridor is the role that gives the bound its outside support, so it is the
+                    // one role whose own interval has to be checkable against the interval it
+                    // supports. A response stating a midpoint and no radius says nothing testable.
+                    return Err(ReceiptError::Field(
+                        "a corridor entry states an instant and no radius, so it does not say what \
+                         interval it proves and nothing can check it against this reading"
+                            .to_string(),
+                    ));
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Look at every evidence entry against what the verifier trusts.
+///
+/// An entry with a matching anchor is verified. An entry with no matching anchor is reported as
+/// unchecked, which is a fact about the verifier rather than a fault in the receipt, and which is
+/// said out loud rather than glossed. An entry that has an anchor and fails against it refuses the
+/// whole receipt: a receipt carrying a signature that does not check out is not a receipt with a
+/// weaker claim, it is a receipt that is wrong.
+fn examine(receipt: &Receipt, anchors: &TrustAnchors) -> Result<Vec<EntryReport>, ReceiptError> {
+    let mut reports = Vec::with_capacity(receipt.evidence.len());
+    for entry in &receipt.evidence {
+        let outcome = match entry.scheme.as_str() {
+            roughtime::SCHEME => examine_corridor(entry, &receipt.payload, anchors)?,
+            drand::SCHEME => examine_beacon(entry, anchors)?,
+            rfc3161::SCHEME => examine_witness(entry, &receipt.payload, anchors)?,
+            other => Outcome::NotChecked(format!(
+                "this code knows how to check a roughtime response, a drand round and an rfc3161 \
+                 token, and {other} is none of them"
+            )),
+        };
+        reports.push(EntryReport {
+            role: entry.role,
+            scheme: entry.scheme.as_str().to_string(),
+            detail: entry.detail.clone(),
+            outcome,
+        });
+    }
+    Ok(reports)
+}
+
+fn refused(scheme: &str, signer: &str, why: &str) -> ReceiptError {
+    ReceiptError::Inconsistent(format!(
+        "the {scheme} entry offered as evidence does not check out against {signer}: {why}"
+    ))
+}
+
+fn into_outcome(checked: Checked) -> Outcome {
+    let (earliest, latest) = (checked.earliest(), checked.latest());
+    Outcome::Checked {
+        signer: checked.signer,
+        checks: checked.checks,
+        earliest,
+        latest,
+    }
+}
+
+/// A fault anybody can see, whatever keys they hold.
+///
+/// Added 2026-09-08. Each of the three checks below returned `NotChecked` the moment the verifier
+/// held no anchor for the scheme, before it had looked at the bytes at all, so a receipt whose blob
+/// was four bytes of `deadbeef` was refused by the default verifier and accepted under
+/// `--no-anchors` with `accepted = true` and exit 0. That is a guard failing open on the field
+/// every shell in this repository reads.
+///
+/// The distinction the flag exists for is kept and it is the point of this function. A well-formed
+/// attestation nobody holds a key for is `not checked`, which is a fact about the reader and not a
+/// fault in the receipt. A blob that is not the shape the scheme stores needs no key to see, so it is
+/// a failure at every setting of the flag. Unpacking is the whole of the test: it reads a magic
+/// string and two lengths and touches no cryptography.
+fn well_formed(
+    scheme: &str,
+    blob: &[u8],
+    unpack: impl FnOnce(&[u8]) -> Result<(), String>,
+) -> Result<(), ReceiptError> {
+    unpack(blob).map_err(|why| {
+        ReceiptError::Inconsistent(format!(
+            "the {scheme} entry offered as evidence is not a stored {scheme} attestation at all,              which needs no key to see: {why}"
+        ))
+    })
+}
+
+/// The interval the receipt prints beside an entry, against the one the signature supports.
+///
+/// Added 2026-09-08, when the verifier shipped. `examine_corridor` compared the printed instant and
+/// the printed radius against the response, and the other two arms compared the instant alone and
+/// never the radius. `check_evidence_against_the_interval` then builds `at` plus or minus `radius`
+/// out of the receipt's own numbers, so a not-later-than entry dated a year before the claim passed
+/// the interval test by declaring a two-year radius, on a real token signed by a real authority.
+///
+/// The rule is one sentence and it fits all three roles: an entry may not print an interval
+/// reaching outside the one the signed content supports. Printing a narrower one is allowed and is
+/// the ordinary case, a beacon and a token each printing the single instant their scheme states,
+/// because a narrower claim is a weaker one.
+fn printed_interval_is_supported(
+    scheme: &str,
+    signer: &str,
+    entry: &Evidence,
+    checked: &Checked,
+) -> Result<(), ReceiptError> {
+    let radius = entry.radius.unwrap_or(0).max(0);
+    let earliest = entry.at.as_nanos() - radius;
+    let latest = entry.at.as_nanos() + radius;
+    if earliest < checked.earliest().as_nanos() || latest > checked.latest().as_nanos() {
+        return Err(refused(
+            scheme,
+            signer,
+            "the receipt prints an interval beside this entry that reaches outside the one the \
+             signature supports",
+        ));
+    }
+    Ok(())
+}
+
+/// A nonce as a value rather than as bytes, which means leading zeros dropped.
+///
+/// RFC 3161 carries the nonce as a DER integer, and an integer has no leading zeros. So a sixteen
+/// byte nonce whose first byte happens to be zero comes back from the token as fifteen bytes with
+/// the same value, one time in two hundred and fifty-six, while the receipt stores the sixteen the
+/// agent generated. Comparing those as written would refuse a perfectly good receipt on a coin toss.
+/// Roughtime carries a fixed thirty-two byte nonce and neither side of that comparison is an
+/// integer, but the same reduction is applied to both, so nothing there changes.
+fn nonce_value(bytes: &[u8]) -> &[u8] {
+    let mut value = bytes;
+    while value.len() > 1 && value[0] == 0 {
+        value = &value[1..];
+    }
+    value
+}
+
+/// The nonce the receipt prints beside an entry, against the one the signature was actually over.
+///
+/// The other half of the same rule as the interval above, and it was the half left open. A nonce is
+/// the field that answers "could this response have been fetched in advance", a reader looks at it,
+/// and nothing tied it to the response at all: it was a `bstr` the receipt asserted and the
+/// validator carried through untouched.
+///
+/// What the three schemes give is worth writing down, because the check cannot be right by accident
+/// and two plausible comparisons are wrong. A Roughtime corridor reports the thirty-two byte nonce
+/// out of the stored request, which is what the receipt prints, and it is neither the binding that
+/// nonce was derived from nor the payload hash inside that binding. An RFC 3161 token reports the
+/// nonce inside the signed token. A drand round reports none, because a public beacon has nothing
+/// of ours in it, so a receipt printing a nonce beside one is printing a value that rests on
+/// nothing.
+fn printed_nonce_is_the_checked_one(
+    scheme: &str,
+    signer: &str,
+    entry: &Evidence,
+    checked: &Checked,
+) -> Result<(), ReceiptError> {
+    let printed = match &entry.nonce {
+        // A receipt that prints no nonce claims nothing about one. Quieter than the evidence is
+        // allowed; louder is what this refuses.
+        None => return Ok(()),
+        Some(printed) => printed,
+    };
+    match &checked.nonce {
+        Some(signed) if nonce_value(printed) == nonce_value(signed) => Ok(()),
+        Some(signed) => Err(refused(
+            scheme,
+            signer,
+            &format!(
+                "the receipt prints a {} byte nonce beside this entry and the response was made \
+                 over a different {} byte one",
+                printed.len(),
+                signed.len()
+            ),
+        )),
+        None => Err(refused(
+            scheme,
+            signer,
+            &format!(
+                "the receipt prints a {} byte nonce beside this entry and this scheme signs over \
+                 no nonce at all, so the printed value rests on nothing",
+                printed.len()
+            ),
+        )),
+    }
+}
+
+/// A corridor entry, checked against every Roughtime key the verifier holds.
+///
+/// Two things beyond the signature. The instant and radius the receipt printed have to be the ones
+/// the response actually carries, because a reader looks at the printed numbers, and a verifier that
+/// checks a signature and then believes a different number beside it has checked nothing useful.
+/// And where the nonce was derived from a subject, that subject has to be this receipt's payload,
+/// or the response is a genuine signature about somebody else's document.
+fn examine_corridor(
+    entry: &Evidence,
+    payload: &Payload,
+    anchors: &TrustAnchors,
+) -> Result<Outcome, ReceiptError> {
+    well_formed("roughtime", &entry.blob, |blob| {
+        roughtime::unpack_blob(blob)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })?;
+    if anchors.roughtime_servers.is_empty() {
+        return Ok(Outcome::NotChecked(
+            "this verifier holds no Roughtime server key".to_string(),
+        ));
+    }
+    let mut last = String::new();
+    for server in &anchors.roughtime_servers {
+        match roughtime::check(&entry.blob, &server.long_term_public_key, &server.name) {
+            Ok(checked) => {
+                if checked.midpoint() != entry.at {
+                    return Err(refused(
+                        "roughtime",
+                        &server.name,
+                        "the response states a different moment from the one the receipt prints \
+                         beside it",
+                    ));
+                }
+                if entry.radius != Some(checked.radius()) {
+                    return Err(refused(
+                        "roughtime",
+                        &server.name,
+                        "the response states a different radius from the one the receipt prints \
+                         beside it",
+                    ));
+                }
+                printed_nonce_is_the_checked_one("roughtime", &server.name, entry, &checked)?;
+                let stored = roughtime::unpack_blob(&entry.blob)
+                    .map_err(|e| refused("roughtime", &server.name, &e.to_string()))?;
+                if !stored.binding.is_empty() && !stored.binding.starts_with(&payload.hash) {
+                    return Err(refused(
+                        "roughtime",
+                        &server.name,
+                        "the nonce was bound to a subject, and that subject is not what this \
+                         receipt is stamping",
+                    ));
+                }
+                return Ok(into_outcome(checked));
+            }
+            Err(e) => last = e.to_string(),
+        }
+    }
+    // Every key was tried and none fits. A response that verifies under no key the verifier holds
+    // is not evidence to that verifier, and the receipt put it forward as though it were.
+    Err(refused(
+        "roughtime",
+        "any server key this verifier holds",
+        &last,
+    ))
+}
+
+/// A beacon entry, checked against every drand chain the verifier holds.
+fn examine_beacon(entry: &Evidence, anchors: &TrustAnchors) -> Result<Outcome, ReceiptError> {
+    well_formed("drand", &entry.blob, |blob| {
+        drand::unpack_blob(blob)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })?;
+    if anchors.drand_chains.is_empty() {
+        return Ok(Outcome::NotChecked(
+            "this verifier holds no drand chain".to_string(),
+        ));
+    }
+    let mut last = String::new();
+    for chain in &anchors.drand_chains {
+        match drand::check(&entry.blob, chain) {
+            Ok(checked) => {
+                if checked.earliest() != entry.at {
+                    return Err(refused(
+                        "drand",
+                        chain.name,
+                        "the round falls at a different moment from the one the receipt prints \
+                         beside it",
+                    ));
+                }
+                printed_interval_is_supported("drand", chain.name, entry, &checked)?;
+                printed_nonce_is_the_checked_one("drand", chain.name, entry, &checked)?;
+                return Ok(into_outcome(checked));
+            }
+            Err(e) => last = e.to_string(),
+        }
+    }
+    Err(refused("drand", "any chain this verifier holds", &last))
+}
+
+/// A witness entry, checked against every timestamp authority the verifier holds.
+///
+/// The token has to be about this receipt's payload. A token about anything else is a real
+/// signature by a real authority and is evidence for a different document.
+fn examine_witness(
+    entry: &Evidence,
+    payload: &Payload,
+    anchors: &TrustAnchors,
+) -> Result<Outcome, ReceiptError> {
+    well_formed("rfc3161", &entry.blob, |blob| {
+        rfc3161::unpack_blob(blob)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })?;
+    if anchors.timestamp_authorities.is_empty() {
+        return Ok(Outcome::NotChecked(
+            "this verifier holds no timestamp authority certificate".to_string(),
+        ));
+    }
+    let mut last = String::new();
+    for authority in &anchors.timestamp_authorities {
+        match rfc3161::check(&entry.blob, authority, &payload.hash) {
+            Ok(checked) => {
+                if checked.latest() != entry.at {
+                    return Err(refused(
+                        "rfc3161",
+                        &authority.name,
+                        "the token states a different moment from the one the receipt prints \
+                         beside it",
+                    ));
+                }
+                printed_interval_is_supported("rfc3161", &authority.name, entry, &checked)?;
+                printed_nonce_is_the_checked_one("rfc3161", &authority.name, entry, &checked)?;
+                return Ok(into_outcome(checked));
+            }
+            Err(e) => last = e.to_string(),
+        }
+    }
+    Err(refused(
+        "rfc3161",
+        "any authority this verifier holds",
+        &last,
+    ))
+}
+
+/// Whether the receipt may claim its bound rests on outside signatures.
+///
+/// This is the rule that our own word is never third-party evidence, as arithmetic. Until the
+/// evidence clients existed the answer was no for every receipt, because nothing in this tree could
+/// verify a signed response of any kind and three entries carrying the right words were being taken
+/// as proof of cryptography. Three entries reading "not a roughtime response", "not a beacon" and
+/// "not a token", correctly signed by the agent, were accepted with the strongest claim the format
+/// can make.
+///
+/// What replaced that refusal is a precondition with four parts, and all four have to hold.
+///
+/// 1. One entry in each of the three roles.
+/// 2. Every one of those three verified by this code against a key chosen in advance. An entry
+///    nobody checked supports nothing, however honest it is.
+/// 3. The sandwich the right way round, so the witness is not dated before the beacon.
+/// 4. The sandwich narrow enough to be about this reading. A genuine beacon from the morning and a
+///    genuine token from the evening are both real and both signed, and between them they say
+///    nothing about a stamp taken at noon that a calendar would not.
+fn decide_basis(
+    receipt: &Receipt,
+    entries: &[EntryReport],
+) -> Result<(bool, String), ReceiptError> {
+    let claims_a_sandwich = receipt.claim.basis == EpsilonBasis::ThirdPartySandwich;
+    let refuse_or_report = |reason: String| -> Result<(bool, String), ReceiptError> {
+        if claims_a_sandwich {
+            Err(ReceiptError::OurClaimAsEvidence(reason))
+        } else {
+            Ok((false, reason))
+        }
+    };
+
+    let find = |role: Role| {
+        entries
+            .iter()
+            .find(|e| e.role == role && e.outcome.is_checked())
+    };
+    let corridor = find(Role::AuthenticatedUtcCorridor);
+    let beacon = find(Role::NotEarlierThan);
+    let witness = find(Role::NotLaterThan);
+
+    let (Some(beacon), Some(witness), true) = (beacon, witness, corridor.is_some()) else {
+        return refuse_or_report(format!(
+            "of the three roles a sandwich is made of, this verifier checked corridor: {}, \
+             not-earlier-than: {}, not-later-than: {}. A basis that cannot be checked is not \
+             granted, so the bound rests on the agent's own model",
+            corridor.is_some(),
+            beacon.is_some(),
+            witness.is_some()
+        ));
+    };
+
+    let (Outcome::Checked { earliest, .. }, Outcome::Checked { latest, .. }) =
+        (&beacon.outcome, &witness.outcome)
+    else {
+        unreachable!("both were found by is_checked");
+    };
+
+    let width = latest.as_nanos() - earliest.as_nanos();
+    if width < 0 {
+        return refuse_or_report(format!(
+            "the not-later-than attestation is dated {} ns before the not-earlier-than value, so \
+             the two do not enclose anything",
+            -width
+        ));
+    }
+    if width > SANDWICH_WIDTH_CEILING {
+        return refuse_or_report(format!(
+            "the two outside signatures are {} s apart, which is wider than the {} s this format \
+             will call a sandwich, so they say nothing about this reading that a calendar would not",
+            width / NANOS_PER_SEC,
+            SANDWICH_WIDTH_CEILING / NANOS_PER_SEC
+        ));
+    }
+
+    // Two different things can be true here and the report has to say which. The receipt may claim a
+    // sandwich, in which case the claim is granted. Or it may claim its bound rests on the agent's
+    // own model, in which case the sandwich holds up but the receipt is not resting on it, and a
+    // reader told "does not rest on third-party evidence" followed by a reason that reads like it
+    // does has been handed a contradiction to resolve on their own.
+    if claims_a_sandwich {
+        return Ok((
+            true,
+            format!(
+                "all three roles were checked against keys chosen in advance, and the two outside \
+                 signatures enclose {} s",
+                width / NANOS_PER_SEC
+            ),
+        ));
+    }
+    Ok((
+        false,
+        format!(
+            "this receipt says its bound rests on the agent's own model, and it is judged on that. \
+             All three roles were checked anyway, against keys chosen in advance, and the two \
+             outside signatures enclose {} s, so the moment is pinned from outside even though the \
+             width is not",
+            width / NANOS_PER_SEC
+        ),
+    ))
+}
+
+/// Check each entry against the interval it is offered as support for.
+///
+/// An entry states an instant and, where it has one, a radius around it. The comparison always
+/// takes the end of that interval which is hardest on the entry, so a wide radius never buys an
+/// entry a pass it would not have had as a point.
+fn check_evidence_against_the_interval(receipt: &Receipt) -> Result<(), ReceiptError> {
+    for e in &receipt.evidence {
+        let radius = e.radius.unwrap_or(0).max(0);
+        let earliest = e.at - radius;
+        let latest = e.at + radius;
+
+        match e.role {
+            Role::NotEarlierThan => {
+                if earliest > receipt.claim.latest {
+                    return Err(ReceiptError::Inconsistent(format!(
+                        "a not-earlier-than value was published after the latest time this receipt \
+                         claims, by {} ns, so it cannot be evidence for this reading",
+                        earliest - receipt.claim.latest
+                    )));
+                }
+            }
+            Role::NotLaterThan => {
+                if latest < receipt.claim.earliest {
+                    return Err(ReceiptError::Inconsistent(format!(
+                        "a not-later-than attestation is dated before the earliest time this \
+                         receipt claims, by {} ns, so it cannot be evidence for this reading",
+                        receipt.claim.earliest - latest
+                    )));
+                }
+            }
+            // A corridor supports the reading only if the interval it asserts and the interval the
+            // receipt claims have some instant in common. Two intervals that never meet cannot both
+            // hold the same event, so one of them is wrong and the receipt does not get to say
+            // which. A corridor with no radius was refused earlier, so there is always a width here.
+            Role::AuthenticatedUtcCorridor => {
+                if latest < receipt.claim.earliest || earliest > receipt.claim.latest {
+                    return Err(ReceiptError::Inconsistent(format!(
+                        "an authenticated corridor asserts {} ns to {} ns and the receipt claims \
+                         {} ns to {} ns. The two do not overlap, so the corridor is not evidence \
+                         for this reading",
+                        earliest.as_nanos(),
+                        latest.as_nanos(),
+                        receipt.claim.earliest.as_nanos(),
+                        receipt.claim.latest.as_nanos()
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::nonce_value;
+
+    #[test]
+    fn a_nonce_is_compared_as_a_value_and_not_as_a_run_of_bytes() {
+        // The case this exists for, and it arrives one stamp in two hundred and fifty-six. The
+        // agent generates sixteen random bytes; where the first is zero, the DER integer in the
+        // token is fifteen bytes with the same value, and comparing the two as written would refuse
+        // a receipt that is entirely honest.
+        let generated = [0x00u8, 0x9a, 0x14, 0x7c];
+        let read_back = [0x9au8, 0x14, 0x7c];
+        assert_eq!(nonce_value(&generated), nonce_value(&read_back));
+
+        // Two different values stay different, which is the whole point of the comparison.
+        assert_ne!(nonce_value(&[0x01u8, 0x02]), nonce_value(&[0x01u8, 0x03]));
+
+        // A nonce of nothing but zeros reduces to one zero rather than to nothing at all, so it
+        // still compares as a value rather than as an empty slice matching everything.
+        assert_eq!(nonce_value(&[0u8; 32]), &[0u8]);
+        assert_eq!(nonce_value(&[]), &[] as &[u8]);
+    }
+}

@@ -1,0 +1,19 @@
+[package]
+name = "timewitness-core"
+description = "Plain data types shared by the clock model, the receipt and the verifier."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bls12_381 = { version = "0.8.0", default-features = false, features = ["experimental", "alloc", "groups", "pairings"] }
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+rsa = { version = "0.9", default-features = false }
+sha2 = { version = "0.10", default-features = false, features = ["oid"] }
+sha2_for_bls = { version = "0.9", package = "sha2", default-features = false }
+
+[lints]
+workspace = true

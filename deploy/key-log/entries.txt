@@ -1,0 +1,20 @@
+timewitness-key-log v0
+#
+# The keys of ours a reader can be told about, in the order they were first used.
+#
+# This is the log with no head. `scripts/key-log.sh` signs it, and the signed copy is what gets
+# served; nothing in this file is secret and no signing key is anywhere in this repository.
+#
+# Appending is the only edit. A key that stops being used gets a new entry saying so, below the one
+# it retires, and nothing above this line of entries is ever changed or reordered. The script refuses
+# to write a signed log that is not an extension of the one it is replacing, so an edit here shows up
+# as a refusal rather than as a quietly different log.
+#
+# Each line is: entry <public key> <valid from, Unix nanoseconds> <valid until, or -> <deployment>
+#
+# The two Roughtime servers of ours. Each window opens at the first release of the app that holds
+# the key, read off the host's own release record, because a key held only in that app's secret
+# store could not have signed anything before the app existed. Both are first party, both are one
+# party between them, and neither is an independent source for anybody's bound.
+entry 6b45b1fb87a041acf63ea47947ee998679a9af21e4557b1c779dd32c4a33eef0 1789220088000000000 - roughtime server of ours, London, timewitness-roughtime-lhr.fly.dev:2002
+entry 709f1f17443f3827c695bf71dadf92db31cf8f6b501a36f1ab2dea5e02aedb4c 1789220256000000000 - roughtime server of ours, Virginia, timewitness-roughtime-iad.fly.dev:2002
