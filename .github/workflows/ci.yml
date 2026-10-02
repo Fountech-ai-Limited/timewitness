@@ -32,6 +32,29 @@ jobs:
           # own commits were all clean, which is a check reporting on a commit nobody wrote.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      - name: The signature check holds a binary to our own identities
+        # The check a stranger is sent to passed any Developer ID and any trusted Windows
+        # certificate. It now holds both to `scripts/signing-identities.json` and refuses a release
+        # while an identity there is unset. The self-test reads real Windows binaries signed by
+        # throwaway chains, one standing in for ours and two that are not, and the text codesign
+        # prints for our team and for others. Whether the identities are set is asked by the release
+        # workflow, before it builds anything, rather than here.
+        #
+        # A self-test that stays green with a clause deleted is not holding that clause. The Windows
+        # publisher, the identity usage and the tie to the certificate signtool verified could each
+        # be deleted with the self-test still green, until a fixture was added for each shape, so
+        # the script also takes each clause away in turn and fails unless the self-test notices.
+        #
+        # Its last two checks hold the release workflow to what keeps the signing identities to code an
+        # administrator landed, in the half a commit can change: started by hand alone, only its
+        # signing jobs entering the `release` environment, no cache restored beside a signing secret,
+        # and no Azure client secret anywhere. The settings half changes with no commit, so the
+        # Surfaces workflow reads it every three hours. The push check runs the same file.
+        #
+        # It runs before the toolchain and the cache, so no build script this job runs has touched
+        # the scripts or the Python it reads them with.
+        run: bash scripts/the-signing-route-checks.sh
+
       - name: Install the toolchain
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt,clippy
@@ -278,30 +301,6 @@ jobs:
           python3 scripts/the-version-is-the-tag.py
           python3 scripts/the-format-labels-are-the-receipts.py --self-test
           python3 scripts/the-format-labels-are-the-receipts.py
-
-      - name: The signature check holds a binary to our own identities
-        # The check a stranger is sent to passed any Developer ID and any trusted Windows
-        # certificate. It now holds both to `scripts/signing-identities.json` and refuses a release
-        # while an identity there is unset. The self-test reads real Windows binaries signed by
-        # throwaway chains, one standing in for ours and two that are not, and the text codesign
-        # prints for our team and for others. Whether the identities are set is asked by the release
-        # workflow, before it builds anything, rather than here.
-        #
-        # A self-test that stays green with a clause deleted is not holding that clause. The Windows
-        # publisher, the identity usage and the tie to the certificate signtool verified could each
-        # be deleted with the self-test still green, until a fixture was added for each shape, so
-        # the second line takes each clause away in turn and fails unless the self-test notices.
-        #
-        # The last two hold the release workflow to what keeps the signing identities to code an
-        # administrator landed, in the half a commit can change: started by hand alone, only its
-        # signing jobs entering the `release` environment, no cache restored beside a signing secret,
-        # and no Azure client secret anywhere. The settings half changes with no commit, so the
-        # Surfaces workflow reads it every three hours.
-        run: |
-          python3 scripts/the-binaries-are-signed.py --self-test
-          python3 scripts/the-signing-self-test-notices-each-clause-removed.py
-          python3 scripts/the-release-route-holds.py --self-test
-          python3 scripts/the-release-route-holds.py --tree
 
       # Its own cache, keyed on the version rather than on the lockfile. Sharing the cache above
       # would mean a build whose Cargo.lock has not moved restores a cache saved before this step

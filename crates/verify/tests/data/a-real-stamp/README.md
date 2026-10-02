@@ -38,20 +38,21 @@ What did not move is the width. 149.842 ms then against 153.875 ms here, with th
 at 34.947 ms then and 35.081 ms now: enforcing independence refuses rounds, it does not narrow them,
 and a reader comparing the two files should expect exactly that.
 
-**Read the two receipts side by side before concluding a third kind of source narrowed anything.**
-The one this replaces was 176.741 ms with six servers of two kinds at 12:05 UTC the same day, and the
-term a new kind of source would have moved is the sources overlapping: 34.463 ms then against
-34.947 ms here. It did not move. What moved is the oscillator, 17.287 ms against 0.501 ms, and that
-is how long after the newest exchange each stamp happened to be taken rather than anything about the
+**Read the 12:05 and 17:32 UTC receipts side by side before concluding a third kind of source
+narrowed anything.** The earlier was 176.741 ms with six servers of two kinds, and the term a new
+kind of source would have moved is the sources overlapping: 34.463 ms then against 34.947 ms at
+17:32. It did not move. What moved is the oscillator, 17.287 ms against 0.501 ms, and that is how
+long after the newest exchange each stamp happened to be taken rather than anything about the
 sources. NTS buys an answer nobody on the path can write. It does not buy a narrower one, and this
 file is the evidence for both halves of that sentence.
 
-## Why it was re-taken twice on one day, having said it never would be
+## Why it was re-taken three times on one day, having said it never would be
 
-The second re-take, at 17:32 UTC, is the one above and its reason is smaller than the first: a third
-kind of source joined the round, and a fixture standing for what this product produces should be
-what this product produces. The receipt it replaced still verified. The paragraphs below are about
-the first re-take, at 12:05 UTC, where the old file no longer verified at all.
+The latest re-take, at 18:41 UTC, is the one above, and the paragraphs before this heading give its
+reason. The one before it, at 17:32 UTC, had a smaller reason than the first: a third kind of source
+joined the round, and a fixture standing for what this product produces should be what this product
+produces. The receipt it replaced still verified. The paragraphs below are about the first re-take,
+at 12:05 UTC, where the old file no longer verified at all.
 
 
 The version of this file written on 2026-09-08 said the receipt stays as it was, because it is the

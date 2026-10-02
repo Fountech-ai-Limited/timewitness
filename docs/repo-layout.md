@@ -79,7 +79,10 @@ The selection rule departs from textbook Marzullo, decided 2026-09-09, and `crat
 `scripts/repo-hygiene.sh` runs in CI over the tree and the whole history. One author on every commit,
 prose in every commit message rather than a machine-readable footer, plain ASCII in every file, and a
 tracked path that is one of the things this repository holds. Each rule says what belongs rather than
-what does not, so a shape nobody has thought about is refused rather than admitted.
+what does not, so a shape nobody has thought about is refused rather than admitted. The fifth,
+`scripts/times-and-refs.py`, holds every author and committer offset to the one Cyprus keeps at the
+commit's instant, and no commit to a date more than a day before its parent. The hook before every
+push runs the same file over each ref it pushes and refuses a branch named with a slash.
 
 ## Where new work goes
 

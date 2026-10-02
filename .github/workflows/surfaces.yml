@@ -46,6 +46,10 @@ name: Surfaces
 # It holds the settings that keep the signing identities to code an administrator landed, the
 # `release` environment, the rulesets, branch protection on `main` and the token subject Azure
 # trusts, to what `scripts/the-release-route-holds.py` has written down, and fails on any change.
+# What GitHub shows an administrator alone, the Actions settings, the administrators, the stored
+# secret names, the organisation's two-factor rule and the apps installed on it, a line this job's
+# token is not shown prints UNSEEN here rather than failing, and an administrator's run of the same
+# script holds it.
 
 on:
   schedule:
@@ -106,6 +110,12 @@ jobs:
     name: the release route's settings against what is written down
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # A job's own permissions take the place of the workflow's, so contents is named again. The route
+    # check reads who entered the signing environments, which this token may be refused without
+    # deployments.
+    permissions:
+      contents: read
+      deployments: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -114,5 +124,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/the-release-route-holds.py --self-test
-          python3 scripts/the-release-route-holds.py
+          python3 scripts/the-release-route-holds.py --self-test --need-yaml
+          python3 scripts/the-release-route-holds.py --need-yaml
+
+  check-suites:
+    name: the checks on the newest commit come from this repository's own runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # An app installed on the organisation can write a check suite on every commit here without
+    # running anything, and anybody can read it and the app's name without signing in. No commit
+    # shows it, so this reads what GitHub holds for the newest commit on `main`, on the same clock
+    # as the jobs above, against the apps this repository runs.
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Every check suite on the newest commit of main is one of this repository's own runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The install check is the other public repository, and the same holds there.
+        run: |
+          python3 scripts/checks-come-from-our-own-runs.py --self-test
+          python3 scripts/checks-come-from-our-own-runs.py --repo "$GITHUB_REPOSITORY" --ref main
+          python3 scripts/checks-come-from-our-own-runs.py --repo Fountech-ai-Limited/timewitness-install-check --ref main

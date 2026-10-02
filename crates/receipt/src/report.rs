@@ -68,6 +68,12 @@ pub struct EntryReport {
     pub outcome: Outcome,
 }
 
+/// What the report says of a receipt read to the end and found to carry no evidence entry.
+///
+/// It is a statement about what was read. It is never said of a receipt refused before its evidence
+/// is listed, because no list is not the same fact as an empty one.
+pub const CARRIES_NO_EVIDENCE: &str = "This receipt carries no third-party evidence at all.";
+
 /// Everything a verifier established about one receipt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Verified {
@@ -181,11 +187,18 @@ impl Verified {
     }
 
     /// The report as lines a person reads, which is what the verifier prints.
+    ///
+    /// A `Verified` is handed out only for a receipt that passed every check up to and including
+    /// its evidence, so an empty list here is what was read and the first line says so in
+    /// [`CARRIES_NO_EVIDENCE`]. A receipt refused on the way gets no `Verified` and so no lines from
+    /// here, whether it was refused before its attestations were looked at or after, and a renderer
+    /// must not stand in for them with this sentence. Until 2026-10-01 the verifier page did, and
+    /// told a refused receipt carrying three attestations that it carried none.
     #[must_use]
     pub fn lines(&self) -> Vec<String> {
         let mut out = Vec::new();
         if self.entries.is_empty() {
-            out.push("This receipt carries no third-party evidence at all.".to_string());
+            out.push(CARRIES_NO_EVIDENCE.to_string());
         }
         for entry in &self.entries {
             let what = entry.detail.as_deref().unwrap_or("no detail given");

@@ -27,11 +27,16 @@
 //   5. In a real browser at that address, handed the same bytes this read, choosing the receipt and
 //      the file it stamps and clicking the button shows the command line's verdict and width, and
 //      the page asks for nothing at all once it is open: no request, no socket, no worker, no window,
-//      while it checks and while it is left. A request carrying the file is named as that.
+//      while it checks and while it is left. A request carrying the file is named as that. The list
+//      under the evidence heading says what the command line read: each entry it listed, that there
+//      was none where it listed none, and that nothing could be listed where the receipt was refused
+//      first.
 //
 // So it runs from any checkout of this repository that carries it, and not only from the commit the
 // page names. The receipts are this checkout's: the one committed in this repository, the same
-// receipt against a file it does not stamp, which has to be refused, and one stamped here and now
+// receipt against a file it does not stamp, which has to be refused, the two kept in this repository
+// because they are refused before their evidence is listed, one kept because it carries no evidence
+// at all, and one stamped here and now
 // with the command line, which needs the network the way stamping always does. `--no-fresh` leaves
 // the last one out, and `--fresh <receipt> <subject>` hands one in rather than taking one.
 //
@@ -41,12 +46,13 @@
 // repository's `npm run wall-check` prints one.
 //
 // `--self-test` serves the page this tree built on the loopback address, holds it to that same file
-// and to the command line built here, runs the whole check on it, and then runs it on eight seeds,
+// and to the command line built here, runs the whole check on it, and then runs it on eleven seeds,
 // each of which has to be refused by the part written for it: a page that shows the wrong verdict,
 // one that shows the wrong width, one that sends the file it was given when the button is clicked,
 // one that sends it as the page is left, one that runs a module other than the one it carries, one
-// built from another commit, one with a line of words its build never had, and one carrying a module
-// its build never made. The two that send are written so the page check's spellings cannot see them and the policy
+// built from another commit, one with a line of words its build never had, one carrying a module
+// its build never made, one that says a receipt refused before its evidence is listed carries none,
+// one that leaves out why nothing is listed, and one that drops an entry the command line listed. The two that send are written so the page check's spellings cannot see them and the policy
 // is taken out so the browser lets them go, and the server has to receive the file, so each is shown
 // connected before its refusal is believed. A guard nobody has seen fail is not evidence.
 //
@@ -68,6 +74,15 @@ const executable = process.platform === "win32" ? "timewitness.exe" : "timewitne
 const binary = join(root, "target", "release", executable);
 const fixture = join(root, "crates", "verify", "tests", "data", "a-real-stamp");
 const versionOne = join(root, "crates", "verify", "tests", "data", "a-version-1-stamp");
+const refusedFirst = join(root, "crates", "verify", "tests", "data", "refused-before-its-evidence-is-listed");
+const noEvidence = join(root, "crates", "verify", "tests", "data", "a-receipt-with-no-evidence");
+// The two sentences the page puts under the evidence heading when there is no entry to list, and
+// they are two different facts: the one is said of evidence read and found to be none, the other of
+// evidence never listed because the receipt was refused first.
+const CARRIES_NONE = "This receipt carries no third-party evidence at all.";
+const NOT_LISTED = "This receipt was refused before its evidence could be listed, so nothing here says what evidence it carries.";
+// The line about the witness over the signature, which the page adds under the entries.
+const ABOUT_THE_SIGNATURE = "The signature itself ";
 const BUILT_FROM = /<meta name="tw-built-from" content="([^"]*)">/;
 const MODULE = /const WASM_BASE64 = "([A-Za-z0-9+/=]+)";/g;
 const MODULE_LINE = /^const WASM_BASE64 = "([A-Za-z0-9+/=]+)";$/;
@@ -273,6 +288,25 @@ function theCases(options) {
     { what: "the committed receipt", receipt: join(fixture, "receipt.cbor"), subject: join(fixture, "subject.bin") },
     { what: "the committed receipt against a file it does not stamp", receipt: join(fixture, "receipt.cbor"), subject: oneZeroByte },
   ];
+  // Two receipts carrying three real attestations each, refused before any of them is listed, and
+  // one read to the end that carries none. Until 2026-10-01 the page told all three they carried no
+  // third-party evidence, and it was true of one.
+  const fromHex = (folder, name) => {
+    const at = join(work, `${name}.cbor`);
+    const hex = readFileSync(join(folder, `${name}.hex`), "utf8").replace(/\s+/g, "");
+    // Buffer stops at the first character that is not hex and says nothing, so a damaged file would
+    // be read as a shorter receipt, refused, and taken for the case it stands for.
+    if (!/^(?:[0-9a-f]{2})+$/i.test(hex)) throw new CouldNotRun(`${name}.hex is not whole hex, so it is not the receipt it says`);
+    writeFileSync(at, Buffer.from(hex, "hex"));
+    return at;
+  };
+  for (const [name, why] of [
+    ["a-field-carrying-a-newline", "a field carrying a newline"],
+    ["a-sandwich-on-one-edge", "a sandwich on one edge"],
+  ]) {
+    cases.push({ what: `a receipt refused for ${why} before its evidence is listed`, receipt: fromHex(refusedFirst, name), subject: join(fixture, "subject.bin") });
+  }
+  cases.push({ what: "a receipt that carries no evidence", receipt: fromHex(noEvidence, "receipt"), subject: join(noEvidence, "subject.txt") });
   if (options.selfTest) {
     const v1 = join(work, "a-version-1-stamp.cbor");
     writeFileSync(v1, Buffer.from(readFileSync(join(versionOne, "receipt.hex"), "utf8").replace(/\s+/g, ""), "hex"));
@@ -719,6 +753,7 @@ async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile) 
           state: document.getElementById("verdict").className.replace("verdict", "").trim(),
           bracket: document.getElementById("verdict-bracket").textContent,
           claim: (document.querySelector("#claim p") || { textContent: "" }).textContent,
+          evidence: Array.from(document.querySelectorAll("#evidence > li"), (li) => li.textContent),
         })`),
       );
     const shown = await read();
@@ -788,6 +823,34 @@ function whatTheBrowserShowed(problems, what, seen, cli, fetched, run) {
   if (cli.claim && !widthAgrees(seen.shown.claim, cli.claim.width_ns)) {
     problems.push(`${what}: the browser shows "${seen.shown.claim}" and the command line's width is ${cli.claim.width_ns} ns`);
   }
+  theEvidenceShown(problems, what, seen.shown.evidence, cli);
+}
+
+// The list under the evidence heading, held to what the command line listed. No list from the
+// command line is evidence it never listed, and the page has to say that rather than that there was
+// none. An empty list is evidence read and found to be none, and the page has to say so. Every other
+// line on the page is an entry, and the entries are the command line's, in its order, each opening
+// with its role, so an entry the page adds is read as one as surely as an entry it drops.
+function theEvidenceShown(problems, what, shown, cli) {
+  const where = `${what}, the evidence shown in the browser`;
+  const listed = Array.isArray(cli.evidence) ? cli.evidence : null;
+  if (shown.includes(CARRIES_NONE) !== (listed !== null && listed.length === 0)) {
+    problems.push(
+      listed === null
+        ? `${where}: the receipt was refused before its evidence was listed and the page says it carries none`
+        : `${where}: the command line listed ${listed.length} entries and the page ${shown.includes(CARRIES_NONE) ? "says" : "does not say"} there are none`,
+    );
+  }
+  if (shown.includes(NOT_LISTED) !== (listed === null)) {
+    problems.push(
+      `${where}: the page ${listed === null ? "does not say" : "says"} the evidence could not be listed, and the command line ` +
+        (listed === null ? "listed none" : `listed ${listed.length} entries`),
+    );
+  }
+  const entries = shown
+    .filter((line) => line !== CARRIES_NONE && line !== NOT_LISTED && !line.startsWith(ABOUT_THE_SIGNATURE))
+    .map((line) => (line.includes(" by ") ? line.slice(0, line.indexOf(" by ")) : line));
+  agree(problems, `${where}, the roles listed`, entries, (listed ?? []).map((e) => e.role));
 }
 
 // A file of a byte or two is in every body by chance, so it is looked for as bytes only where it is
@@ -962,6 +1025,18 @@ async function selfTest(cli) {
       const bytes = Buffer.from(encoded, "base64");
       return `const WASM_BASE64 = "${Buffer.concat([bytes, Buffer.from([0, 1, 0])]).toString("base64")}";`;
     }),
+    // The page as it stood until 2026-10-01, which read no list as an empty one.
+    "/says-unlisted-evidence-is-none/": page.replace("  const entries = result.evidence;", "  const entries = result.evidence || [];"),
+    // The same refusal with nothing under the heading at all, so a reader is not told why.
+    "/says-nothing-of-unlisted-evidence/": page.replace(
+      'evidence.append(element("li", null, "This receipt was refused before',
+      'void (element("li", null, "This receipt was refused before',
+    ),
+    // An accepted receipt with its first entry left off the page.
+    "/drops-an-entry/": page.replace(
+      "  for (const entry of Array.isArray(entries) ? entries : []) {",
+      "  for (const entry of Array.isArray(entries) ? entries.slice(1) : []) {",
+    ),
   };
   for (const [path, text] of Object.entries(seeds)) {
     if (path !== "/verify/" && text === page) throw new CouldNotRun(`the seed at ${path} found nowhere to go in the page`);
@@ -997,6 +1072,9 @@ async function selfTest(cli) {
     ["/another-commit/", "a page built from another commit", (p) => p.includes(`built from ${"0".repeat(40)}`)],
     ["/changed-words/", "a page with words its build never had", (p) => p.includes("is not the page") && p.includes("Certified exact")],
     ["/another-build-of-the-module/", "a page carrying a module its build never made", (p) => p.includes("the module in the served page is")],
+    ["/says-unlisted-evidence-is-none/", "a page saying evidence it never listed is none", (p) => p.includes("refused before its evidence was listed and the page says it carries none")],
+    ["/says-nothing-of-unlisted-evidence/", "a page not saying why no evidence is listed", (p) => p.includes("the page does not say the evidence could not be listed")],
+    ["/drops-an-entry/", "a page dropping an entry the command line listed", (p) => p.includes("the evidence shown in the browser, the roles listed")],
   ];
   try {
     const clean = await check(at("/verify/"), options);

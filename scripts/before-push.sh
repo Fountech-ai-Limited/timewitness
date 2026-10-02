@@ -31,6 +31,57 @@ set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+# The refs this push would make, before anything else runs. Git hands a pre-push hook one line per
+# ref on its standard input: the local ref, its commit, the remote ref and the commit it held. A ref
+# is refused here for a slash in a branch name, which the repository's ruleset refuses as well. A
+# deletion is let through, so that a branch made before the ruleset can still be taken away. Run by
+# hand from a terminal there is nothing to read and this is skipped, and from a pipe that stays open
+# and quiet it waits ten seconds and no more, since git writes every line before the hook could ask.
+if [ ! -t 0 ]; then
+  refused_refs=0
+  while read -r -t 10 _local_ref local_sha remote_ref _remote_sha; do
+    [ -n "${remote_ref:-}" ] || continue
+    case "$local_sha" in
+      *[!0]*) ;;
+      *) continue ;;
+    esac
+    python3 scripts/times-and-refs.py --ref "$remote_ref"
+    status=$?
+    case "$status" in
+      0) ;;
+      1) refused_refs=1 ;;
+      *)
+        echo "before-push: the ref check could not run (exit $status), so nothing was pushed." >&2
+        exit 2
+        ;;
+    esac
+    # The checks below read what the clone's refs reach. A push of a commit no branch or tag
+    # here holds, one left only in the reflog for instance, would send what they never read.
+    unread="$(git rev-list -n 1 "$local_sha" --not --all)"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      echo "before-push: git could not read the commit about to be pushed (exit $status), so nothing was pushed." >&2
+      exit 2
+    fi
+    if [ -n "$unread" ]; then
+      echo "before-push: a push would send a commit no branch or tag here holds, which the checks below have not read; push it from a branch" >&2
+      refused_refs=1
+    fi
+  done
+  if [ "$refused_refs" -ne 0 ]; then
+    echo "before-push: nothing was pushed." >&2
+    exit 1
+  fi
+fi
+
+# `scripts/repo-hygiene.sh --self-test` drives the loop above with seeded refs and stops here, so
+# the refusal is watched without the build behind it. The stop is exit 3 and never 0, so that set by
+# mistake it refuses the push rather than letting it through unbuilt.
+if [ -n "${TW_BEFORE_PUSH_REFS_ONLY:-}" ]; then
+  echo "before-push: the refs passed and this run was asked to stop there, so nothing was pushed." >&2
+  exit 3
+fi
+
 # rustup puts its shims in one place and not every shell has that place on PATH. Git Bash here is
 # one that does not, and the same gap sent `build-verifier-page.sh` telling a reader to install a
 # target they already had. Add the standard location rather than asking for it.
@@ -172,6 +223,7 @@ if ! command -v x86_64-linux-gnu-gcc >/dev/null 2>&1 && [ -z "${CC_x86_64_unknow
   export AR_x86_64_unknown_linux_gnu="$archiver"
 fi
 
+step "The signature check holds a binary to our own identities" bash scripts/the-signing-route-checks.sh
 step "Formatting"          cargo fmt --all -- --check
 step "Lints, on Linux"     cargo clippy --workspace --all-targets --target "$target" -- -D warnings
 step "Build"               cargo build --workspace --all-targets
@@ -276,7 +328,6 @@ count_refuses() {
 step "  and that check still refuses a bare one" count_refuses
 step "The guard that reads the served page is still running" bash scripts/wire-guard-is-alive.sh
 step "Every version and format label is read off what it labels" bash -c "python3 scripts/the-version-is-the-tag.py --self-test && python3 scripts/the-version-is-the-tag.py && python3 scripts/the-format-labels-are-the-receipts.py --self-test && python3 scripts/the-format-labels-are-the-receipts.py"
-step "The signature check holds a binary to our own identities" python3 scripts/the-binaries-are-signed.py --self-test
 step "Dependency advisories" bash scripts/check-advisories.sh
 
 if [ ${#failed[@]} -ne 0 ]; then

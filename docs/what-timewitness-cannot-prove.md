@@ -372,13 +372,13 @@ disagreed is the same arithmetic pointed at the width, and it takes an ordinary 
 agreeing servers down to the narrowest of them with no fault tolerance left, so it is a decision
 about the claim rather than a defect to fix. It is still open.
 
-**What that rule still does not cover.** It is about a source that could not have disagreed with
-anybody, and a source can be informative and still be the one that is wrong. A server that overlaps
-two others which contradict each other, without containing either, is doing real work: it excludes
-everything outside itself, so it counts, and it can still be the broken one. Half or more of the
-sources being wrong is not covered by any of this. A source list whose names resolve to one operator
-is covered from 2026-09-09, by the operator count rather than by this rule, and the two are separate
-tests that refuse separately.
+**A source that does real work can still be the broken one.** The second rule is about a source that
+could not have disagreed with anybody, and a source can be informative and still be the one that is
+wrong. A server that overlaps two others which contradict each other, without containing either, is
+doing real work: it excludes everything outside itself, so it counts, and it can still be the broken
+one. Half or more of the sources being wrong is not covered by any of this. A source list whose
+names resolve to one operator is covered from 2026-09-09, by the operator count rather than by this
+rule, and the two are separate tests that refuse separately.
 
 **A source is not taken at its word about how certain it is.** Two of the four timestamps in an
 exchange are the source's, and so is its statement about its own accuracy. A server willing to say it
@@ -713,12 +713,12 @@ keeps nothing and stops nothing.
 nothing portable is produced, so there is no artefact a third party could be shown. The phrase reads
 as a description of something that exists and it describes something that does not.
 
-**There is no released binary.** The verifier is built and works three ways: as a command line
-tool, as one HTML page that runs from a local disk with no network, and as that same page served at
-timewitness.dev/verify, which needs no toolchain and no account and reads the receipt in the browser
-without sending it anywhere. The served page names the commit it was built from, so a reader can
-build the same page and compare. No release carries a binary, so a stranger who wants the command
-line or the Action compiles it from source rather than downloading it.
+**No release carries a binary of the command line tool or the Action.** The verifier is built and
+works three ways: as a command line tool, as one HTML page that runs from a local disk with no
+network, and as that same page served at timewitness.dev/verify, which needs no toolchain and no
+account and reads the receipt in the browser without sending it anywhere. The served page names the
+commit it was built from, so a reader can build the same page and compare. A stranger who wants the
+command line tool or the Action compiles it from source rather than downloading it.
 
 **Nothing links an agent's key to anybody, except our own.** A receipt proves that whoever signed it
 held that key. A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and the one agent key we vouch for, which signs our own receipts from 2026-09-24, with the window it is ours in. That is our own word about our own key and it is not third-party evidence. The receipt committed in

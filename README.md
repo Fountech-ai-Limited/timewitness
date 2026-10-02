@@ -54,12 +54,12 @@ exists to fix.
 
 **Nanoseconds is the resolution of the local read.** That is what the hardware counter offers.
 
-**Milliseconds is the accuracy to UTC.** That is what the network path allows. The 5 to 50 ms, the
-1 ms and the 100 microsecond figures are quoted from public research and none of them has been
-measured by us. They belong, in that order, to the public internet with no hardware of our own, to a
-clock updated once a minute, as primary reference clocks are, and to a cloud instance with a
-hypervisor clock. Certified microseconds need hardware. Nanosecond accuracy is a datacentre thing
-and is not something this product sells.
+**Milliseconds is the accuracy to UTC the design aims at.** That is what the network path allows, and
+this code does not reach it yet. The 5 to 50 ms, the 1 ms and the 100 microsecond figures are quoted
+from public research and none of them has been measured by us. They belong, in that order, to the
+public internet with no hardware of our own, to a clock updated once a minute, as primary reference
+clocks are, and to a cloud instance with a hypervisor clock. Certified microseconds need hardware.
+Nanosecond accuracy is a datacentre thing and is not something this product sells.
 
 The first two figures are read from David Mills' Executive Summary: Computer Network Time
 Synchronization, which puts an internet path at a few milliseconds to several tens of milliseconds

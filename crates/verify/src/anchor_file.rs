@@ -141,7 +141,7 @@ pub fn parse(text: &str) -> Result<TrustAnchors, AnchorError> {
                         "a roughtime anchor is the word, a name and thirty-two bytes of hex".into(),
                     ));
                 }
-                let key = fixed::<32>(fields[2]).map_err(&fail)?;
+                let key = fixed::<32>(fields[2]).map_err(fail)?;
                 anchors = anchors.with_roughtime(fields[1].to_string(), key);
             }
             "drand" => {
@@ -156,8 +156,8 @@ pub fn parse(text: &str) -> Result<TrustAnchors, AnchorError> {
                     // The chain's name is compiled into a receipt's report rather than compared, so
                     // it is leaked here as a static string the reader chose.
                     name: Box::leak(fields[1].to_string().into_boxed_str()),
-                    hash: fixed::<32>(fields[2]).map_err(&fail)?,
-                    public_key: fixed::<96>(fields[3]).map_err(&fail)?,
+                    hash: fixed::<32>(fields[2]).map_err(fail)?,
+                    public_key: fixed::<96>(fields[3]).map_err(fail)?,
                     period_seconds: fields[4]
                         .parse()
                         .map_err(|_| fail("the period is not a whole number of seconds".into()))?,
@@ -202,7 +202,7 @@ pub fn parse(text: &str) -> Result<TrustAnchors, AnchorError> {
                         allowance = Some(nanos);
                         continue;
                     }
-                    certificates.push(fixed::<32>(field).map_err(&fail)?);
+                    certificates.push(fixed::<32>(field).map_err(fail)?);
                 }
                 if certificates.is_empty() {
                     return Err(fail(
@@ -226,7 +226,7 @@ pub fn parse(text: &str) -> Result<TrustAnchors, AnchorError> {
                         "a keylog anchor is the word, a name and thirty-two bytes of hex".into(),
                     ));
                 }
-                let key = fixed::<32>(fields[2]).map_err(&fail)?;
+                let key = fixed::<32>(fields[2]).map_err(fail)?;
                 anchors = anchors.with_key_log_signer(fields[1].to_string(), key);
             }
             "certification" => {

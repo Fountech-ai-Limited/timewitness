@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Four rules about what this repository may contain, checked over the tree and over the whole
-# history rather than over the tip.
+# Five rules about what this repository may contain, checked over the tree and over the whole
+# history rather than over the tip. The fifth, the times, is read by `scripts/times-and-refs.py`,
+# which this runs.
 #
 # Each is stated as what belongs rather than as what does not. A list of things to keep out has to be
 # guessed at and goes stale; a list of what is allowed refuses everything nobody has thought about,
@@ -111,6 +112,20 @@ check_message() {
   fi
 }
 
+# Rule 5, the times, lives in its own file because it does date arithmetic, which is not shell's
+# strength. Its three exits are read by name: 1 is a breach it has named, and anything else but 0 is
+# a check that could not run.
+times_and_refs() {
+  local status
+  python3 "$here/times-and-refs.py" "$@"
+  status=$?
+  case "$status" in
+    0) ;;
+    1) fail=1 ;;
+    *) stop "scripts/times-and-refs.py could not run (exit $status)" ;;
+  esac
+}
+
 if [ "$mode" = "message" ]; then
   check_message "$message_file"
   [ "$fail" -eq 0 ] || exit 1
@@ -131,6 +146,15 @@ if [ "$mode" = "self-test" ]; then
     git config user.name "Nik Kairinos"
     git config user.email "nik@fountech.ai"
     git config commit.gpgsign false
+    # Every seed is dated at the instant the commit it is planted on was committed, in the offset
+    # Cyprus kept then, whatever clock the machine keeps, so that only the rule each one is for
+    # fires on it. A build runner keeps UTC, and the time rule would otherwise refuse every seed,
+    # the merge button's own commit among them. The offset is worked out by rule 5's own file
+    # rather than copied from that commit, which may be one of the four it excuses.
+    head_seconds="$(git log -1 --format=%ct HEAD)" || exit 2
+    head_offset="$(python3 -c 'import runpy, sys; m = runpy.run_path(sys.argv[1]); print(m["offset_text"](m["cyprus_offset"](int(sys.argv[2]))))' "$here/times-and-refs.py" "$head_seconds")" || exit 2
+    head_date="$head_seconds $head_offset"
+    export GIT_AUTHOR_DATE="$head_date" GIT_COMMITTER_DATE="$head_date"
     printf 'a line with a dash that is not a hyphen: \xe2\x80\x94\n' >docs/a-seeded-file.md
     printf 'a file the allowlist has never heard of\n' >somewhere-else.txt
     git add -A
@@ -212,6 +236,25 @@ if [ "$mode" = "self-test" ]; then
       "Somebody|nik@fountech.ai|" "somebody@example.com" || exit 2
     seed_an_identity an-address-for-a-name "Somebody|nik@fountech.ai" "somebody@example.com" \
       "nik@fountech.ai" "somebody@example.com" || exit 2
+
+    # Rule 5: a commit dated in another offset, and a commit dated three days before its parent.
+    # Each is named by sha.
+    printf 'seed\n' >docs/a-seed-in-another-offset.md
+    git add -A
+    GIT_AUTHOR_DATE="$head_seconds +0000" git commit --quiet -m "A seeded commit dated in another offset" || exit 2
+    git rev-parse HEAD >"$work/sha-another-offset" || exit 2
+    printf 'seed\n' >docs/a-seed-dated-early.md
+    git add -A
+    early="$((head_seconds - 3 * 86400)) $head_offset"
+    GIT_AUTHOR_DATE="$early" GIT_COMMITTER_DATE="$early" \
+      git commit --quiet -m "A seeded commit dated before its parent" || exit 2
+    git rev-parse HEAD >"$work/sha-dated-early" || exit 2
+    # And a commit left in the reflog alone, for the hook: no ref holds it, so nothing above read it.
+    printf 'seed\n' >docs/a-commit-left-behind.md
+    git add -A
+    git commit --quiet -m "A commit left behind" || exit 2
+    git rev-parse HEAD >"$work/sha-left-behind" || exit 2
+    git reset --quiet --hard HEAD~1 || exit 2
   ) || stop "the seeds could not be planted"
 
   said="$(bash "$here/repo-hygiene.sh" --repo "$work/clone" 2>&1)"
@@ -220,6 +263,7 @@ if [ "$mode" = "self-test" ]; then
     printf '%s\n' "$said" >&2
     stop "the seeded clone came back exit $status rather than 1"
   fi
+  missed=0
   expected=(
     "a commit message carries a byte that is not tab, newline or printable ASCII"
     "carries a footer, and messages here are prose"
@@ -228,7 +272,18 @@ if [ "$mode" = "self-test" ]; then
     "'somewhere-else.txt' is tracked and is not one of the things this repository holds"
     "'somewhere-else.txt' is in the history and is not one of the things this repository holds"
   )
-  missed=0
+  # Rule 5's seeds, each named by sha with the sentence that has to carry it.
+  for pair in "another-offset:%s is authored at +0000" \
+    "dated-early:%s is committed more than a day before its parent"; do
+    seed="${pair%%:*}"
+    seeded_sha="$(cat "$work/sha-$seed" 2>/dev/null)"
+    if [ -z "$seeded_sha" ]; then
+      echo "repo hygiene: the $seed seed was never planted, so nothing was watched refusing it" >&2
+      missed=1
+      continue
+    fi
+    expected+=("$(printf "${pair#*:}" "$seeded_sha")")
+  done
   for sentence in "${expected[@]}"; do
     case "$said" in
       *"$sentence"*) ;;
@@ -271,6 +326,31 @@ if [ "$mode" = "self-test" ]; then
         ;;
     esac
   fi
+  # And the hook's own reading of the refs a push would make, driven with seeded refs against the
+  # scratch clone and told to stop after them. A branch named with a slash, or a commit no ref holds,
+  # has to stop it with 1; a plain ref and a deletion of a slash-named branch have to get as far as
+  # the stop, which is 3.
+  zeros="0000000000000000000000000000000000000000"
+  pushed="$(git -C "$work/clone" rev-parse HEAD)" || stop "the scratch clone's head could not be read"
+  left_behind="$(cat "$work/sha-left-behind" 2>/dev/null)"
+  [ -n "$left_behind" ] || stop "the commit left behind was never planted"
+  line=0
+  # Each seed is the exit it has to give and the line git would hand the hook.
+  for seed in "1|refs/heads/a $pushed refs/heads/a/b $zeros" \
+    "1|refs/heads/a $left_behind refs/heads/a-plain-branch $zeros" \
+    "3|refs/heads/a $pushed refs/heads/a-plain-branch $zeros" \
+    "3|(delete) $zeros refs/heads/a/b $pushed"; do
+    line=$((line + 1))
+    want="${seed%%|*}"
+    push_line="${seed#*|}"
+    printf '%s\n' "$push_line" | GIT_DIR="$work/clone/.git" TW_BEFORE_PUSH_REFS_ONLY=1 \
+      bash "$here/before-push.sh" >/dev/null 2>&1
+    status=$?
+    if [ "$status" -ne "$want" ]; then
+      echo "repo hygiene: the hook came back $status, not $want, on seeded push line $line" >&2
+      missed=1
+    fi
+  done
   # And the message path, with its two seeds.
   printf 'A message with a footer\n\nSigned-off-by: somebody <somebody@example.com>\n' >"$work/footer"
   if bash "$here/repo-hygiene.sh" --message "$work/footer" 2>/dev/null; then
@@ -285,6 +365,11 @@ if [ "$mode" = "self-test" ]; then
   printf 'A plain message\n\nWith prose under it.\n' >"$work/plain"
   if ! bash "$here/repo-hygiene.sh" --message "$work/plain" 2>/dev/null; then
     echo "repo hygiene: --message refused a plain message" >&2
+    missed=1
+  fi
+  # And rule 5's own file, put to the shapes it reads that a clone cannot plant: a ref about to be
+  # pushed, and the dates either side of a change of clocks.
+  if ! python3 "$here/times-and-refs.py" --self-test; then
     missed=1
   fi
   if [ "$missed" -ne 0 ]; then
@@ -506,6 +591,12 @@ while IFS= read -r path; do
     report "'$path' is in the history and is not one of the things this repository holds"
   fi
 done <<<"$history_paths"
+
+# 5. The times.
+#
+# Every commit is dated in the offset Cyprus kept at its instant, and none is committed more than a
+# day before its parent. The file says what each rule reads.
+times_and_refs --repo "$repo"
 
 if [ "$fail" -ne 0 ]; then
   exit 1

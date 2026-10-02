@@ -62,8 +62,9 @@ inputs:
       on 2026-09-08 against the three public Roughtime servers, two passes each, before the operator
       floor that now refuses a round of those three alone: 6.2 s of width at one round, 17.4 s wide at
       three, 16.4 s wide at four, 12.0 s wide at sixteen and 10.4 s wide at thirty-two.
-      Sixteen is the default. No figure is given here for how long a count takes or what it buys
-      in width, because both move with the runner and the sources it reaches.
+      Those widths are not what a count buys today, since a round of Roughtime alone is now refused.
+      Sixteen is the default. No figure is given here for how long a count takes today or for what it
+      buys in width, because both move with the runner and the sources it reaches.
     required: false
     default: "16"
   max-width:
@@ -150,7 +151,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Build the agent
+    - name: Build the command line tool
       shell: bash
       run: |
         # From source, on the runner. There is no released binary to download yet, and a step that

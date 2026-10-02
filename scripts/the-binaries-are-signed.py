@@ -17,7 +17,8 @@ archive to its line in `SHA256SUMS`. Then, where the tools are on this machine:
 
 - the Linux archives and the digest list are checked against their bundles with `cosign`, which
   holds the signature to this repository's release workflow and to GitHub's token issuer, and to
-  nothing we hold a key for;
+  nothing we hold a key for, and then the certificate cosign verified is held to the one job in that
+  workflow that signs them, so no other job's token passes for it;
 - on macOS, each macOS binary has to pass `codesign --verify --strict`, carry a Developer ID
   Application authority for our own Apple team and no other, chained to Apple's root, and be
   accepted by `spctl` as notarised;
@@ -49,6 +50,13 @@ reads the same assets out of a folder instead of a release, which is how the rel
 rehearsal checks what it would have attached. It runs nothing there, because that job holds the
 token that signs.
 
+    python scripts/the-binaries-are-signed.py --release v0.4 --dist dist --no-run --rehearsal-key cosign.pub
+
+is what the rehearsal runs, since it signs the Linux archives with a key made for that run alone
+rather than into the public transparency log. The bundles are checked against that key, and a line
+saying so fails the run whatever else passed: a signature from a key nobody else has seen proves
+nothing about where a file came from, so with this option the check can never pass a release.
+
     python scripts/the-binaries-are-signed.py --binary path/to/timewitness
 
 holds one binary already on this machine to the same signature clauses, which is how the release
@@ -74,6 +82,7 @@ import argparse
 import base64
 import glob
 import hashlib
+import io
 import json
 import os
 import platform
@@ -127,6 +136,19 @@ def archive_name(tag, target):
 # tag itself is held by the archive's name and by `--version`.
 SIGNER = (r"^https://github\.com/Fountech-ai-Limited/timewitness/\.github/workflows/release\.yml"
           r"@refs/heads/main$")
+
+# Which job in that run signed. Every job in a run of the release workflow from main is given the
+# identity above, so it does not tell the job that signs the Linux archives from `sign-windows`,
+# which asks GitHub for a token to sign in to Azure. Code running there could trade that token for a
+# Sigstore certificate of its own and sign a Linux archive the identity above accepts. The subject of
+# the token does tell them apart, and Fulcio copies it into the certificate: a job that enters an
+# environment is given a subject naming that environment, and only the job that signs the Linux
+# archives enters `linux-signing`. The subject names this repository and its owner by number as well
+# as by name, so a repository renamed or recreated under the same name does not carry it, and the ref
+# and the workflow the job ran from, as the identity above does. The repository's number is written
+# here once, and `scripts/the-release-route-holds.py` fails while it differs from `REPO_NUMBER` there.
+LINUX_SUBJECT = "repo:Fountech-ai-Limited@110895113/timewitness@1401363610:environment:linux-signing:ref:refs/heads/main:job_workflow_ref:Fountech-ai-Limited/timewitness/.github/workflows/release.yml@refs/heads/main"
+OID_TOKEN_SUBJECT = "1.3.6.1.4.1.57264.1.24"
 
 
 def required_assets(tag):
@@ -378,6 +400,79 @@ def signtool_chain(output):
     return chain
 
 
+# Reading which job a Linux signature came from. cosign has verified the bundle's certificate, its
+# chain to Fulcio and the signature before this reads anything, and it is asked nothing here that it
+# could answer itself: only the token subject, which it has no option for. A bundle carries one
+# certificate, and one carrying more, or a certificate carrying an extension twice, is refused
+# rather than read one way of several.
+
+def certificate_extensions(data):
+    """Each extension of the DER certificate `data`, by OID, as the bytes its value holds. ValueError
+    for anything this does not read, and for an extension that appears twice."""
+    try:
+        _, start, end = der(data, 0)
+        if end != len(data):
+            raise ValueError("bytes follow the certificate")
+        tbs = children(data, start, end)[0]
+        found = {}
+        for tag, s, e, _ in children(data, tbs[1], tbs[2]):
+            if tag != 0xA3:
+                continue
+            for _, s2, e2, _ in children(data, *children(data, s, e)[0][1:3]):
+                parts = children(data, s2, e2)
+                if parts[0][0] != 0x06 or parts[-1][0] != 0x04:
+                    raise ValueError("an extension this does not read")
+                oid = oid_text(data[parts[0][1]:parts[0][2]])
+                if oid in found:
+                    raise ValueError("the extension %s appears twice" % oid)
+                found[oid] = data[parts[-1][1]:parts[-1][2]]
+        return found
+    except IndexError:
+        raise ValueError("the certificate is cut short or malformed")
+
+
+# What a Sigstore bundle holds at its top level, and nothing else. cosign reads a file that does not
+# load as one of these as its older bundle, which keeps its certificate under `cert` and ignores any
+# other key. So a file carrying both could show cosign one certificate and this another, and a bundle
+# with anything else at its top level is refused. Each of these names is one the older reader never
+# takes for its own, whatever their case.
+BUNDLE_KEYS = {"mediaType", "verificationMaterial", "messageSignature", "dsseEnvelope"}
+BUNDLE_TYPE = "application/vnd.dev.sigstore.bundle"
+
+
+def bundle_certificate(text):
+    """The DER certificate a Sigstore bundle's signature was made under."""
+    try:
+        bundle = json.loads(text)
+        if not isinstance(bundle, dict) or not set(bundle) <= BUNDLE_KEYS:
+            raise ValueError("it is not a Sigstore bundle and nothing else")
+        if not str(bundle.get("mediaType", "")).startswith(BUNDLE_TYPE):
+            raise ValueError("its media type is not a Sigstore bundle's")
+        material = bundle["verificationMaterial"]
+        kinds = [k for k in ("certificate", "x509CertificateChain", "publicKey") if k in material]
+        if kinds == ["certificate"]:
+            raw = material["certificate"]["rawBytes"]
+        elif kinds == ["x509CertificateChain"]:
+            raw = material["x509CertificateChain"]["certificates"][0]["rawBytes"]
+        else:
+            raise ValueError("it carries %s where one certificate belongs" % (" and ".join(kinds) or "nothing"))
+        raw = raw.replace("-", "+").replace("_", "/")
+        return base64.b64decode(raw + "=" * (-len(raw) % 4), validate=True)
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
+        raise ValueError("its certificate could not be read (%s)" % e)
+
+
+def token_subject(certificate):
+    """The subject of the token Fulcio issued `certificate` for, or None where it names none."""
+    value = certificate_extensions(certificate).get(OID_TOKEN_SUBJECT)
+    if value is None:
+        return None
+    tag, start, end = der(value, 0)
+    if tag != 0x0C or end != len(value):
+        raise ValueError("the token subject is not one string")
+    return value[start:end].decode("utf-8")
+
+
 # The judgements, each a pure function of what was read, so the self-test can put them to shapes.
 # The signature judges return why a binary is not ours, and nothing when it is.
 
@@ -469,6 +564,11 @@ def judge_cosign(code, output):
     return code == 0 and "Verified OK" in output
 
 
+def judge_signing_job(subject):
+    """Signed in the one job that enters `linux-signing`, and in no other job of the run."""
+    return subject == LINUX_SUBJECT
+
+
 def may_run(digest, signature):
     """A binary is run only once its digest line and its own signature have both been checked here
     and both passed. A clause missing is a clause not passed."""
@@ -549,41 +649,140 @@ def host_target():
     return target
 
 
-def unpack(archive, into):
+# The most a binary in a release archive may be, read before it is, so an archive that unpacks to far
+# more than it holds is refused rather than read into memory. The binaries are a few megabytes.
+ARCHIVE_LIMIT = 256 * 1024 * 1024
+
+
+def plain_name(entry):
+    """An archive entry's name as a file system would take it, `./` taken off and case folded, or
+    None for one that is anything but a plain name in the archive's top folder."""
+    name = entry[2:] if entry.startswith("./") else entry
+    if not name or name in (".", "..") or "/" in name or "\\" in name or ":" in name:
+        return None
+    return name.lower()
+
+
+def unpack(archive, into, limit=ARCHIVE_LIMIT):
+    """The binary out of a release archive, written into `into` under its own name. An archive is
+    opened before any signature in it has been read, and a stranger's `tar` or unzip takes out
+    everything in it, so the archive has to hold the binary, LICENSE and NOTICE and nothing else: each
+    a plain file at the top, once, after `./` and case are taken off, since a case-blind file system
+    keeps whichever of two spellings comes last. Only the binary is taken out here, so no name or link
+    in the archive can reach outside `into`, whatever this Python's defaults."""
     os.makedirs(into, exist_ok=True)
+    name = "timewitness.exe" if archive.endswith(".zip") else "timewitness"
+    where = os.path.basename(archive)
     if archive.endswith(".zip"):
-        with zipfile.ZipFile(archive) as z:
-            z.extractall(into)
+        opened = zipfile.ZipFile(archive)
+        entries = [(i.filename, not i.is_dir() and (i.external_attr >> 16) & 0o170000 in (0, 0o100000), i.file_size, i)
+                   for i in opened.infolist()]
+        read = opened.read
     else:
-        with tarfile.open(archive) as t:
-            # Without the data filter an archive can write outside the folder or plant a link,
-            # before any signature has been read, so an older Python is refused rather than trusted.
-            if not hasattr(tarfile, "data_filter"):
-                raise CouldNotRun("this Python cannot unpack an archive safely; use 3.12 or later, or a "
-                                  "release of 3.8 to 3.11 carrying the tarfile data filter")
-            t.extractall(into, filter="data")
-    for name in ("timewitness.exe", "timewitness"):
-        path = os.path.join(into, name)
-        if os.path.isfile(path):
-            return path
-    raise CouldNotRun("%s holds no timewitness binary at its top level" % os.path.basename(archive))
+        opened = tarfile.open(archive)
+        entries = [(m.name, m.isreg(), m.size, m) for m in opened.getmembers()]
+        read = lambda member: opened.extractfile(member).read()
+    try:
+        # A name with a folder or a drive in it is written somewhere other than beside the binary by
+        # somebody's unzip, so it is refused as that before the names are counted.
+        odd = [entry for entry, _, _, _ in entries if plain_name(entry) is None]
+        if odd:
+            raise CouldNotRun("%s holds %s, which is not a plain name at the top of the archive" % (where, ", ".join(odd)))
+        names = sorted(str(plain_name(entry)) for entry, _, _, _ in entries)
+        if names != sorted([name, "license", "notice"]):
+            raise CouldNotRun("%s holds [%s], and a release archive holds %s, LICENSE and NOTICE and nothing else"
+                              % (where, ", ".join(entry for entry, _, _, _ in entries), name))
+        for entry, regular, size, _ in entries:
+            if not regular:
+                raise CouldNotRun("%s holds %s as a link or something else that is not a plain file" % (where, entry))
+            if size > limit:
+                raise CouldNotRun("%s holds %s at %d bytes, more than a release binary is" % (where, entry, size))
+        if archive.endswith(".zip"):
+            # A zip names each file twice, in its directory and again in front of the file, and an
+            # unzip that reads it front to back writes the second name. Opening a member holds the two
+            # to each other, so every member is opened, not only the binary.
+            for _, _, _, member in entries:
+                with opened.open(member) as each:
+                    each.read(0)
+        data = read([member for entry, _, _, member in entries if plain_name(entry) == name][0])
+    finally:
+        opened.close()
+    path = os.path.join(into, name)
+    with open(path, "wb") as f:
+        f.write(data)
+    return path
 
 
-def signtool():
-    found = shutil.which("signtool")
-    if found:
-        return found
-    kits = sorted(glob.glob(r"C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe"))
+# Where the tools this runs are taken from. Somebody checking a download often does it from the
+# folder the download was saved to, and a `signtool.exe` or `cosign.exe` shipped beside it would be run
+# as ours and could print a pass for a binary nobody signed. On Windows a bare name, and Python's own
+# lookup, try the working folder before anything on the path. So signtool comes from the Windows Kits
+# folder or from a full path given, the macOS tools from where macOS keeps them, and cosign from an
+# absolute folder on the path that is not the one this is run in, nor the one the assets are read
+# from.
+SIGNTOOL_KITS = os.path.join(os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)",
+                             "Windows Kits", "10", "bin", "*", "x64", "signtool.exe")
+CODESIGN, SPCTL = "/usr/bin/codesign", "/usr/sbin/spctl"
+
+
+def signtool(given=None, kits_at=SIGNTOOL_KITS):
+    """The signtool given, or the newest in the Windows Kits folder, by its version read as numbers,
+    since 10.0.9999.0 sorts after 10.0.22621.0 as text."""
+    if given:
+        return given
+    def version(path):
+        folder = os.path.basename(os.path.dirname(os.path.dirname(path)))
+        return [int(part) if part.isdigit() else -1 for part in folder.split(".")]
+    kits = sorted(glob.glob(kits_at), key=version)
     return kits[-1] if kits else None
+
+
+def signtool_given(value):
+    """Why `--signtool VALUE` is refused, or None. Only a full path is taken, since a bare or relative
+    name is looked for in the working folder first."""
+    if not (os.path.isabs(value) and os.path.isfile(value)):
+        return "--signtool takes the full path of signtool, and %s is not one" % value
+    return None
+
+
+def same_folder(one, other):
+    """Whether two names are one folder on disk, whatever each is spelt as: by its file system's own
+    identity for it, not by comparing the text, which a device path, a share, a short name or a link
+    all spell differently."""
+    try:
+        return os.path.samefile(one, other)
+    except (OSError, ValueError):
+        return False
+
+
+def tool_on_path(name, avoid, path=None, exe_only=os.name == "nt"):
+    """`name` from an absolute folder on the path that is none of the folders in `avoid`, or None.
+    A relative entry, `.` and an empty one among them, is a folder under wherever this is run, so it
+    is never searched, and nor is one led by two separators, which on Windows names a share or a
+    device path rather than a folder on this disk. Each folder is known by what it is on disk rather
+    than by how it is spelt. On Windows only an `.exe` is taken, so no batch file stands in for one."""
+    path = os.environ.get("PATH", "") if path is None else path
+    file_name = name + ".exe" if exe_only else name
+    for entry in path.split(os.pathsep):
+        if not os.path.isabs(entry):
+            continue
+        if len(entry) > 1 and entry[0] in "\\/" and entry[1] in "\\/":
+            continue
+        if any(same_folder(entry, folder) for folder in avoid):
+            continue
+        candidate = os.path.join(entry, file_name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
 
 
 def unpinned(problems):
     return any(p.startswith("NOT PINNED") for p in problems)
 
 
-def check_macos_binary(label, binary, pins, say):
-    code, out = run(["codesign", "--verify", "--strict", "--verbose=2", binary])
-    code2, out2 = run(["codesign", "-dv", "--verbose=4", binary])
+def check_macos_binary(label, binary, pins, say, run=run):
+    code, out = run([CODESIGN, "--verify", "--strict", "--verbose=2", binary])
+    code2, out2 = run([CODESIGN, "-dv", "--verbose=4", binary])
     problems = judge_codesign(code2, out2, pins) if code == 0 else ["codesign --verify refuses it: %s" % out.strip().splitlines()[:2]]
     if unpinned(problems):
         say("FAIL", "%s: refused, because the team it is held to is not set (said above)" % label)
@@ -591,17 +790,18 @@ def check_macos_binary(label, binary, pins, say):
         say("FAIL", "%s: not signed by our Developer ID: %s" % (label, "; ".join(problems)))
     else:
         say("PASS", "%s: codesign verifies it, signed by our Developer ID, team %s" % (label, pin(pins, "apple", "team_id")))
-    code, out = run(["spctl", "--assess", "--type", "open", "--context", "context:primary-signature", "-vv", binary])
+    code, out = run([SPCTL, "--assess", "--type", "open", "--context", "context:primary-signature", "-vv", binary])
     if judge_spctl(code, out):
         say("PASS", "%s: spctl accepts it as notarised" % label)
     else:
         say("FAIL", "%s: spctl refuses it: %s" % (label, " ".join(out.split())[:200]))
 
 
-def check_windows_binary(label, binary, pins, say):
-    tool = signtool()
+def check_windows_binary(label, binary, pins, say, signtool_at=None):
+    tool = signtool(signtool_at)
     if not tool:
-        say("NOT RUN", "%s: signtool is not on this machine, so the Windows signature was not checked here" % label)
+        say("NOT RUN", "%s: signtool is not in the Windows Kits folder here and no --signtool was given, so the "
+                       "Windows signature was not checked here" % label)
         return
     code, out = run([tool, "verify", "/pa", "/v", binary])
     try:
@@ -620,6 +820,22 @@ def check_windows_binary(label, binary, pins, say):
         say("PASS", "%s: signtool verify /pa passes, signed by %s" % (label, pin(pins, "windows", "subject_common_name")))
 
 
+def check_signing_job(name, bundle, say):
+    """Whether the Linux signing job made the signature cosign has just verified, said as a line
+    about `name`."""
+    try:
+        with open(bundle, encoding="utf-8") as f:
+            subject = token_subject(bundle_certificate(f.read()))
+    except (OSError, ValueError) as e:
+        say("FAIL", "%s has a bundle whose signing job could not be read: %s" % (name, e))
+        return "FAIL"
+    if judge_signing_job(subject):
+        say("PASS", "%s was signed in the job that signs the Linux archives, and in no other job" % name)
+        return "PASS"
+    say("FAIL", "%s was signed with a token for [%s], which is not the Linux signing job's" % (name, subject or "no subject"))
+    return "FAIL"
+
+
 def pinned_or_say(say):
     pins, problems = load_pins()
     for problem in problems:
@@ -627,9 +843,12 @@ def pinned_or_say(say):
     return pins
 
 
-def check(tag, work, repo=REPO, folder=None, run_binary=True):
+def check(tag, work, repo=REPO, folder=None, run_binary=True, cosign=None, rehearsal_key=None, signtool_at=None):
     """Every clause for the release `tag`, reading its assets from GitHub, or from `folder` where one
-    is given."""
+    is given. `cosign` is the command that runs cosign, or a function that answers for it, found on
+    the path where it is not given,
+    `rehearsal_key` the public half of a rehearsal's throwaway key, and `signtool_at` signtool's full
+    path where it is not in the Windows Kits folder."""
     results = []
 
     def say(state, line):
@@ -708,7 +927,9 @@ def check(tag, work, repo=REPO, folder=None, run_binary=True):
 
     # The Linux signatures, which any machine with cosign can check. An archive with no bundle
     # beside it has no signature to check, and that is a failure of its own.
-    cosign = shutil.which("cosign")
+    if cosign is None:
+        found = tool_on_path("cosign", [os.getcwd()] + ([folder] if folder else []))
+        cosign = [found] if found else None
     signed_blobs = [n for n in files if n + BUNDLE in files]
     for target, (os_name, _) in TARGETS.items():
         name = archive_name(tag, target)
@@ -720,17 +941,28 @@ def check(tag, work, repo=REPO, folder=None, run_binary=True):
             if name in targets_of:
                 signature_of[targets_of[name]].append("NOT RUN")
     else:
+        # A rehearsal's bundle carries no log entry and no certificate, only the key's hint, so it is
+        # held to the key and told there is no log to find it in.
+        if rehearsal_key:
+            against, signer = ["--key", rehearsal_key, "--insecure-ignore-tlog"], "the rehearsal's throwaway key"
+        else:
+            against = ["--certificate-identity-regexp", SIGNER, "--certificate-oidc-issuer", ISSUER]
+            signer = "this repository's release workflow"
         for name in sorted(signed_blobs):
-            code, out = run([cosign, "verify-blob", files[name], "--bundle", files[name + BUNDLE],
-                             "--certificate-identity-regexp", SIGNER,
-                             "--certificate-oidc-issuer", ISSUER])
+            asked = ["verify-blob", files[name], "--bundle", files[name + BUNDLE]] + against
+            code, out = cosign(asked) if callable(cosign) else run(cosign + asked)
             state = "PASS" if judge_cosign(code, out) else "FAIL"
             if state == "PASS":
-                say(state, "%s is signed by this repository's release workflow (cosign)" % name)
+                say(state, "%s is signed by %s (cosign)" % (name, signer))
             else:
                 say(state, "%s did not verify against its bundle: %s" % (name, out.strip().splitlines()[-1:] or out))
+            if state == "PASS" and not rehearsal_key:
+                state = check_signing_job(name, files[name + BUNDLE], say)
             if name in targets_of:
                 signature_of[targets_of[name]].append(state)
+    if rehearsal_key:
+        say("FAIL", "REHEARSAL KEY: the Linux signatures were held to a throwaway key and not to this "
+                    "repository's release workflow, so this check does not pass a release")
 
     def opened(name, into):
         try:
@@ -752,7 +984,7 @@ def check(tag, work, repo=REPO, folder=None, run_binary=True):
         elif os_name == "windows" and system == "windows":
             binary = opened(name, os.path.join(work, target))
             if binary is not None:
-                check_windows_binary(target, binary, pins, for_target(target))
+                check_windows_binary(target, binary, pins, for_target(target), signtool_at)
         elif os_name != "linux":
             # Not a clause here: the leg on that system checks it. Said, so nobody reads it as checked.
             say("ELSEWHERE", "%s: its signature is checked on %s, and this is not" % (target, os_name))
@@ -781,7 +1013,7 @@ def check(tag, work, repo=REPO, folder=None, run_binary=True):
     return results
 
 
-def check_one(binary):
+def check_one(binary, signtool_at=None):
     """The signature clauses for one binary already on this machine."""
     results = []
 
@@ -795,7 +1027,7 @@ def check_one(binary):
     if system == "Darwin":
         check_macos_binary(label, binary, pins, say)
     elif system == "Windows":
-        check_windows_binary(label, binary, pins, say)
+        check_windows_binary(label, binary, pins, say, signtool_at)
     else:
         say("NOT RUN", "a signature is checked here only on macOS or Windows, and this is %s" % system)
     return results
@@ -850,6 +1082,93 @@ def fixture(name):
         return base64.b64decode(f.read())
 
 
+def der_of(tag, body):
+    size = len(body)
+    if size < 0x80:
+        return bytes([tag, size]) + body
+    length = size.to_bytes((size.bit_length() + 7) // 8, "big")
+    return bytes([tag, 0x80 | len(length)]) + length + body
+
+
+def oid_der(text):
+    parts = [int(p) for p in text.split(".")]
+    out = bytearray([40 * parts[0] + parts[1]])
+    for part in parts[2:]:
+        chunk = [part & 0x7F]
+        part >>= 7
+        while part:
+            chunk.append(0x80 | (part & 0x7F))
+            part >>= 7
+        out += bytes(reversed(chunk))
+    return der_of(0x06, bytes(out))
+
+
+def fulcio_shaped(subjects, critical=True):
+    """A certificate laid out as Fulcio lays one out, where this check reads it: a critical extension
+    first, then one token subject extension for each of `subjects`. Nothing signs it, since cosign's
+    stand-in says whether it verifies."""
+    def extension(oid, value, is_critical=False):
+        return der_of(0x30, oid_der(oid) + (b"\x01\x01\xff" if is_critical else b"") + der_of(0x04, value))
+    extensions = [extension("2.5.29.15", der_of(0x03, b"\x07\x80"), critical)]
+    extensions += [extension(OID_TOKEN_SUBJECT, der_of(0x0C, s.encode("utf-8"))) for s in subjects]
+    algorithm = der_of(0x30, oid_der("1.2.840.10045.4.3.3"))
+    name = der_of(0x30, der_of(0x31, der_of(0x30, oid_der(OID_O) + der_of(0x0C, b"sigstore.dev"))))
+    tbs = der_of(0x30, der_of(0xA0, der_of(0x02, b"\x02")) + der_of(0x02, b"\x01") + algorithm + name
+                 + der_of(0x30, der_of(0x17, b"260930000000Z") * 2) + der_of(0x30, b"")
+                 + der_of(0x30, algorithm + der_of(0x03, b"\x00")) + der_of(0xA3, der_of(0x30, b"".join(extensions))))
+    return der_of(0x30, tbs + algorithm + der_of(0x03, b"\x00"))
+
+
+def bundle_of(certificate, kind="certificate"):
+    """A Sigstore bundle as cosign writes one, holding `certificate`."""
+    raw = base64.b64encode(certificate).decode("ascii")
+    material = {"certificate": {"certificate": {"rawBytes": raw}},
+                "x509CertificateChain": {"x509CertificateChain": {"certificates": [{"rawBytes": raw}]}},
+                "key": {"publicKey": {"hint": "a key"}}}[kind]
+    return json.dumps({"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json", "verificationMaterial": material})
+
+
+def fulcio_elsewhere():
+    """A real certificate from Fulcio, for another repository's release job in an environment of its
+    own: pytest's publishing job, taken from the provenance PyPI serves for pytest 9.1.1."""
+    with open(os.path.join(FIXTURES, "fulcio-another-repository.pem"), encoding="ascii") as f:
+        return base64.b64decode("".join(line for line in f.read().splitlines() if not line.startswith("-----")))
+
+
+# The token subject each job of a release run from main is given: the Linux signing job's, and the
+# ones `sign-windows` and a job in no environment would be given.
+OUR_PREFIX = LINUX_SUBJECT.split(":environment:")[0]
+OUR_SUFFIX = ":ref:refs/heads/main:job_workflow_ref:Fountech-ai-Limited/timewitness/.github/workflows/release.yml@refs/heads/main"
+WINDOWS_SUBJECT = OUR_PREFIX + ":environment:release" + OUR_SUFFIX
+NO_ENVIRONMENT_SUBJECT = OUR_PREFIX + ":ref:refs/heads/main" + OUR_SUFFIX
+
+
+def pack(archive, binary, body, extra=None):
+    """A release archive at `archive` holding `binary` with `body`, LICENSE and NOTICE, as the release
+    workflow packs one, or the entries `extra` gives instead: each a name and a body, or a name and
+    ("link", target) for a link."""
+    entries = extra if extra is not None else [(binary, body), ("LICENSE", b"licence\n"), ("NOTICE", b"notice\n")]
+    if archive.endswith(".zip"):
+        with zipfile.ZipFile(archive, "w") as z:
+            for name, data in entries:
+                if isinstance(data, tuple):
+                    info = zipfile.ZipInfo(name)
+                    info.external_attr = (0o120777 << 16)
+                    z.writestr(info, data[1])
+                else:
+                    z.writestr(name, data)
+    else:
+        with tarfile.open(archive, "w:gz") as t:
+            for name, data in entries:
+                info = tarfile.TarInfo(name)
+                if isinstance(data, tuple):
+                    info.type, info.linkname = tarfile.SYMTYPE, data[1]
+                    t.addfile(info)
+                else:
+                    info.size, info.mode = len(data), 0o755
+                    t.addfile(info, io.BytesIO(data))
+
+
 def refuses_to_run_what_it_refused(wrong_digest):
     """A check over a folder holding a binary for this machine that is not signed, listed with the
     wrong digest or the right one. Whatever else it says, it must not run that binary."""
@@ -859,19 +1178,11 @@ def refuses_to_run_what_it_refused(wrong_digest):
     tag = "v0.4"
     work = tempfile.mkdtemp(prefix="tw-refused-self-test-")
     try:
-        dist, inside = os.path.join(work, "dist"), os.path.join(work, "inside")
+        dist = os.path.join(work, "dist")
         os.makedirs(dist)
-        os.makedirs(inside)
         exe = "timewitness.exe" if TARGETS[here][0] == "windows" else "timewitness"
-        with open(os.path.join(inside, exe), "wb") as f:
-            f.write(fixture("unsigned") if exe.endswith(".exe") else b"#!/bin/sh\necho timewitness v0.4\n")
         archive = os.path.join(dist, archive_name(tag, here))
-        if archive.endswith(".zip"):
-            with zipfile.ZipFile(archive, "w") as z:
-                z.write(os.path.join(inside, exe), exe)
-        else:
-            with tarfile.open(archive, "w:gz") as t:
-                t.add(os.path.join(inside, exe), exe)
+        pack(archive, exe, fixture("unsigned") if exe.endswith(".exe") else b"#!/bin/sh\necho timewitness v0.4\n")
         with open(archive, "rb") as f:
             digest = "0" * 64 if wrong_digest else hashlib.sha256(f.read()).hexdigest()
         with open(os.path.join(dist, SUMS), "w", encoding="utf-8") as f:
@@ -887,6 +1198,366 @@ def refuses_to_run_what_it_refused(wrong_digest):
         return not ran and len(held) == 1
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+# cosign's stand-in holds a signature to the identity and issuer it is handed as real cosign does:
+# the identity as a regular expression found anywhere in the certificate's identity, since cosign's
+# is unanchored, and the issuer exactly. It is told what the certificate says, as Fulcio would have
+# written it, by the shape, and never reads it from the check, so a check that asked for too little
+# is refused or accepted here as cosign would. It answers only the two questions the check asks,
+# keyless and with a rehearsal's key, word for word, so a flag that loosens either, such as one
+# that skips the transparency log, is refused rather than ignored. It cannot say which certificate
+# in a file it would have verified, so the shapes below that hold the check to reading the one
+# cosign reads are shapes of the file itself, refused before any certificate in it is believed.
+def stand_in_cosign(said, identity, issuer):
+    """cosign verify-blob, as the shape tells it the certificate reads, answering in this process
+    rather than as one started for each signature, which on Windows costs most of a second."""
+    def cosign(args):
+        keyless = (len(args) == 8 and args[0] == "verify-blob" and args[2] == "--bundle"
+                   and args[4] == "--certificate-identity-regexp" and args[6] == "--certificate-oidc-issuer")
+        rehearsal = len(args) == 7 and args[0] == "verify-blob" and args[2] == "--bundle" and args[4:] == [
+            "--key", args[5], "--insecure-ignore-tlog"]
+        if not (keyless or rehearsal):
+            return 1, "Error: the stand-in answers the check's two questions and nothing else: %s" % " ".join(args[4:])
+        if keyless and (args[7] != issuer or not re.search(args[5], identity)):
+            return 1, "Error: none of the expected identities matched what was in the certificate"
+        if said == "refuses":
+            return 1, "Error: the signature does not verify"
+        return 0, "Verified OK"
+    return cosign
+
+
+# What Fulcio writes into the certificate of a run of the release workflow from main, as the stand-in
+# is told it. Written out here rather than taken from SIGNER and ISSUER, which are what is under test.
+OUR_WORKFLOW = "https://github.com/Fountech-ai-Limited/timewitness/.github/workflows/release.yml@refs/heads/main"
+GITHUB_ISSUER = "https://token.actions.githubusercontent.com"
+
+
+def write_release(dist, tag, targets, bundle, drop=()):
+    """The assets of `tag` for `targets` in `dist`, each archive holding a stand-in binary, with the
+    digest list and a bundle beside each Linux archive and the list, less any named in `drop`."""
+    for target in targets:
+        archive = os.path.join(dist, archive_name(tag, target))
+        pack(archive, "timewitness.exe" if archive.endswith(".zip") else "timewitness",
+             b"#!/bin/sh\necho timewitness %s\n" % tag.encode())
+        if TARGETS[target][0] == "linux":
+            with open(archive + BUNDLE, "w", encoding="utf-8") as f:
+                f.write(bundle)
+    lines = []
+    for target in targets:
+        with open(os.path.join(dist, archive_name(tag, target)), "rb") as f:
+            lines.append("%s  %s\n" % (hashlib.sha256(f.read()).hexdigest(), archive_name(tag, target)))
+    with open(os.path.join(dist, SUMS), "w", encoding="utf-8") as f:
+        f.write("".join(lines))
+    with open(os.path.join(dist, SUMS + BUNDLE), "w", encoding="utf-8") as f:
+        f.write(bundle)
+    for name in drop:
+        os.remove(os.path.join(dist, name))
+
+
+def linux_bundle_check(cosign_says, rehearsal_key=None, bundle=None, identity=OUR_WORKFLOW, issuer=GITHUB_ISSUER,
+                       targets=("x86_64-unknown-linux-gnu",), drop=(), find_cosign=False, plant=None):
+    """check() over a folder holding a Linux archive and its bundle, or the assets of `targets`, with
+    cosign replaced by a stand-in that verifies or refuses as told and holds the check's identity
+    and issuer to the certificate's `identity` and `issuer`. The bundle holds a certificate for the
+    Linux signing job unless another is given. With `find_cosign` the check looks for cosign itself,
+    and with `plant` a function is handed the folder the assets are in first."""
+    if bundle is None:
+        bundle = bundle_of(fulcio_shaped([LINUX_SUBJECT]))
+    tag = "v0.4"
+    work = tempfile.mkdtemp(prefix="tw-cosign-self-test-")
+    try:
+        dist = os.path.join(work, "dist")
+        os.makedirs(dist)
+        write_release(dist, tag, targets, bundle, drop)
+        if plant:
+            plant(dist)
+        cosign = None if find_cosign else stand_in_cosign(cosign_says, identity, issuer)
+        with open(os.devnull, "w") as quiet:
+            saved, sys.stdout = sys.stdout, quiet
+            try:
+                return check(tag, work, folder=dist, run_binary=False, cosign=cosign, rehearsal_key=rehearsal_key)
+            finally:
+                sys.stdout = saved
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def planted_tools_taken():
+    """What the check takes for signtool and cosign when each is left in the folder it is run in, and
+    that folder is on the path by its full name, as `.`, as an empty entry and by a relative name;
+    and whether a cosign left in the folder the assets are read from, on the path by its full name,
+    is run by a whole check. Each planted tool that runs leaves a mark, and one that cannot run
+    counts as run. Returns the signtool taken, the cosign taken, whether a planted one ran, and the
+    folder they were planted in."""
+    here, path = os.getcwd(), os.environ.get("PATH", "")
+    work = tempfile.mkdtemp(prefix="tw-planted-self-test-")
+    mark = os.path.join(work, "ran")
+
+    def plant_in(folder):
+        for name in ("signtool", "cosign"):
+            if os.name == "nt":
+                with open(os.path.join(folder, name + ".exe"), "wb") as f:
+                    f.write(b"MZ planted")
+                with open(os.path.join(folder, name + ".cmd"), "w", encoding="ascii") as f:
+                    f.write('@echo Verified OK\r\n@echo Successfully verified\r\n@echo ran> "%s"\r\n' % mark)
+            else:
+                stand_in = os.path.join(folder, name)
+                with open(stand_in, "w", encoding="ascii") as f:
+                    f.write("#!/bin/sh\necho Verified OK\necho Successfully verified\necho ran > '%s'\n" % mark)
+                os.chmod(stand_in, 0o755)
+
+    def whole_check(**given):
+        try:
+            linux_bundle_check("verifies", find_cosign=True, **given)
+        except CouldNotRun:
+            with open(mark, "w") as f:
+                f.write("a planted tool was started and could not run")
+
+    try:
+        plant = os.path.join(work, "downloads")
+        for folder in (plant, os.path.join(plant, "tools")):
+            os.makedirs(folder)
+            plant_in(folder)
+        os.chdir(plant)
+        os.environ["PATH"] = os.pathsep.join([plant, ".", "", "tools", path])
+        took_signtool = signtool()
+        took_cosign = tool_on_path("cosign", [os.getcwd()])
+        whole_check()
+        os.chdir(here)
+
+        def on_the_path(dist):
+            plant_in(dist)
+            os.environ["PATH"] = os.pathsep.join([dist, path])
+
+        whole_check(plant=on_the_path)
+        return took_signtool, took_cosign, os.path.exists(mark), plant
+    finally:
+        os.chdir(here)
+        os.environ["PATH"] = path
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def batch_file_taken():
+    """Whether cosign is taken as a batch file where only an .exe may be, from an absolute folder on
+    the path that is not the working folder."""
+    work = tempfile.mkdtemp(prefix="tw-batch-self-test-")
+    try:
+        with open(os.path.join(work, "cosign.cmd"), "w", encoding="ascii") as f:
+            f.write("@echo Verified OK\r\n")
+        os.chmod(os.path.join(work, "cosign.cmd"), 0o755)
+        return tool_on_path("cosign", [os.getcwd()], path=work, exe_only=True) is not None
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def link_to(target, link):
+    """A link at `link` to the folder `target`: a junction on Windows, which needs no privilege, and a
+    symbolic link elsewhere. Whether it could be made."""
+    if os.name == "nt":
+        subprocess.run(["cmd", "/c", "mklink", "/J", link, target], capture_output=True)
+    else:
+        try:
+            os.symlink(target, link)
+        except OSError:
+            pass
+    return os.path.isdir(link)
+
+
+def spellings_of(folder):
+    """Other names for `folder` a PATH could give, each a name Windows or the system here opens as
+    that folder: a link to it, and on Windows its device path, its short name, its administrative
+    share and its volume's device name."""
+    names = {}
+    link = folder.rstrip("\\/") + "-link"
+    if link_to(folder, link):
+        names["a link to it"] = link
+    if os.name == "nt":
+        import ctypes
+        drive, rest = os.path.splitdrive(folder)
+        names["its device path"] = "\\\\?\\" + folder
+        names["its device path, in lower case"] = "\\\\?\\" + folder.lower()
+        names["its name in upper case"] = folder.upper()
+        buf = ctypes.create_unicode_buffer(1024)
+        if ctypes.windll.kernel32.GetShortPathNameW(folder, buf, 1024):
+            names["its short name"] = buf.value
+        names["its administrative share by name"] = "\\\\localhost\\" + drive[0] + "$" + rest
+        names["its administrative share by address"] = "\\\\127.0.0.1\\" + drive[0].lower() + "$" + rest
+        names["its administrative share as a device path"] = "\\\\?\\UNC\\localhost\\" + drive[0] + "$" + rest
+        if ctypes.windll.kernel32.QueryDosDeviceW(drive, buf, 1024):
+            names["its volume's device name"] = "\\\\?\\GLOBALROOT" + buf.value + rest
+    else:
+        names["led by a second separator"] = "/" + folder
+    return names
+
+
+def cosign_taken_by_spelling():
+    """Which spellings of the working folder, and of the folder the assets are read from, hand the
+    check a cosign left in them; and which a folder that is neither does, led by two separators and
+    plainly. Returns the spellings taken, what the plain folder gave, and what the led one gave."""
+    here = os.getcwd()
+    work = tempfile.mkdtemp(prefix="tw-spelling-self-test-")
+    tool = "cosign.exe" if os.name == "nt" else "cosign"
+    try:
+        plant = os.path.join(work, "Download Folder")
+        dist = os.path.join(plant, "dist")
+        other = os.path.join(work, "tools")
+        for folder in (plant, dist, other):
+            os.makedirs(folder)
+            with open(os.path.join(folder, tool), "wb") as f:
+                f.write(b"MZ planted")
+            os.chmod(os.path.join(folder, tool), 0o755)
+        os.chdir(plant)
+        taken = []
+        for folder, what in ((plant, "the working folder"), (dist, "the assets' folder")):
+            for label, entry in spellings_of(folder).items():
+                if tool_on_path("cosign", [os.getcwd(), "dist"], path=entry):
+                    taken.append("%s as %s" % (what, label))
+        # The check run from inside a link to the folder, and the folder on the path by its own name.
+        inside = work + "-inside"
+        if link_to(plant, inside):
+            os.chdir(inside)
+            if tool_on_path("cosign", [os.getcwd()], path=plant):
+                taken.append("the working folder by its own name, the check run from a link to it")
+            os.chdir(plant)
+        plainly = tool_on_path("cosign", [os.getcwd()], path=other)
+        # Led by two separators, either way round: a device path or a share is not a folder here.
+        leds = ["\\\\?\\" + other, "//?/" + other.replace("\\", "/")] if os.name == "nt" else ["/" + other]
+        return taken, plainly, [tool_on_path("cosign", [os.getcwd()], path=led) for led in leds], other
+    finally:
+        os.chdir(here)
+        for link in (os.path.join(work, "Download Folder-link"), os.path.join(work, "Download Folder", "dist-link"), work + "-inside"):
+            if os.path.lexists(link):
+                if os.name == "nt":
+                    subprocess.run(["cmd", "/c", "rmdir", link], capture_output=True)
+                else:
+                    os.remove(link)
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def spellings_misread():
+    """Which spellings of a folder that open as that folder are not known as it. The lookup above
+    never searches a folder led by two separators, so most of these never reach the comparison
+    there; asked here, the comparison is held on its own and not only behind that rule."""
+    work = tempfile.mkdtemp(prefix="tw-identity-self-test-")
+    folder = os.path.join(work, "Download Folder")
+    os.makedirs(folder)
+    try:
+        return [label for label, entry in spellings_of(folder).items()
+                if os.path.isdir(entry) and not same_folder(entry, folder)]
+    finally:
+        link = folder + "-link"
+        if os.path.lexists(link):
+            if os.name == "nt":
+                subprocess.run(["cmd", "/c", "rmdir", link], capture_output=True)
+            else:
+                os.remove(link)
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def newest_signtool():
+    """The signtool taken from a Windows Kits folder holding three versions, one of them the newest
+    only when read as numbers."""
+    work = tempfile.mkdtemp(prefix="tw-kits-self-test-")
+    try:
+        for version in ("10.0.9999.0", "10.0.22621.0", "10.0.17763.0"):
+            folder = os.path.join(work, "Windows Kits", "10", "bin", version, "x64")
+            os.makedirs(folder)
+            open(os.path.join(folder, "signtool.exe"), "wb").close()
+        found = signtool(kits_at=os.path.join(work, "Windows Kits", "10", "bin", "*", "x64", "signtool.exe"))
+        return os.path.basename(os.path.dirname(os.path.dirname(found))) if found else None
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def refused_as(entries, kind=".zip"):
+    """Why unpack() refuses an archive holding `entries`, or None where it takes the binary out."""
+    work = tempfile.mkdtemp(prefix="tw-refused-as-self-test-")
+    try:
+        archive = os.path.join(work, "a" + kind)
+        pack(archive, None, None, extra=entries)
+        try:
+            unpack(archive, os.path.join(work, "in"))
+            return None
+        except CouldNotRun as e:
+            return str(e)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def relative_signtool_taken():
+    """Whether `--signtool` takes a relative name that is a file in the working folder."""
+    here = os.getcwd()
+    work = tempfile.mkdtemp(prefix="tw-signtool-self-test-")
+    try:
+        with open(os.path.join(work, "signtool.exe"), "wb") as f:
+            f.write(b"MZ planted")
+        os.chdir(work)
+        return signtool_given("signtool.exe") is None, signtool_given(os.path.join(work, "signtool.exe")) is None
+    finally:
+        os.chdir(here)
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def macos_said(verify, describe, assess, pins):
+    """What the check says of one macOS binary, where codesign --verify, codesign -dv and spctl answer
+    as given, each an exit code and its output."""
+    answers = {"--verify": verify, "-dv": describe, "--assess": assess}
+    said = []
+
+    def answer(argv):
+        return answers[argv[1]] if argv[0] in (CODESIGN, SPCTL) else (127, "%s is not named in full" % argv[0])
+
+    check_macos_binary("x86_64-apple-darwin", "timewitness", pins, lambda state, line: said.append((state, line)), run=answer)
+    return said
+
+
+def unpacked(entries, kind=".tar.gz", limit=ARCHIVE_LIMIT):
+    """What unpack() makes of an archive holding `entries`, as pack() takes them, and whether anything
+    was written outside the folder it unpacks into."""
+    work = tempfile.mkdtemp(prefix="tw-unpack-self-test-")
+    try:
+        archive = os.path.join(work, "a" + kind)
+        pack(archive, None, None, extra=entries)
+        into = os.path.join(work, "in", "here")
+        try:
+            got = unpack(archive, into, limit)
+            outcome = os.path.relpath(got, into)
+        except CouldNotRun:
+            outcome = "refused"
+        except (tarfile.TarError, zipfile.BadZipFile, OSError) as e:
+            outcome = "refused by the archive reader: %s" % type(e).__name__
+        outside = [n for n in os.listdir(work) if n not in ("a" + kind, "in")]
+        outside += [n for n in os.listdir(os.path.join(work, "in")) if n != "here"]
+        return outcome, outside
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def zip_header_renamed(body):
+    """What unpack() makes of a zip whose LICENSE is named another way in front of the file than in
+    the zip's directory."""
+    work = tempfile.mkdtemp(prefix="tw-zip-header-self-test-")
+    try:
+        archive = os.path.join(work, "a.zip")
+        pack(archive, None, None, extra=[("timewitness.exe", body), ("LICENSE", b"l\n"), ("NOTICE", b"n\n")])
+        with open(archive, "rb") as f:
+            raw = f.read()
+        with open(archive, "wb") as f:
+            f.write(raw.replace(b"LICENSE", b"../LICE", 1))
+        try:
+            unpack(archive, os.path.join(work, "in"))
+            return "taken"
+        except (CouldNotRun, zipfile.BadZipFile) as e:
+            return "refused" if "LICE" in str(e) else "refused for another reason: %s" % e
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def cosign_said(results):
+    """What the check said about the one Linux archive: its state, and whether a rehearsal line failed it."""
+    about = [state for state, line in results if line.startswith(archive_name("v0.4", "x86_64-unknown-linux-gnu") + " ")]
+    return about, any(state == "FAIL" and line.startswith("REHEARSAL KEY") for state, line in results)
 
 
 def self_test():
@@ -922,6 +1593,7 @@ def self_test():
     expect("unsigned", judge_spctl(3, "x: rejected\nsource=no usable signature\n"), False)
     expect("signed and never notarised", judge_spctl(3, "x: rejected\nsource=Unnotarized Developer ID\n"), False)
     expect("accepted for another reason", judge_spctl(0, "x: accepted\nsource=Apple System\n"), False)
+    expect("spctl failing and printing an acceptance", judge_spctl(3, "x: accepted\nsource=Notarized Developer ID\n"), False)
 
     # macOS: our team passes, and every other shape of Developer ID is refused.
     ours = "Developer ID Application: Ours Test Publisher (TESTTEAM01)"
@@ -982,6 +1654,8 @@ def self_test():
         expect("another certificate in the file than the one signtool verified", refused(judge_signtool(
             0, trusted(s, root, ca), i, TEST_PINS)), True)
         expect("our certificate, under another root", refused(judge_signtool(0, trusted(s, foreign_root, ca), s, TEST_PINS)), True)
+        expect("our root's name, with another root above it", refused(judge_signtool(
+            0, signtool_text([foreign_root, root, ca, (s["subject_cn"][0], s["sha1"])]), s, TEST_PINS)), True)
         expect("signtool refuses it", refused(judge_signtool(1, signtool_text([], verified=False), s, TEST_PINS)), True)
         expect("signtool refuses it, and prints our chain", refused(judge_signtool(
             1, signtool_text([root, ca, (s["subject_cn"][0], s["sha1"])], verified=False), s, TEST_PINS)), True)
@@ -1085,14 +1759,205 @@ def self_test():
         expect("so a run with every other clause passing fails", verdict(said + [("PASS", "")] * 9), 1)
 
     expect("signtool, no signature", refused(judge_signtool(1, "SignTool Error: No signature found.\n", None, TEST_PINS)), True)
-    base = "https://github.com/Fountech-ai-Limited/timewitness/.github/workflows/release.yml@refs/"
-    expect("signed by a run started by this tag", bool(re.match(SIGNER, base + "tags/v0.4")), False)
-    expect("signed by a run from main", bool(re.match(SIGNER, base + "heads/main")), True)
-    expect("signed by another tag's run", bool(re.match(SIGNER, base + "tags/v0.4.1")), False)
-    expect("signed by a run from a branch", bool(re.match(SIGNER, base + "heads/other")), False)
-    expect("signed by another workflow", bool(re.match(SIGNER, base.replace("release.yml", "ci.yml") + "heads/main")), False)
+    # Who signed a Linux archive, as cosign reads SIGNER: found anywhere in the certificate's
+    # identity, not only at its start, which is why it is anchored at both ends.
+    base = OUR_WORKFLOW[:-len("heads/main")]
+    expect("signed by a run started by this tag", bool(re.search(SIGNER, base + "tags/v0.4")), False)
+    expect("signed by a run from main", bool(re.search(SIGNER, OUR_WORKFLOW)), True)
+    expect("signed by another tag's run", bool(re.search(SIGNER, base + "tags/v0.4.1")), False)
+    expect("signed by a run from a branch", bool(re.search(SIGNER, base + "heads/other")), False)
+    expect("signed by a run from a branch whose name starts main", bool(re.search(SIGNER, OUR_WORKFLOW + "-next")), False)
+    expect("signed by another workflow", bool(re.search(SIGNER, base.replace("release.yml", "ci.yml") + "heads/main")), False)
+    expect("signed by the same workflow of another owner",
+           bool(re.search(SIGNER, OUR_WORKFLOW.replace("Fountech-ai-Limited/", "someone-else/"))), False)
+    expect("signed by the same workflow of another repository of ours",
+           bool(re.search(SIGNER, OUR_WORKFLOW.replace("/timewitness/", "/timewitness-fork/"))), False)
+    expect("our workflow's address inside another one", bool(re.search(SIGNER, "https://example.com/" + OUR_WORKFLOW)), False)
     expect("cosign passes", judge_cosign(0, "Verified OK\n"), True)
     expect("cosign refuses", judge_cosign(1, "Error: none of the expected identities matched\n"), False)
+    expect("a Linux archive cosign verifies, signed in the Linux signing job, passes",
+           cosign_said(linux_bundle_check("verifies")), (["PASS", "PASS"], False))
+    expect("a Linux archive cosign refuses fails", cosign_said(linux_bundle_check("refuses")), (["FAIL"], False))
+
+    # What the check asks cosign to hold a signature to. Each certificate here is one Fulcio would
+    # issue and cosign would verify against a looser question, and only the first is ours.
+    def signed_as(identity, issuer=GITHUB_ISSUER):
+        return cosign_said(linux_bundle_check("verifies", identity=identity, issuer=issuer))[0]
+
+    expect("our release workflow from main, by GitHub's issuer", signed_as(OUR_WORKFLOW), ["PASS", "PASS"])
+    expect("the same workflow in another owner's repository",
+           signed_as(OUR_WORKFLOW.replace("Fountech-ai-Limited/", "someone-else/")), ["FAIL"])
+    expect("the same workflow in another repository", signed_as(OUR_WORKFLOW.replace("/timewitness/", "/other/")), ["FAIL"])
+    expect("our workflow's address inside another identity", signed_as("https://example.com/" + OUR_WORKFLOW), ["FAIL"])
+    expect("our workflow, from an issuer other than GitHub's", signed_as(OUR_WORKFLOW, "https://accounts.example.com"), ["FAIL"])
+
+    # A release missing anything a stranger needs is refused by name, whatever else passes.
+    whole = list(TARGETS)
+
+    def missing_said(drop):
+        return [line for state, line in linux_bundle_check("verifies", targets=whole, drop=drop)
+                if state == "FAIL" and line.startswith("missing from the release: ")]
+
+    expect("a whole release is missing nothing", missing_said(()), [])
+    expect("a release missing the Windows archive", missing_said((archive_name("v0.4", "x86_64-pc-windows-msvc"),)),
+           ["missing from the release: " + archive_name("v0.4", "x86_64-pc-windows-msvc")])
+    expect("a release missing the digest list's bundle", missing_said((SUMS + BUNDLE,)), ["missing from the release: " + SUMS + BUNDLE])
+    expect("a release missing a Linux archive's bundle",
+           missing_said((archive_name("v0.4", "aarch64-unknown-linux-gnu") + BUNDLE,)),
+           ["missing from the release: " + archive_name("v0.4", "aarch64-unknown-linux-gnu") + BUNDLE])
+
+    # macOS, the tools as the check runs them: codesign --verify has the first word, and the tools
+    # are named in full.
+    good = (0, codesign_text(["Developer ID Application: Ours Test Publisher (TESTTEAM01)"] + APPLE_CHAIN, "TESTTEAM01"))
+    notarised = (0, "x: accepted\nsource=Notarized Developer ID\n")
+    expect("macOS, codesign verifies ours and spctl accepts it",
+           [state for state, _ in macos_said((0, "valid on disk\n"), good, notarised, TEST_PINS)], ["PASS", "PASS"])
+    refused_verify = macos_said((1, "timewitness: invalid signature (code or signature have been modified)\n"), good, notarised, TEST_PINS)
+    expect("macOS, codesign --verify refuses it and -dv reads our team",
+           [(state, "codesign --verify refuses it" in line) for state, line in refused_verify][:1], [("FAIL", True)])
+    expect("the macOS tools are named where macOS keeps them", (CODESIGN, SPCTL), ("/usr/bin/codesign", "/usr/sbin/spctl"))
+
+    # The binary taken out of an archive: the archive holds it, LICENSE and NOTICE, each once, each a
+    # plain file, however spelt; and nothing is written anywhere but the binary.
+    body = b"#!/bin/sh\necho timewitness v0.4\n"
+    notices = [("LICENSE", b"l\n"), ("NOTICE", b"n\n")]
+    expect("a zip naming its LICENSE one way in its directory and another in front of the file",
+           zip_header_renamed(body), "refused")
+    expect("an archive holding the binary and its two notices", unpacked([("timewitness", body)] + notices), ("timewitness", []))
+    expect("the same, each name led by ./", unpacked([("./timewitness", body), ("./LICENSE", b"l\n"), ("./NOTICE", b"n\n")]),
+           ("timewitness", []))
+    expect("an archive whose binary is a link to another entry", unpacked([("timewitness", ("link", "LICENSE"))] + notices),
+           ("refused", []))
+    expect("an archive holding the binary twice", unpacked([("timewitness", body), ("timewitness", body)] + notices), ("refused", []))
+    expect("an archive holding the binary as timewitness and ./timewitness",
+           unpacked([("timewitness", body), ("./timewitness", b"other\n")] + notices), ("refused", []))
+    expect("an archive with an entry that climbs out of the folder",
+           unpacked([("timewitness", body), ("../escaped", b"x\n")] + notices), ("refused", []))
+    expect("an archive with a file beside the three", unpacked([("timewitness", body), ("install.sh", b"x\n")] + notices), ("refused", []))
+    expect("an archive without its notices", unpacked([("timewitness", body)]), ("refused", []))
+    expect("an archive whose binary is larger than a release binary is",
+           unpacked([("timewitness", body)] + notices, limit=len(body) - 1), ("refused", []))
+    expect("a zip holding the binary and its two notices", unpacked([("timewitness.exe", body)] + notices, ".zip"),
+           ("timewitness.exe", []))
+    expect("a zip holding the binary as timewitness.exe and TIMEWITNESS.EXE",
+           unpacked([("timewitness.exe", body), ("TIMEWITNESS.EXE", b"other\n")] + notices, ".zip"), ("refused", []))
+    expect("a zip whose binary is a link", unpacked([("timewitness.exe", ("link", "LICENSE"))] + notices, ".zip"), ("refused", []))
+    expect("a zip holding the binary in capitals, taken out under its own name",
+           unpacked([("TIMEWITNESS.EXE", body)] + notices, ".zip"), ("timewitness.exe", []))
+    # A zip written on Windows turns a backslash into a slash, and a tar keeps it, so both are asked.
+    for kind in (".zip", ".tar.gz"):
+        for entry in ("sub/timewitness.exe", "sub\\timewitness.exe", "C:timewitness.exe", ".."):
+            said = refused_as([(entry, body)] + notices, kind)
+            expect("a %s holding [%s] refused as not a plain name" % (kind, entry), bool(said) and "is not a plain name" in said, True)
+
+    # signtool and cosign left in the folder the check is run in, and that folder on the path; a
+    # cosign in the folder the assets are read from; a batch file for cosign; a relative --signtool.
+    took_signtool, took_cosign, ran, plant = planted_tools_taken()
+    expect("signtool left in the working folder is not taken", bool(took_signtool) and took_signtool.startswith(plant), False)
+    expect("cosign left in the working folder is not taken", bool(took_cosign) and took_cosign.startswith(plant), False)
+    expect("no tool left in the working or the assets' folder is run by a whole check", ran, False)
+    expect("a cosign batch file in a folder on the path is not taken for cosign.exe", batch_file_taken(), False)
+    expect("--signtool refuses a relative name and takes a full path", relative_signtool_taken(), (False, True))
+
+    # The working folder and the assets' folder are known by what they are on disk, so no other
+    # spelling of either on the path hands the check a cosign left there; a folder led by two
+    # separators is a share or a device path and is never searched; and a folder that is neither is.
+    taken, plainly, led, other = cosign_taken_by_spelling()
+    expect("no spelling of the working or the assets' folder hands the check their cosign", taken, [])
+    expect("a cosign in another folder on the path is taken", bool(plainly) and plainly.startswith(other), True)
+    expect("a cosign in a folder on the path led by two separators is not taken", [t for t in led if t], [])
+    expect("every spelling that opens as a folder is known as that folder", spellings_misread(), [])
+    expect("the newest Windows Kits signtool is taken, by its version as numbers", newest_signtool(), "10.0.22621.0")
+    # Asked of runs of this file started without the setting, since whoever started this one may
+    # have set it already: one checking a binary and one checking a release, the two that start
+    # tools, each given nothing to check so that it stops before it starts any.
+    empty = tempfile.mkdtemp(prefix="tw-nothing-self-test-")
+    told = []
+    for given in (["--binary", os.path.join(empty, "timewitness.exe")], ["--release", "v0.0", "--dist", empty, "--no-run"]):
+        started = subprocess.run([sys.executable, "-c", "import os, runpy, sys\n"
+                                  "sys.argv = sys.argv[1:]\n"
+                                  "try:\n    runpy.run_path(sys.argv[0], run_name='__main__')\n"
+                                  "except SystemExit:\n    pass\n"
+                                  "print(os.environ.get('NoDefaultCurrentDirectoryInExePath'))\n",
+                                  os.path.abspath(__file__)] + given,
+                                 capture_output=True, text=True, timeout=120,
+                                 env={k: v for k, v in os.environ.items() if k.lower() != "nodefaultcurrentdirectoryinexepath"})
+        told.append((started.stdout.strip().splitlines() or [""])[-1])
+    shutil.rmtree(empty, ignore_errors=True)
+    expect("whatever this starts on Windows is told not to look in the working folder", told, ["1", "1"])
+
+    # Which job signed. cosign holds a bundle to the workflow and the ref, which every job in the run
+    # shares, so each of these is a certificate it would verify, and only the first is ours.
+    def job_said(subjects=None, bundle=None):
+        if bundle is None:
+            bundle = bundle_of(fulcio_shaped(subjects))
+        return cosign_said(linux_bundle_check("verifies", bundle=bundle))[0]
+
+    expect("the Linux signing job's token", job_said([LINUX_SUBJECT]), ["PASS", "PASS"])
+    expect("sign-windows' token, which cosign's identity alone accepts", job_said([WINDOWS_SUBJECT]), ["PASS", "FAIL"])
+    expect("a token from a job in no environment", job_said([NO_ENVIRONMENT_SUBJECT]), ["PASS", "FAIL"])
+    expect("the Linux signing environment in a repository of the same name made again",
+           job_said([OUR_PREFIX.rsplit("@", 1)[0] + "@9999999999:environment:linux-signing"]), ["PASS", "FAIL"])
+    expect("the Linux signing environment under the default subject",
+           job_said(["repo:Fountech-ai-Limited/timewitness:environment:linux-signing"]), ["PASS", "FAIL"])
+    expect("the Linux signing environment, naming no ref and no workflow",
+           job_said([OUR_PREFIX + ":environment:linux-signing"]), ["PASS", "FAIL"])
+    expect("the Linux signing environment, from another workflow",
+           job_said([LINUX_SUBJECT.replace("/release.yml@", "/other.yml@")]), ["PASS", "FAIL"])
+    expect("a certificate naming no token subject", job_said([]), ["PASS", "FAIL"])
+    expect("a certificate naming ours and sign-windows'", job_said([LINUX_SUBJECT, WINDOWS_SUBJECT]), ["PASS", "FAIL"])
+    expect("a certificate naming ours twice", job_said([LINUX_SUBJECT, LINUX_SUBJECT]), ["PASS", "FAIL"])
+    expect("ours, in a certificate chain rather than a certificate",
+           job_said(bundle=bundle_of(fulcio_shaped([LINUX_SUBJECT]), "x509CertificateChain")), ["PASS", "PASS"])
+    expect("ours, beside sign-windows' in a chain",
+           job_said(bundle=json.dumps({"mediaType": BUNDLE_TYPE + ".v0.3+json", "verificationMaterial": {
+               "certificate": {"rawBytes": base64.b64encode(fulcio_shaped([LINUX_SUBJECT])).decode()},
+               "x509CertificateChain": {"certificates": [{"rawBytes": base64.b64encode(fulcio_shaped([WINDOWS_SUBJECT])).decode()}]}}})),
+           ["PASS", "FAIL"])
+    expect("a bundle signed with a key and no certificate", job_said(bundle=bundle_of(b"", "key")), ["PASS", "FAIL"])
+    expect("a bundle that is not one", job_said(bundle="{}"), ["PASS", "FAIL"])
+
+    # One file for two readers: cosign reads a file that is not a bundle as its older bundle, from
+    # `cert` and the keys beside it, whatever their case, and the check reads `verificationMaterial`.
+    windows_der = fulcio_shaped([WINDOWS_SUBJECT])
+    windows_pem = "-----BEGIN CERTIFICATE-----\n%s\n-----END CERTIFICATE-----\n" % base64.b64encode(windows_der).decode()
+    ours_bundle = json.loads(bundle_of(fulcio_shaped([LINUX_SUBJECT])))
+    older = {"base64Signature": "c2lnbmF0dXJl", "cert": base64.b64encode(windows_pem.encode()).decode(), "rekorBundle": {}}
+    expect("sign-windows' certificate for cosign beside ours for the check", job_said(bundle=json.dumps(dict(ours_bundle, **older))),
+           ["PASS", "FAIL"])
+    expect("the same, its keys spelt in another case", job_said(bundle=json.dumps(dict(ours_bundle, Cert=older["cert"],
+           BASE64SIGNATURE=older["base64Signature"]))), ["PASS", "FAIL"])
+    expect("ours beside an older bundle's certificate alone", job_said(bundle=json.dumps(dict(ours_bundle, cert=older["cert"]))),
+           ["PASS", "FAIL"])
+    expect("ours with no media type", job_said(bundle=json.dumps({"verificationMaterial": ours_bundle["verificationMaterial"]})),
+           ["PASS", "FAIL"])
+
+    # The subject extension read as Fulcio writes it: one UTF8String, inside an OCTET STRING.
+    def subject_in(value):
+        extension = der_of(0x30, oid_der(OID_TOKEN_SUBJECT) + value)
+        extensions = der_of(0xA3, der_of(0x30, der_of(0x30, oid_der("2.5.29.15") + der_of(0x04, der_of(0x03, b"\x07\x80")))
+                                          + extension))
+        algorithm = der_of(0x30, oid_der("1.2.840.10045.4.3.3"))
+        tbs = der_of(0x30, der_of(0xA0, der_of(0x02, b"\x02")) + der_of(0x02, b"\x01") + algorithm + der_of(0x30, b"")
+                     + der_of(0x30, b"") + der_of(0x30, b"") + der_of(0x30, b"") + extensions)
+        return bundle_of(der_of(0x30, tbs + algorithm + der_of(0x03, b"\x00")))
+
+    expect("the subject as Fulcio writes it", job_said(bundle=subject_in(der_of(0x04, der_of(0x0C, LINUX_SUBJECT.encode())))),
+           ["PASS", "PASS"])
+    expect("the subject as another kind of string", job_said(bundle=subject_in(der_of(0x04, der_of(0x13, LINUX_SUBJECT.encode())))),
+           ["PASS", "FAIL"])
+    expect("the subject with bytes after it", job_said(bundle=subject_in(der_of(0x04, der_of(0x0C, LINUX_SUBJECT.encode()) + b"\x00"))),
+           ["PASS", "FAIL"])
+    expect("the subject's extension holding something other than an OCTET STRING",
+           job_said(bundle=subject_in(der_of(0x30, der_of(0x0C, LINUX_SUBJECT.encode())))), ["PASS", "FAIL"])
+    expect("a certificate with bytes after it", job_said(bundle=bundle_of(fulcio_shaped([LINUX_SUBJECT]) + b"\x00")), ["PASS", "FAIL"])
+    real = fulcio_elsewhere()
+    expect("the subject read out of a real Fulcio certificate", token_subject(real), "repo:pytest-dev/pytest:environment:deploy")
+    expect("a real Fulcio certificate for another repository's release job", job_said(bundle=bundle_of(real)), ["PASS", "FAIL"])
+    expect("a rehearsal key the archive verifies against still fails the check",
+           cosign_said(linux_bundle_check("verifies", rehearsal_key="cosign.pub")), (["PASS"], True))
+    expect("a rehearsal key the archive does not verify against fails it twice",
+           cosign_said(linux_bundle_check("refuses", rehearsal_key="cosign.pub")), (["FAIL"], True))
 
     # A binary is run only once every clause about it passed, and with no token beside it.
     expect("run, its digest and its signature passed", may_run(["PASS"], ["PASS", "PASS"]), True)
@@ -1104,7 +1969,7 @@ def self_test():
     expect("not run, nothing checked about it", may_run([], []), False)
     handed = run_environment({"PATH": "/usr/bin", "SYSTEMROOT": r"C:\Windows", "GH_TOKEN": "t", "GITHUB_TOKEN": "t",
                               "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "t", "ACTIONS_RUNTIME_TOKEN": "t",
-                              "AZURE_CLIENT_ID": "t", "APPLE_CERTIFICATE_PASSWORD": "t"})
+                              "WINDOWS_AZURE_CLIENT_ID": "t", "MACOS_CERTIFICATE_PASSWORD": "t"})
     expect("the binary is handed its path and nothing that holds a token", sorted(handed), ["PATH", "SYSTEMROOT"])
     expect("a check refuses to run a binary whose digest line is wrong", refuses_to_run_what_it_refused(True), True)
     expect("a check refuses to run a binary whose digest is right and whose signature is not",
@@ -1122,6 +1987,53 @@ def self_test():
     expect("a clause not run is not a pass", verdict([("PASS", ""), ("NOT RUN", "")]), 2)
     expect("nothing read is not a pass", verdict([]), 2)
 
+    # The exit code is all CI, the push check, and the release workflow read, so the check is run here
+    # as they run it. cosign is kept off the path, where the self-test has no use for a real one.
+    exits = tempfile.mkdtemp(prefix="tw-exits-self-test-")
+    try:
+        no_tools = os.path.join(exits, "no-tools")
+        os.makedirs(no_tools)
+        bare = dict(os.environ, PATH=no_tools)
+
+        def as_run(given, preamble=""):
+            """This file run as `given` asks, with `preamble` run first on it loaded as a module."""
+            done = subprocess.run([sys.executable, "-c", "import importlib.util, sys\n"
+                                   "spec = importlib.util.spec_from_file_location('check', sys.argv[1])\n"
+                                   "check = importlib.util.module_from_spec(spec)\n"
+                                   "spec.loader.exec_module(check)\n" + preamble +
+                                   "sys.argv = sys.argv[1:]\n"
+                                   "sys.exit(check.main())\n", os.path.abspath(__file__)] + given,
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, env=bare)
+            return done.returncode, done.stdout
+
+        whole_dist, short_dist = os.path.join(exits, "whole"), os.path.join(exits, "short")
+        for dist, drop in ((whole_dist, ()), (short_dist, (archive_name(tag, "x86_64-pc-windows-msvc"),))):
+            os.makedirs(dist)
+            write_release(dist, tag, TARGETS, bundle_of(fulcio_shaped([LINUX_SUBJECT])), drop=drop)
+        code, out = as_run(["--release", tag, "--dist", short_dist, "--no-run"])
+        expect("a release missing an archive exits 1, and says which",
+               (code, "FAIL: missing from the release: " + archive_name(tag, "x86_64-pc-windows-msvc") in out), (1, True))
+        # On Windows or macOS the stand-in binaries go to signtool or codesign as well, which can fail
+        # them, so this asks only that the run does not pass.
+        code, out = as_run(["--release", tag, "--dist", whole_dist, "--no-run"])
+        expect("a release checked with no cosign on the path says so, and does not pass",
+               (code != 0, "NOT RUN: cosign is not on this machine" in out), (True, True))
+        # The tool for one binary cannot start: on Linux no tool is ever started, so its failure to
+        # start is made here, where the check would meet it on macOS or Windows.
+        code, out = as_run(["--binary", os.path.join(exits, "timewitness")],
+                           "def cannot(binary, signtool_at=None):\n    raise check.CouldNotRun('the tool could not be started')\n"
+                           "check.check_one = cannot\n")
+        expect("a binary whose tool cannot start exits 2, and says so",
+               (code, "NOT RUN: the tool could not be started" in out), (2, True))
+        # The same for a release, which is how the release workflow runs the check.
+        code, out = as_run(["--release", tag, "--dist", whole_dist],
+                           "def cannot(*given, **named):\n    raise check.CouldNotRun('the release could not be read')\n"
+                           "check.check = cannot\n")
+        expect("a release that cannot be checked exits 2, and says so",
+               (code, "NOT RUN: the release could not be read" in out), (2, True))
+    finally:
+        shutil.rmtree(exits, ignore_errors=True)
+
     for line in wrong:
         print("self-test: " + line)
     if wrong:
@@ -1130,7 +2042,8 @@ def self_test():
     print("self-test: every shape judged as it should be; refused among them another team's Developer ID, "
           "a Windows binary signed by another publisher, one signed with our name by another issuer, one "
           "signed by another customer of our own issuer, a certificate other than the one signtool verified, "
-          "and a check with an identity unset; and no binary the check refused is run")
+          "a Linux archive signed with the Windows signing job's token, and a check with an identity unset; "
+          "and no binary the check refused is run")
     if problems:
         print("self-test: the tracked identities are not all set, so a release check run now refuses: "
               + "; ".join(p[len("NOT PINNED: "):].split(" is not set")[0] for p in problems))
@@ -1143,10 +2056,17 @@ def main():
     parser.add_argument("--repo", default=REPO)
     parser.add_argument("--dist", help="read the release's assets from this folder rather than from GitHub")
     parser.add_argument("--no-run", action="store_true", help="check the signatures and run no binary")
+    parser.add_argument("--rehearsal-key", help="hold the Linux bundles to this public key, as a rehearsal signs them, "
+                                                "and never pass")
     parser.add_argument("--binary", help="check the signature on one binary already on this machine")
+    parser.add_argument("--signtool", help="the full path of signtool, where it is not in the Windows Kits folder")
     parser.add_argument("--pins", action="store_true", help="say whether every identity is set")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
+    # Whatever this starts on Windows looks in the working folder last, if at all, rather than first.
+    os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
+    if args.signtool and signtool_given(args.signtool):
+        parser.error(signtool_given(args.signtool))
     if args.self_test:
         return self_test()
     if args.pins:
@@ -1161,7 +2081,7 @@ def main():
         return 0
     if args.binary:
         try:
-            results = check_one(args.binary)
+            results = check_one(args.binary, args.signtool)
         except CouldNotRun as e:
             print("NOT RUN: %s" % e)
             return 2
@@ -1170,7 +2090,8 @@ def main():
             parser.error("name the release with --release, a file with --binary, or run --pins or --self-test")
         work = tempfile.mkdtemp(prefix="tw-binaries-")
         try:
-            results = check(args.release, work, repo=args.repo, folder=args.dist, run_binary=not args.no_run)
+            results = check(args.release, work, repo=args.repo, folder=args.dist, run_binary=not args.no_run,
+                            rehearsal_key=args.rehearsal_key, signtool_at=args.signtool)
         except CouldNotRun as e:
             print("NOT RUN: %s" % e)
             return 2

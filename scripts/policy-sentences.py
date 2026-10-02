@@ -2042,8 +2042,13 @@ CLAIMS = [
         r'(?:\d|a |the |one |nearest|nano|micro|milli|billionth|millionth|thousandth))',
         # Accuracy as a bare noun with a positive predicate, as ours, or as something delivered or
         # guaranteed. "Accuracy is the whole product" and "Accuracy today is 128.7 milliseconds" are
-        # the claim whatever figure follows; "Milliseconds is the accuracy to UTC" is not.
+        # the claim whatever figure follows.
         r'\b(accuracy) (?:is|was|remains|matters|comes|today|of the fleet|improves?|gets? better|goes? up)\b',
+        # A unit named as the accuracy to UTC, with nothing saying it is the design's. The README said
+        # "Milliseconds is the accuracy to UTC." up to v0.6, and read cold that is a claim
+        # this code meets, where the same page gives today's bound as about a sixth of a second.
+        r'\b(?:milli|micro|nano)?seconds? (?:is|are) (?:the |our |its )?(accuracy) to UTC\b'
+        r'(?! (?:the design aims at|in the design|of the design))',
         r"\b(?:our|the agent's|TimeWitness's|the product's|the fleet's|the clock's) (?:[\w']+ )?(accuracy)\b",
         r'\b(?:deliver|offer|give|provide|bring|guarantee|promise|achieve|reach|sell|boast)\w* (?:\w+ ){0,3}?(accuracy)\b',
         r'\b(accura\w+)\b[^.;,]{0,30}?\bguarantee\w*\b',
@@ -4816,7 +4821,7 @@ SEEDS = [
     # Two negations that add up to a claim.
     ('legal weight', 'FINRA 6820 does not require anything TimeWitness does not already provide.'),
     ('legal weight', 'SEC 17a-4 asks for nothing a receipt does not carry.'),
-    # The claims the grade of 2026-09-25 put to the rule before this one, and the second read of the
+    # The claims the grade of 2026-09-25 put to the rule before this one, and the second grade of the
     # same day, every one of which the closed list refuses because none of them is an entry.
     ('legal weight', "The agent keeps clocks within FINRA 6820's 50 ms."),
     ('legal weight', 'Receipts satisfy 17a-4.'),
@@ -5024,6 +5029,7 @@ SEEDS = [
     ('accuracy claimed', 'Accuracy is the whole product: we tell you the time correctly to the nanosecond.'),
     ('accuracy claimed', 'Accuracy to UTC is guaranteed at one millisecond by the resident agent.'),
     ('accuracy claimed', 'Accuracy today is 128.7 milliseconds and improving.'),
+    ('accuracy claimed', 'Milliseconds is the accuracy to UTC.'),
     ('Roughtime called a standard', 'Roughtime is an RFC, so the corridor is standards-backed.'),
     ('Roughtime server count stated wrongly', 'Roughtime\'s four public servers were probably unreachable; check your firewall.'),
     ('our bound presented as evidence', 'Because our agent signs the interval, the interval is independently attested.'),
@@ -5122,7 +5128,7 @@ HONEST = [
     # Each has to pass while the seed beside it in the list above is refused.
     'The reading is at nanosecond resolution and the accuracy to UTC is in milliseconds.',
     'Nanoseconds is the resolution of the local read and never the accuracy to UTC.',
-    'Milliseconds is the accuracy to UTC.',
+    'Milliseconds is the accuracy to UTC the design aims at.',
     'Nanosecond accuracy is a datacentre thing and is not something this product sells.',
     'Bounded, not accurate.',
     'Resolution is not accuracy.',

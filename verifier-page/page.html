@@ -354,11 +354,17 @@ function renderResult(result) {
 
   const evidence = document.getElementById("evidence");
   evidence.replaceChildren();
-  const entries = result.evidence || [];
-  if (entries.length === 0) {
+  // A receipt refused before its evidence is listed comes back with no list at all, and that is a
+  // different fact from a list read and found empty. Until 2026-10-01 the page took the one for the
+  // other and told a refused receipt carrying three attestations that it carried none.
+  const entries = result.evidence;
+  if (!Array.isArray(entries)) {
+    evidence.append(element("li", null, "This receipt was refused before its evidence could be " +
+      "listed, so nothing here says what evidence it carries."));
+  } else if (entries.length === 0) {
     evidence.append(element("li", null, "This receipt carries no third-party evidence at all."));
   }
-  for (const entry of entries) {
+  for (const entry of Array.isArray(entries) ? entries : []) {
     const item = element("li");
     item.append(element("span", entry.checked ? "role" : "role unchecked", entry.role));
     item.append(element("span", null,

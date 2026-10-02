@@ -35,7 +35,7 @@ pub use cose::{
     with_signature_witness, without_signature_witness, AgentKey, Envelope, SIGNATURE_WITNESS,
 };
 pub use error::ReceiptError;
-pub use report::{Bracket, EntryReport, Outcome, Verified};
+pub use report::{Bracket, EntryReport, Outcome, Verified, CARRIES_NO_EVIDENCE};
 pub use schema::{
     ppm_as_ppb, AgentClaim, BreakdownRecord, Evidence, Operators, Payload, PolicyRecord, Receipt,
     Role, Scheme, SourceRecord, TakenBy, CLAIM_KIND, FORMAT_VERSION, READS,

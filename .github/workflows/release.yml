@@ -15,11 +15,29 @@ name: Release binaries
 #
 # Before anything is built, the first job, which holds no secret, refuses the run unless:
 #
-# - it was started by hand from `main`, by somebody who administers this repository;
-# - the tag exists and its commit is on `main`, so what gets built is code that was reviewed;
+# - it was started by hand from `main`, by somebody who administers this repository and is one of
+#   the accounts `scripts/the-release-route-holds.py` names as starting releases, by number as well
+#   as by name, so an administrator added in the settings with no commit still cannot start one;
+# - the tag exists and its commit is on `main`, held to the branch's own commit rather than to the
+#   name, so what gets built is code that was reviewed;
 # - the release, where there is one already, is a pre-release or carries no binaries yet. Attaching
 #   to a source release, which is how a tag gets its binaries after the release is cut, stays
 #   possible. Replacing binaries a stranger may already have recorded the digests of does not.
+#
+# Every job that enters an environment asks the same question about who started it, since a job can
+# be run again on its own by somebody else, and it is the guard's answer that job would otherwise
+# reuse. It asks the list as `main` has it now, so an account taken off it cannot run again a job of
+# a run it started before. Runs of this file from before 2026-09-30 carry no such question, and can be run again for 30
+# days with it, so the signing values are read under names none of them reads, below.
+#
+# A release made here is made as a draft, given every file, and published only then, so a failed
+# upload leaves nothing public; a draft that is the only release on the tag, which the guard's token
+# cannot see, is refused before anything is uploaded. On a release that is public already, a failure
+# takes off, as far as GitHub answers, the files this run uploaded; a run cancelled or killed partway
+# does not, and a release that is not a pre-release, left with some files, is refused by every run
+# after. The check a stranger runs over what was attached runs after publishing, in
+# `binaries-check.yml`, so a release it refuses is public by then, and says so in that run. A
+# pre-release tag moved after the last read, just before publishing, is not seen.
 #
 # With `rehearsal` set it does everything but attach, and signs nothing with the Apple or Azure
 # identities, so the route can be watched end to end before those exist and nothing signed with them
@@ -28,36 +46,53 @@ name: Release binaries
 # `binaries-check.yml` would, reading them from the run rather than from a release, and runs none of
 # them there. It touches no release, so it needs no pre-release tag made for it and can never replace
 # a file a real run attached. It is refused on a tag whose release already carries binaries. Its
-# Linux signatures go into the public log as a real run's would, over the tag's own build, and what
-# it made is kept as run artefacts for one day rather than seven. Once the identities exist, the
-# route is proved end to end by a real run on a tag with a pre-release name.
+# Linux signatures are made with a key generated in that job and thrown away with it, and nothing goes
+# into the public transparency log: a rehearsal signed keyless would leave a second signed Linux
+# build of the tag in that log, bound to this workflow, whenever a real run's bytes differed. What it
+# made is kept as run artefacts for one day rather than seven. Once the identities exist, the route
+# is proved end to end by a real run on a tag with a pre-release name.
 #
 # Signing, per system, runs only when its secrets are set, and says so loudly when they are not:
 #
 # - macOS: `codesign` with the Developer ID Application certificate, hardened runtime and a secure
-#   timestamp, then `notarytool` with an App Store Connect API key. APPLE_CERTIFICATE_P12 (the
-#   .p12, base64), APPLE_CERTIFICATE_PASSWORD, APPLE_TEAM_ID, APPLE_API_KEY_P8 (the .p8, as text
-#   or base64), APPLE_API_KEY_ID and APPLE_API_ISSUER_ID.
+#   timestamp, then `notarytool` with an App Store Connect API key. MACOS_CERTIFICATE_P12 (the
+#   .p12, base64), MACOS_CERTIFICATE_PASSWORD, MACOS_TEAM_ID, MACOS_NOTARY_KEY_P8 (the .p8, as text
+#   or base64), MACOS_NOTARY_KEY_ID and MACOS_NOTARY_ISSUER_ID. They were called APPLE_* until
+#   2026-09-30, and nothing may be stored under those names: a run can be run again for 30 days with
+#   the workflow it first ran, and runs of this file from before 2026-09-26 sign macOS with whatever
+#   Apple values they find under them, holding the result to no team and no digest.
 # - Windows: Azure Trusted Signing, now called Artifact Signing, reached through a federated
 #   credential. The job asks GitHub for a token naming this repository and the `release` environment,
 #   and Azure trades it for a sign-in only while our Entra app trusts that subject, so there is no
-#   client secret anywhere to leak. AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_SUBSCRIPTION_ID,
-#   AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT and AZURE_SIGNING_PROFILE, none of them a secret
-#   in itself.
+#   client secret anywhere to leak. WINDOWS_AZURE_TENANT_ID, WINDOWS_AZURE_CLIENT_ID,
+#   WINDOWS_AZURE_SUBSCRIPTION_ID, WINDOWS_SIGNING_ENDPOINT, WINDOWS_SIGNING_ACCOUNT and
+#   WINDOWS_SIGNING_PROFILE, secrets of the `release` environment, though none of them would sign
+#   anything on its own. They were AZURE_* until 2026-09-30, and nothing may be stored under those
+#   names either: runs from before then sign Windows for any administrator who runs them again.
 # - Linux: Sigstore keyless signing with cosign, which needs no secret. The signature is bound to
 #   this workflow, this repository and the ref it ran from by GitHub's own token, and recorded in the
 #   public Rekor transparency log, so a stranger checks it against where the file came from rather
 #   than against a key we hold and could lose. There is no platform authority for Linux binaries to
-#   defer to, and a key of our own would be one more thing to trust us about.
+#   defer to, and a key of our own would be one more thing to trust us about. Every job in a run is
+#   given the same workflow and ref, so the Linux signatures are made in the one job that enters the
+#   `linux-signing` environment, and the check holds the certificate to the token subject that job
+#   alone is given. A token minted in `sign-windows` names `release` instead, and is refused.
 #
 # The signing secrets belong to the `release` environment, which only a run from `main` may use. A
 # workflow changed on any other branch, or carried by a tag, cannot reach them: GitHub refuses the
 # environment before a step runs. Release tags can be made only by an administrator and never moved
-# or deleted once made, so the tag a run builds is the tag that was reviewed. No job that holds a
-# signing secret restores anything from the Actions cache, which jobs running build scripts write.
+# or deleted once made, so the tag a run builds is the tag that was reviewed, and no tag whose name
+# does not start with `v`, `main` among them, can be made by anybody. A tag with a pre-release
+# name, `v0.7-rc1`, is made by an administrator alone, but anybody who can write can move or delete
+# one, while a run builds as at any other time. So every job builds the commit the guard read and
+# not the tag, and the tag is read again before anything is attached: a run whose tag has moved
+# attaches nothing. No job that holds a signing secret restores anything from the Actions cache,
+# which jobs running build scripts write.
 # `scripts/the-release-route-holds.py` reads all of this from GitHub every three hours, the
-# environment, the rulesets, this file's `on:` block and which workflows name `release`, and fails
-# on any change.
+# environment, the rulesets, this file's `on:` block and which jobs enter `release` and
+# `linux-signing`, and fails on any change. It does not read the settings of `linux-signing`, which
+# holds no secret: nothing rests on them, since a Linux certificate names this workflow and `main` as
+# well as that environment.
 #
 # `scripts/the-binaries-are-signed.py` is the check, and `binaries-check.yml` runs it on all three
 # systems once the assets are attached. It holds every macOS and Windows signature to our own
@@ -65,8 +100,9 @@ name: Release binaries
 # refuses while any of them is unset, because a check that does not ask passes a binary signed by
 # anybody. So this workflow reads that file from `main` three times: the guard refuses a release
 # while an identity is unset, the macOS job refuses to sign for any team but the pinned one, and
-# each signing job holds what it signed to the check before anything is attached. A rehearsal is
-# how the route is watched before the identities exist, so there each of the three warns instead.
+# each signing job holds what it signed to the check before anything is attached, the Linux
+# signatures included. A rehearsal is how the route is watched before the identities exist, so there
+# each of the three warns instead.
 
 on:
   workflow_dispatch:
@@ -122,6 +158,7 @@ jobs:
           sparse-checkout: |
             scripts/the-binaries-are-signed.py
             scripts/signing-identities.json
+            scripts/the-release-route-holds.py
           sparse-checkout-cone-mode: false
       - id: guard
         env:
@@ -144,11 +181,19 @@ jobs:
           role="$(gh api "repos/$REPO/collaborators/$ACTOR/permission" --jq .permission)" \
             || refuse "could not read what $ACTOR may do in this repository, so nothing is built"
           [ "$role" = admin ] || refuse "$ACTOR does not administer this repository, and only an administrator may release"
+          actor_id="$(gh api "users/$ACTOR" --jq .id)" || refuse "could not read who $ACTOR is, so nothing is built"
+          python3 scripts/the-release-route-holds.py --may-start "$ACTOR" "$actor_id" \
+            || refuse "$ACTOR is not one of the accounts written down as starting releases"
           if ! [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+){0,2}(-[0-9A-Za-z.-]+)?$ ]]; then
             refuse "the tag asked for is not a release tag"
           fi
           commit="$(gh api "repos/$REPO/commits/refs/tags/$TAG" --jq .sha 2>/dev/null)" || refuse "there is no tag called $TAG"
-          on_main="$(gh api "repos/$REPO/compare/$commit...main" --jq .status)" || refuse "could not compare $TAG with main"
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || refuse "$TAG reads as $commit, which is not a commit"
+          # Main by the commit the branch is on, and never by its name: git takes a bare name for a
+          # tag before a branch, so a tag called `main` on unreviewed code could answer for it.
+          main_commit="$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)" || refuse "could not read the commit main is on"
+          [[ "$main_commit" =~ ^[0-9a-f]{40}$ ]] || refuse "main reads as $main_commit, which is not a commit"
+          on_main="$(gh api "repos/$REPO/compare/$commit...$main_commit" --jq .status)" || refuse "could not compare $TAG with main"
           case "$on_main" in
             ahead|identical) ;;
             *) refuse "$TAG is on ${commit:0:12}, which is not on main, so it was never reviewed" ;;
@@ -213,21 +258,42 @@ jobs:
       apple: ${{ steps.secrets.outputs.apple }}
       azure: ${{ steps.secrets.outputs.azure }}
     steps:
+      # Who started this job, which is not always who started the run: any one job can be run again
+      # on its own, by somebody else, and would reuse the guard's answer rather than ask again.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: main
+          path: starter
+          sparse-checkout: |
+            scripts/the-release-route-holds.py
+          sparse-checkout-cone-mode: false
+      - name: Started by an account written down as starting releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          py=python3
+          "$py" -c 'import sys' >/dev/null 2>&1 || py=python
+          actor_id="$(gh api "users/$ACTOR" --jq .id)" || { echo "::error::could not read who $ACTOR is"; exit 1; }
+          "$py" starter/scripts/the-release-route-holds.py --may-start "$ACTOR" "$actor_id"
       - id: secrets
         # Only whether each set is complete leaves this step, never a value.
         env:
-          A1: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-          A2: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          A3: ${{ secrets.APPLE_TEAM_ID }}
-          A4: ${{ secrets.APPLE_API_KEY_P8 }}
-          A5: ${{ secrets.APPLE_API_KEY_ID }}
-          A6: ${{ secrets.APPLE_API_ISSUER_ID }}
-          Z1: ${{ secrets.AZURE_TENANT_ID }}
-          Z2: ${{ secrets.AZURE_CLIENT_ID }}
-          Z3: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          Z4: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-          Z5: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
-          Z6: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          A1: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          A2: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          A3: ${{ secrets.MACOS_TEAM_ID }}
+          A4: ${{ secrets.MACOS_NOTARY_KEY_P8 }}
+          A5: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          A6: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          Z1: ${{ secrets.WINDOWS_AZURE_TENANT_ID }}
+          Z2: ${{ secrets.WINDOWS_AZURE_CLIENT_ID }}
+          Z3: ${{ secrets.WINDOWS_AZURE_SUBSCRIPTION_ID }}
+          Z4: ${{ secrets.WINDOWS_SIGNING_ENDPOINT }}
+          Z5: ${{ secrets.WINDOWS_SIGNING_ACCOUNT }}
+          Z6: ${{ secrets.WINDOWS_SIGNING_PROFILE }}
           REHEARSAL: ${{ needs.guard.outputs.rehearsal }}
         run: |
           set -euo pipefail
@@ -339,6 +405,27 @@ jobs:
       WANT_x86_64_apple_darwin: ${{ needs.build.outputs.x86_64-apple-darwin }}
       WANT_aarch64_apple_darwin: ${{ needs.build.outputs.aarch64-apple-darwin }}
     steps:
+      # Who started this job, which is not always who started the run: any one job can be run again
+      # on its own, by somebody else, and would reuse the guard's answer rather than ask again.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: main
+          path: starter
+          sparse-checkout: |
+            scripts/the-release-route-holds.py
+          sparse-checkout-cone-mode: false
+      - name: Started by an account written down as starting releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          py=python3
+          "$py" -c 'import sys' >/dev/null 2>&1 || py=python
+          actor_id="$(gh api "users/$ACTOR" --jq .id)" || { echo "::error::could not read who $ACTOR is"; exit 1; }
+          "$py" starter/scripts/the-release-route-holds.py --may-start "$ACTOR" "$actor_id"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: unsigned-x86_64-apple-darwin
@@ -376,12 +463,12 @@ jobs:
           HAVE: ${{ needs.tag.outputs.apple }}
           PINNED_TEAM: ${{ needs.tag.outputs.apple_team }}
           REHEARSAL: ${{ needs.tag.outputs.rehearsal }}
-          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+          MACOS_NOTARY_KEY_P8: ${{ secrets.MACOS_NOTARY_KEY_P8 }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
         run: |
           set -euo pipefail
           for t in $TARGETS; do chmod +x "in/unsigned-$t/timewitness"; done
@@ -392,7 +479,7 @@ jobs:
             exit 0
           fi
           # Signing for any team but the one the check holds us to makes binaries it refuses.
-          if [ "$APPLE_TEAM_ID" != "$PINNED_TEAM" ]; then
+          if [ "$MACOS_TEAM_ID" != "$PINNED_TEAM" ]; then
             said="the Apple signing secrets are for a team the signature check does not hold our binaries to (${PINNED_TEAM:-no team is pinned})"
             if [ -z "$PINNED_TEAM" ] && [ "$REHEARSAL" = true ]; then
               echo "::warning::$said"
@@ -407,19 +494,19 @@ jobs:
           trap 'security delete-keychain "$work/signing.keychain-db" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
           keychain="$work/signing.keychain-db"
           pass="$(openssl rand -hex 24)"
-          printf '%s' "$APPLE_CERTIFICATE_P12" | base64 --decode > "$work/cert.p12"
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$work/cert.p12"
           security create-keychain -p "$pass" "$keychain"
           security set-keychain-settings -lut 3600 "$keychain"
           security unlock-keychain -p "$pass" "$keychain"
-          security import "$work/cert.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign >/dev/null
+          security import "$work/cert.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign >/dev/null
           security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" >/dev/null
           existing="$(security list-keychains -d user | tr -d '"')"
           # shellcheck disable=SC2086
           security list-keychains -d user -s "$keychain" $existing
           identities="$(security find-identity -v -p codesigning "$keychain")"
-          identity="$(printf '%s\n' "$identities" | awk -v team="($APPLE_TEAM_ID)" 'index($0, "Developer ID Application") && index($0, team) { print $2; exit }')"
+          identity="$(printf '%s\n' "$identities" | awk -v team="($MACOS_TEAM_ID)" 'index($0, "Developer ID Application") && index($0, team) { print $2; exit }')"
           if [ -z "$identity" ]; then
-            echo "::error::the certificate holds no Developer ID Application identity for team $APPLE_TEAM_ID"
+            echo "::error::the certificate holds no Developer ID Application identity for team $MACOS_TEAM_ID"
             exit 1
           fi
           for t in $TARGETS; do
@@ -427,22 +514,22 @@ jobs:
             codesign --force --options runtime --timestamp --sign "$identity" "$bin"
             codesign --verify --strict --verbose=2 "$bin"
           done
-          case "$APPLE_API_KEY_P8" in
-            -----BEGIN*) printf '%s\n' "$APPLE_API_KEY_P8" > "$work/key.p8" ;;
-            *) printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$work/key.p8" ;;
+          case "$MACOS_NOTARY_KEY_P8" in
+            -----BEGIN*) printf '%s\n' "$MACOS_NOTARY_KEY_P8" > "$work/key.p8" ;;
+            *) printf '%s' "$MACOS_NOTARY_KEY_P8" | base64 --decode > "$work/key.p8" ;;
           esac
           mkdir -p "$work/submit"
           for t in $TARGETS; do
             cp "in/unsigned-$t/timewitness" "$work/submit/timewitness-$t"
           done
           ditto -c -k --keepParent "$work/submit" "$work/submit.zip"
-          xcrun notarytool submit "$work/submit.zip" --key "$work/key.p8" --key-id "$APPLE_API_KEY_ID" \
-            --issuer "$APPLE_API_ISSUER_ID" --wait --timeout 45m --output-format json > "$work/notary.json" || true
+          xcrun notarytool submit "$work/submit.zip" --key "$work/key.p8" --key-id "$MACOS_NOTARY_KEY_ID" \
+            --issuer "$MACOS_NOTARY_ISSUER_ID" --wait --timeout 45m --output-format json > "$work/notary.json" || true
           status="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("status", ""))' "$work/notary.json")"
           id="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("id", ""))' "$work/notary.json")"
           echo "notarisation $id: $status"
           if [ "$status" != Accepted ]; then
-            xcrun notarytool log "$id" --key "$work/key.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" || true
+            xcrun notarytool log "$id" --key "$work/key.p8" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER_ID" || true
             echo "::error::Apple did not notarise the macOS binaries: $status"
             exit 1
           fi
@@ -499,8 +586,13 @@ jobs:
     needs: [tag, build]
     runs-on: windows-2022
     environment: release
-    # The token Azure trades for a sign-in. It names this repository and the `release` environment,
-    # and nothing else here asks for one.
+    # The token Azure trades for a sign-in. It names this repository, the `release` environment, `main`
+    # and this workflow at `main`. The federated credential is to trust that subject alone, so a job
+    # run from any other ref or written in any other workflow cannot sign in, whatever the
+    # environment's policy reads.
+    # The only other job here that asks for one is `publish`, for the Linux signatures, and the check
+    # refuses a Linux signature made with a token naming any environment but `linux-signing`, so this
+    # one cannot sign a Linux archive as ours.
     permissions:
       contents: read
       id-token: write
@@ -508,6 +600,36 @@ jobs:
       signed: ${{ steps.done.outputs.signed }}
       packed: ${{ steps.packed.outputs.sha256 }}
     steps:
+      # Who started this job, which is not always who started the run: any one job can be run again
+      # on its own, by somebody else, and would reuse the guard's answer rather than ask again.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: main
+          path: starter
+          sparse-checkout: |
+            scripts/the-release-route-holds.py
+          sparse-checkout-cone-mode: false
+      - name: Started by an account written down as starting releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          py=python3
+          "$py" -c 'import sys' >/dev/null 2>&1 || py=python
+          actor_id="$(gh api "users/$ACTOR" --jq .id)" || { echo "::error::could not read who $ACTOR is"; exit 1; }
+          "$py" starter/scripts/the-release-route-holds.py --may-start "$ACTOR" "$actor_id"
+      # Asked for and read on every run, a rehearsal included, so the subject is seen before anything
+      # is signed with it, and a template changed in the settings stops the job here.
+      - name: The token this job signs with names main and release.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          py=python3
+          "$py" -c 'import sys' >/dev/null 2>&1 || py=python
+          "$py" starter/scripts/the-release-route-holds.py --token-subject api://AzureADTokenExchange release
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: unsigned-x86_64-pc-windows-msvc
@@ -538,16 +660,16 @@ jobs:
         if: needs.tag.outputs.azure == 'true'
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.WINDOWS_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.WINDOWS_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.WINDOWS_AZURE_SUBSCRIPTION_ID }}
       - name: Sign
         if: needs.tag.outputs.azure == 'true'
         uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
-          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          endpoint: ${{ secrets.WINDOWS_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.WINDOWS_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.WINDOWS_SIGNING_PROFILE }}
           files: ${{ github.workspace }}\in\timewitness.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
@@ -672,12 +794,47 @@ jobs:
     name: attach to the release
     needs: [tag, sign-macos, sign-windows, pack-linux]
     runs-on: ubuntu-latest
+    # Holds no secret. It is here so the token this job signs the Linux archives with names an
+    # environment no other job enters, which is how the check tells this job's signature from one
+    # made with any other job's token in the same run. Its settings do not bear on that: the
+    # certificate names this workflow and `main` as well.
+    environment: linux-signing
     permissions:
       contents: write
       id-token: write
     outputs:
       published: ${{ steps.decide.outputs.published }}
     steps:
+      # Who started this job, which is not always who started the run: any one job can be run again
+      # on its own, by somebody else, and would reuse the guard's answer rather than ask again.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: main
+          path: starter
+          sparse-checkout: |
+            scripts/the-release-route-holds.py
+          sparse-checkout-cone-mode: false
+      - name: Started by an account written down as starting releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          py=python3
+          "$py" -c 'import sys' >/dev/null 2>&1 || py=python
+          actor_id="$(gh api "users/$ACTOR" --jq .id)" || { echo "::error::could not read who $ACTOR is"; exit 1; }
+          "$py" starter/scripts/the-release-route-holds.py --may-start "$ACTOR" "$actor_id"
+      # Asked for and read on every run, a rehearsal included, so the subject is seen before anything
+      # is signed with it, and a template changed in the settings stops the job here.
+      - name: The token this job signs with names main and release.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          py=python3
+          "$py" -c 'import sys' >/dev/null 2>&1 || py=python
+          "$py" starter/scripts/the-release-route-holds.py --token-subject sigstore linux-signing
       - id: decide
         env:
           TAG: ${{ needs.tag.outputs.tag }}
@@ -745,49 +902,49 @@ jobs:
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         if: steps.decide.outputs.packed == 'true'
       # Signed here and not earlier, so nothing goes into the public transparency log for binaries
-      # that are neither attached nor rehearsed.
+      # that are not attached. A rehearsal signs with a key made here and a signing config that names
+      # no log and no timestamp authority, because this cosign has no switch that stops the upload.
+      # The key lives outside dist and dies with the runner; its public half is what the check below
+      # is handed, and the check never passes on it.
       - name: Digests, and the Linux signatures
         if: steps.decide.outputs.packed == 'true'
+        env:
+          REHEARSAL: ${{ needs.tag.outputs.rehearsal }}
         run: |
           set -euo pipefail
+          signing=()
+          if [ "$REHEARSAL" = true ]; then
+            # Without these cosign cannot ask GitHub for the token keyless signing needs, so a change
+            # that dropped the key below would fail here rather than sign as this workflow.
+            unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
+            keys="$RUNNER_TEMP/rehearsal-key"
+            mkdir -p "$keys"
+            COSIGN_PASSWORD="$(openssl rand -hex 32)"
+            export COSIGN_PASSWORD
+            (cd "$keys" && cosign generate-key-pair)
+            printf '%s' '{"mediaType":"application/vnd.dev.sigstore.signingconfig.v0.2+json","caUrls":[],"oidcUrls":[],"rekorTlogUrls":[],"tsaUrls":[],"rekorTlogConfig":{"selector":"ANY"},"tsaConfig":{"selector":"ANY"}}' > "$keys/no-log.json"
+            signing=(--key "$keys/cosign.key" --signing-config "$keys/no-log.json")
+            [ -s "$keys/cosign.key" ] && [ -s "$keys/cosign.pub" ] || { echo "::error::no rehearsal key was made"; exit 1; }
+          fi
           cd dist
           sha256sum -- *.tar.gz *.zip > SHA256SUMS
           cat SHA256SUMS
           for blob in *-linux-gnu.tar.gz SHA256SUMS; do
-            cosign sign-blob --yes --bundle "$blob.sigstore.json" "$blob"
+            cosign sign-blob --yes "${signing[@]}" --bundle "$blob.sigstore.json" "$blob"
           done
-      - name: Attach
-        if: steps.decide.outputs.published == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          TAG: ${{ needs.tag.outputs.tag }}
-          PRERELEASE: ${{ needs.tag.outputs.prerelease }}
-        run: |
-          set -euo pipefail
-          clobber=()
-          if gh release view "$TAG" --repo "$REPO" --json isPrerelease,assets > release.json 2>/dev/null; then
-            is_pre="$(python3 -c 'import json; print(str(json.load(open("release.json"))["isPrerelease"]).lower())')"
-            held="$(python3 -c 'import json; print(len(json.load(open("release.json"))["assets"]))')"
-            # The guard refused this already. Asked again here because the release could have been
-            # given files while the build ran.
-            if [ "$is_pre" != true ] && [ "$held" != 0 ]; then
-              echo "::error::$TAG is a published release and already carries files ($held), which are never replaced"
-              exit 1
-            fi
-            if [ "$is_pre" = true ]; then clobber=(--clobber); fi
-          else
-            notes="Signed binaries for Linux, macOS and Windows are attached. Check them with scripts/the-binaries-are-signed.py --release $TAG."
-            flags=(--verify-tag --title "$TAG" --notes "$notes")
-            if [ "$PRERELEASE" = true ]; then flags+=(--prerelease --latest=false); fi
-            gh release create "$TAG" --repo "$REPO" "${flags[@]}"
+          if [ "$REHEARSAL" = true ]; then
+            rm -f "$keys/cosign.key"
+            # The bundles must carry no log entry, or the switch above did not hold.
+            for bundle in *.sigstore.json; do
+              python3 -c 'import json, sys; b = json.load(open(sys.argv[1])); sys.exit(1 if b["verificationMaterial"].get("tlogEntries") else 0)' "$bundle" \
+                || { echo "::error::$bundle carries a transparency log entry, so this rehearsal wrote to the public log"; exit 1; }
+            done
           fi
-          gh release upload "$TAG" --repo "$REPO" "${clobber[@]}" dist/*
-      # What a rehearsal would have attached, held to the check a stranger runs, from `main`. No
-      # binary is run here: this job holds the token that signs and the one that writes releases, and
-      # each build asked its own binary for its version already.
+      # The check a stranger runs, from `main`, over what was signed here. No binary is run in this
+      # job: it holds the token that signs and the one that writes releases, and each build asked its
+      # own binary for its version already.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: needs.tag.outputs.rehearsal == 'true' && steps.decide.outputs.packed == 'true'
+        if: steps.decide.outputs.packed == 'true'
         with:
           persist-credentials: false
           path: check
@@ -795,6 +952,216 @@ jobs:
             scripts/the-binaries-are-signed.py
             scripts/signing-identities.json
           sparse-checkout-cone-mode: false
+      # Before anything is attached, so a Linux signature the check refuses, one made in the wrong job
+      # among them, never reaches a release. The macOS and Windows signatures were held to it in the
+      # jobs that made them, and are left to those here.
+      - name: What is about to be attached
+        if: steps.decide.outputs.published == 'true'
+        env:
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: python3 check/scripts/the-binaries-are-signed.py --release "$TAG" --dist dist --no-run
+      - name: Attach
+        if: steps.decide.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.tag.outputs.tag }}
+          COMMIT: ${{ needs.tag.outputs.commit }}
+          PRERELEASE: ${{ needs.tag.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          # Every job built the commit the guard read, and a tag with a pre-release name can be moved
+          # while they ran. So the tag is read again before anything is attached, and again before
+          # anything is made public, and binaries go only onto a tag that still names that commit.
+          names_what_was_built() {
+            local now
+            now="$(gh api "repos/$REPO/commits/refs/tags/$TAG" --jq .sha)" || return 1
+            if [ "$now" != "$COMMIT" ]; then
+              echo "::error::$TAG names ${now:0:12} now, and this run built ${COMMIT:0:12}, so nothing is attached"
+              return 1
+            fi
+          }
+          names_what_was_built
+          # However this step stops before its end, no release is left carrying some of its files,
+          # and nothing somebody else put there is touched. A draft made here, known by its number,
+          # is deleted whole while it is still a draft, and left as it is once published, which this
+          # step does only once it carries every file. A draft asked for whose answer was lost is the
+          # one draft on the tag made since the step began by the account every workflow here writes
+          # as, since a draft there already refuses the step before it asks; no other workflow here
+          # writes releases, and one run of this one works on a tag at a time. On a release that was
+          # public already, only the files uploaded here are taken off, each by the number its upload
+          # answered with, and one whose upload got no number back by being of that file's name, new
+          # since the step read the release, and put there by that account; on a pre-release that means
+          # the files they replaced are gone too, which a pre-release may be. Nothing is undone until
+          # the first upload starts, so a refusal below takes nothing off anything.
+          ours="github-actions[bot]"
+          # On a failure gh prints GitHub's own error where the number asked for would be, so an
+          # answer counts only when it is a number and nothing else, and only a number is deleted.
+          a_number() { [[ "$1" =~ ^[0-9]+$ ]]; }
+          # A draft's created_at is the date of its commit, so it is known as new by when it was last
+          # changed, a minute's leeway given for the runner's clock.
+          began="$(date -u -d '-1 minute' +%Y-%m-%dT%H:%M:%SZ)"
+          made=""
+          asked=false
+          attaching=false
+          finished=false
+          : > uploaded.txt
+          : > tried.txt
+          : > answered.txt
+          undo() {
+            [ "$finished" = true ] && return
+            if ! a_number "$made" && [ "$asked" = true ]; then
+              # The list can be a few seconds behind a draft just made, so it is asked again.
+              for try in 1 2 3 4 5 6; do
+                gh api "repos/$REPO/releases?per_page=100" --paginate \
+                  --jq ".[] | select(.draft and .tag_name == \"$TAG\" and .author.login == \"$ours\" and .updated_at >= \"$began\") | .id" \
+                  > drafts.txt || { echo "::error::could not read the drafts on $TAG, so a draft this run asked for may be left"; return; }
+                [ -s drafts.txt ] && break
+                [ "$try" = 6 ] || sleep 5
+              done
+              if [ "$(grep -c . drafts.txt)" = 1 ]; then
+                made="$(cat drafts.txt)"
+              elif [ -s drafts.txt ]; then
+                echo "::error::$TAG has $(grep -c . drafts.txt) drafts made since this step began, so none is deleted"
+                return
+              else
+                echo "::error::the draft asked for on $TAG was not found in six reads, so if GitHub made it, it is still there"
+                return
+              fi
+            fi
+            if a_number "$made"; then
+              state="$(gh api "repos/$REPO/releases/$made" --jq .draft)" || state=unread
+              if [ "$state" = true ]; then
+                gh api -X DELETE "repos/$REPO/releases/$made" \
+                  || echo "::error::the draft of $TAG could not be deleted, and the next run refuses until it is"
+              elif [ "$state" = false ]; then
+                echo "::error::$TAG was published before this step failed, and is left as it is; check that it carries every file"
+              else
+                echo "::error::could not read whether release $made of $TAG is still a draft, so it is left as it is"
+              fi
+              return
+            fi
+            [ "$attaching" = true ] || return
+            while read -r id; do
+              a_number "$id" || continue
+              gh api -X DELETE "repos/$REPO/releases/assets/$id" || echo "::error::file $id could not be taken off $TAG again"
+            done < uploaded.txt
+            # A grep that fails, rather than finding nothing, makes every upload one to look for.
+            grep -vxF -f answered.txt tried.txt > lost.txt || [ $? = 1 ] || cp tried.txt lost.txt
+            [ -s lost.txt ] || return
+            # An upload whose answer was lost may still have made a file, which GitHub can take a few
+            # seconds to list, so the release is read up to three times, until each such file has been
+            # found. One GitHub refused made none, and is looked for all the same.
+            : > found.txt
+            : > stuck.txt
+            for try in 1 2 3; do
+              gh api "repos/$REPO/releases/$number" --jq '.assets[] | "\(.id) \(.uploader.login) \(.name)"' > after.txt \
+                || { echo "::error::could not read what $TAG carries, so a file whose upload got no number back may still be on it"; return; }
+              while read -r id who name; do
+                if [ "$who" = "$ours" ] && ! grep -qx "$id" before.txt && ! grep -qx "$id" uploaded.txt && grep -qxF "$name" lost.txt; then
+                  if gh api -X DELETE "repos/$REPO/releases/assets/$id"; then
+                    echo "$id" >> uploaded.txt
+                    echo "$name" >> found.txt
+                  else
+                    echo "$name" >> stuck.txt
+                    echo "::error::$name could not be taken off $TAG again"
+                  fi
+                fi
+              done < after.txt
+              [ -z "$(grep -vxF -f found.txt lost.txt)" ] && break
+              [ "$try" = 3 ] || sleep 5
+            done
+            taken="$(xargs < found.txt)" || true
+            left="$(grep -vxF -f found.txt stuck.txt | sort -u | xargs)" || true
+            unseen="$(cat found.txt stuck.txt | grep -vxF -f - lost.txt | xargs)" || true
+            echo "::error::uploads to $TAG that got no number back: $(xargs < lost.txt); after $try of three reads, taken off: ${taken:-none}; seen and not taken off: ${left:-none}; not seen: ${unseen:-none}"
+          }
+          # Says why a request got no number back: GitHub refused it, and says why in what it printed,
+          # or its answer was lost on the way.
+          no_number() {
+            if grep -q '(HTTP 4[0-9][0-9])' "$2"; then
+              echo "::error::GitHub refused $1: $(tr -s '\r\n' ' ' < "$2")$(printf '%s' "$3" | tr -s '\r\n' ' ')"
+            else
+              echo "::error::$1 got no number back: $(tr -s '\r\n' ' ' < "$2")$(printf '%s' "$3" | tr -s '\r\n' ' ')"
+            fi
+          }
+          trap undo EXIT
+          # Every file goes to the release by its number and never by its tag, so no other release
+          # made on the same tag while this runs is given any of them.
+          upload_to() {
+            local f answer
+            for f in dist/*; do
+              basename "$f" >> tried.txt
+              answer="$(gh api -X POST "https://uploads.github.com/repos/$REPO/releases/$1/assets?name=$(basename "$f")" \
+                -H "Content-Type: application/octet-stream" --input "$f" --jq .id 2> upload.err)" || true
+              if a_number "$answer"; then
+                echo "$answer" >> uploaded.txt
+                basename "$f" >> answered.txt
+                continue
+              fi
+              no_number "the upload of $(basename "$f") to $TAG" upload.err "$answer"
+              exit 1
+            done
+          }
+          # Read as the guard reads it: only GitHub's own answer that there is no release means none,
+          # and any other failure stops here rather than being taken for there being none.
+          if gh release view "$TAG" --repo "$REPO" --json databaseId,isDraft,isPrerelease,assets > release.json 2> release.err; then
+            draft="$(python3 -c 'import json; print(str(json.load(open("release.json"))["isDraft"]).lower())')"
+            is_pre="$(python3 -c 'import json; print(str(json.load(open("release.json"))["isPrerelease"]).lower())')"
+            held="$(python3 -c 'import json; print(len(json.load(open("release.json"))["assets"]))')"
+            # A draft is seen here and not by the guard, whose token cannot see drafts. The files
+            # rule the guard asked already, and it is asked again because the release could have
+            # been given files while the build ran.
+            if [ "$draft" = true ]; then
+              echo "::error::$TAG has a draft release, which this run neither publishes nor replaces; publish or delete it first"
+              exit 1
+            fi
+            if [ "$is_pre" != true ] && [ "$held" != 0 ]; then
+              echo "::error::$TAG is a published release and already carries files ($held), which are never replaced"
+              exit 1
+            fi
+            number="$(python3 -c 'import json; print(json.load(open("release.json"))["databaseId"])')"
+            python3 -c 'import json; [print(a["apiUrl"].rsplit("/", 1)[1]) for a in json.load(open("release.json"))["assets"]]' | tr -d '\r' > before.txt
+            attaching=true
+            # A pre-release's own files of the same names are replaced, so taken off first.
+            if [ "$is_pre" = true ]; then
+              python3 -c 'import json, os; [print(a["apiUrl"].rsplit("/", 1)[1]) for a in json.load(open("release.json"))["assets"] if os.path.isfile(os.path.join("dist", a["name"]))]' | tr -d '\r' > replaced.txt
+              while read -r id; do gh api -X DELETE "repos/$REPO/releases/assets/$id"; done < replaced.txt
+            fi
+            upload_to "$number"
+            names_what_was_built
+          elif [ "$(cat release.err)" = "release not found" ]; then
+            notes="Signed binaries for Linux, macOS and Windows are attached. Check them with scripts/the-binaries-are-signed.py --release $TAG."
+            latest=legacy
+            if [ "$PRERELEASE" = true ]; then latest=false; fi
+            # Made on the commit that was built, so that were the tag gone by now, the release would
+            # not make one anywhere else.
+            asked=true
+            made="$(gh api -X POST "repos/$REPO/releases" -f tag_name="$TAG" -f target_commitish="$COMMIT" \
+              -f name="$TAG" -f body="$notes" -F draft=true -F prerelease="$PRERELEASE" -f make_latest="$latest" --jq .id 2> draft.err)" || true
+            if ! a_number "$made"; then
+              no_number "the draft asked for on $TAG" draft.err "$made"
+              exit 1
+            fi
+            upload_to "$made"
+            gh api "repos/$REPO/releases/$made" --jq '[.assets[].name] | sort | join(" ")' > carried.txt
+            if [ "$(cat carried.txt)" != "$(ls dist | sort | xargs)" ]; then
+              echo "::error::the draft of $TAG carries [$(cat carried.txt)], not every file packed for it"
+              exit 1
+            fi
+            names_what_was_built
+            gh api -X PATCH "repos/$REPO/releases/$made" -F draft=false --jq .draft > published.txt
+            if [ "$(cat published.txt)" != false ]; then
+              echo "::error::$TAG was given every file and could not be published"
+              exit 1
+            fi
+          else
+            echo "::error::could not read whether $TAG has a release: $(cat release.err)"
+            exit 1
+          fi
+          finished=true
+          echo "$TAG carries $(ls dist | wc -l) files, built from ${COMMIT:0:12}"
+      # What a rehearsal would have attached, held to the same check.
       - name: What a rehearsal would have attached
         if: needs.tag.outputs.rehearsal == 'true' && steps.decide.outputs.packed == 'true'
         env:
@@ -803,25 +1170,34 @@ jobs:
           # Without -e, which the runner's default shell sets: the check's own exit is read below.
           set +e
           set -uo pipefail
-          said="$(python3 check/scripts/the-binaries-are-signed.py --release "$TAG" --dist dist --no-run)"
+          said="$(python3 check/scripts/the-binaries-are-signed.py --release "$TAG" --dist dist --no-run \
+            --rehearsal-key "$RUNNER_TEMP/rehearsal-key/cosign.pub")"
           code=$?
           printf '%s\n' "$said"
-          # While the identities are unset every run says so, and that is not what a rehearsal is
-          # here to find. Anything else that fails does fail it.
+          # With a rehearsal key the check never passes, so its exit code says nothing here and its
+          # lines are read instead: what must be there, and nothing failing that is not the key or
+          # an identity still unset. A check that crashed prints neither, and fails this.
           other=""
+          signed=0
+          attached=0
           while IFS= read -r line; do
             case "$line" in
-              "FAIL: NOT PINNED"* | "FAIL: at least one clause failed") ;;
+              "FAIL: NOT PINNED"* | "FAIL: REHEARSAL KEY"* | "FAIL: at least one clause failed") ;;
               "FAIL: "* | "NOT RUN: "*) other="$other [$line]" ;;
+              "PASS: all five archives"*) attached=$((attached + 1)) ;;
+              "PASS: "*" is signed by the rehearsal's throwaway key (cosign)") signed=$((signed + 1)) ;;
             esac
           done <<< "$said"
+          last="$(printf '%s\n' "$said" | tail -n 1)"
           if [ -n "$other" ]; then
             echo "::error::what this rehearsal would have attached fails the signature check: $other"
             exit 1
           fi
-          if [ "$code" != 0 ]; then
-            echo "::warning::what this rehearsal would have attached passes every clause but the identities that are not yet pinned"
+          if [ "$code" != 1 ] || [ "$last" != "FAIL: at least one clause failed" ] || [ "$attached" != 1 ] || [ "$signed" != 3 ]; then
+            echo "::error::the signature check did not finish as a rehearsal's does (exit $code, $attached of 1 attached, $signed of 3 signed by the rehearsal key, last line [$last])"
+            exit 1
           fi
+          echo "::notice::what this rehearsal would have attached passes every clause but the rehearsal key and any identity not yet set"
 
   check:
     name: check what was attached
