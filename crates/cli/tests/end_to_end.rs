@@ -14,6 +14,7 @@ use timewitness_core::{
     EpsilonBasis, LeapIndicator, MonotonicNanos, Operator, SmearPolicy, SourceId, SourceKind,
     Timescale, UnixNanos, Validity,
 };
+use timewitness_receipt::TakenBy;
 use timewitness_receipt::{open, sha256_payload, AgentKey, PolicyRecord, Receipt};
 use timewitness_sources::Exchange;
 
@@ -106,7 +107,11 @@ fn a_stamp_becomes_a_receipt_a_stranger_can_check() {
             min_sources: model.policy().min_sources as u32,
             min_operators: Some(model.policy().min_operators as u32),
             max_holdover: Some(model.policy().max_holdover),
+            source_interval_floor: Some(100_000),
+            frequency_slew_ppb_per_s: Some(1_000),
+            frequency_span_ppb: Some(100_000),
         },
+        TakenBy::OneShot,
     );
 
     let signed = key.sign(&receipt).expect("the agent signs its own receipt");
@@ -162,7 +167,11 @@ fn a_receipt_altered_after_signing_is_refused_by_something_holding_only_the_byte
             min_sources: model.policy().min_sources as u32,
             min_operators: Some(model.policy().min_operators as u32),
             max_holdover: Some(model.policy().max_holdover),
+            source_interval_floor: Some(100_000),
+            frequency_slew_ppb_per_s: Some(1_000),
+            frequency_span_ppb: Some(100_000),
         },
+        TakenBy::OneShot,
     );
     let signed = key.sign(&receipt).unwrap();
 

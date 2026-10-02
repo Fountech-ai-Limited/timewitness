@@ -180,6 +180,22 @@ jobs:
           TW_SURFACES_SITE: tree
         run: bash scripts/three-surfaces.sh
 
+      - name: The wire route tells the holding page from a page carrying its tag
+        # The step above cannot run the wire route's holding branch, because it reads no served page,
+        # and the scheduled guard was the only other thing that did. So a local server answers the
+        # way the public address does, with the holding page and with nine pages that are not it,
+        # and the branch is watched accepting the one and refusing the nine.
+        run: python3 scripts/the-apex-is-the-holding-page.py --self-test
+
+      - name: The newest release against its own limitation list
+        # Two files in one released tree, held to each other: what that release can do, and what its
+        # own list says it cannot. `main` is allowed to be ahead of it, which is why this asks about
+        # the newest tag rather than about the commit being graded. The second run is this one
+        # backwards, at every setting of the rule and once against real bytes.
+        run: |
+          bash scripts/the-order-item-matches-the-release.sh --self-test
+          bash scripts/the-order-item-matches-the-release.sh
+
       - name: Every sentence agrees with the shipped policy
         # The check above holds each surface to its twin, and on 2026-09-15 it was green over four
         # faults that every surface shared. This one reads the floor, the two ceilings, the Roughtime
@@ -201,6 +217,20 @@ jobs:
             fi
             printf '%s\n' "$said" | grep -qF "offers ${mode#*:}" || { printf '%s\n' "$said"; echo "it refused, and not for ${mode#*:}"; exit 1; }
           done
+
+      - name: A figure about how much checking happens says where it came from
+        # Most checking reaches nothing of ours and cannot be counted, so a count of verifications
+        # with no words saying where it came from claims every one of them. Nothing states such a
+        # figure today, which is the cheapest moment for this. The second run is the check
+        # backwards, with a refused sentence added to the README as read.
+        run: |
+          node scripts/a-verification-figure-names-the-checker.mjs
+          if said="$(TW_COUNT_PROVE=1 node scripts/a-verification-figure-names-the-checker.mjs 2>&1)"; then
+            echo "$said"; echo "the check passed with a bare figure seeded into it, so it is not connected"; exit 1
+          fi
+          echo "$said" | grep -qF "README.md states how much checking happens" || {
+            echo "$said"; echo "it refused, and not for the seeded figure"; exit 1
+          }
 
       - name: The guard that reads the served page is still running
         # The other half of splitting the surfaces check, and the reason the step above may finish

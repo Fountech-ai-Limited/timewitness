@@ -31,7 +31,7 @@
 use std::sync::Arc;
 
 use timewitness_clock::monotonic::MonotonicClock;
-use timewitness_clock::{ClockModel, Policy};
+use timewitness_clock::{BandReading, ClockModel, Policy};
 use timewitness_core::time::{Nanos, NANOS_PER_SEC};
 use timewitness_core::{MonotonicNanos, Refusal, Stamp, UnixNanos, Validity};
 use timewitness_platform::continuous::SystemContinuous;
@@ -125,13 +125,7 @@ impl Resident {
     /// in the receipt that nothing was ever held to.
     #[must_use]
     pub fn policy_record(&self) -> PolicyRecord {
-        let policy = self.model.policy();
-        PolicyRecord {
-            max_bound_width: policy.max_bound_width,
-            min_sources: policy.min_sources as u32,
-            min_operators: Some(policy.min_operators as u32),
-            max_holdover: Some(policy.max_holdover),
-        }
+        crate::wire::policy_record(self.model.policy())
     }
 
     /// Take a round of exchanges and run a selection over them.
@@ -160,6 +154,13 @@ impl Resident {
     pub fn validity(&mut self) -> Validity {
         self.look();
         self.model.validity()
+    }
+
+    /// What the last fit said about this machine's rate against the band the policy assumes, or
+    /// `None` before anything has been fitted.
+    #[must_use]
+    pub fn band(&self) -> Option<BandReading> {
+        self.model.fit().map(|fit| fit.band)
     }
 
     /// What has happened to this machine since the agent started, newest last.

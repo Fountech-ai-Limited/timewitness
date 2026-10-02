@@ -49,9 +49,9 @@
 //! passes those two passes anything the origin echo would have caught.
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use aes_siv::aead::inout::InOutBuf;
 use aes_siv::aead::{AeadInOut, KeyInit};
@@ -310,8 +310,87 @@ impl core::fmt::Debug for Session {
     }
 }
 
+/// Open the key exchange connection, giving up at `deadline`.
+///
+/// A plain connect waits as long as the operating system does, which is about 21 s on Windows and
+/// about 127 s on Linux against a host that swallows the SYN, so the limit a caller set would not
+/// hold for the one step most likely to hang. Every address the name resolves to is tried in turn
+/// inside the one limit, rather than each getting a limit of its own, so a name with four
+/// addresses cannot take four times as long.
+///
+/// Resolving the name is outside the limit, because the standard library gives it none. A name
+/// that will not resolve fails at the resolver's pace, which is the same for every source.
+fn connect_within(host: &str, port: u16, deadline: Instant) -> Result<TcpStream, SourceError> {
+    let addresses = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| SourceError::Transport(format!("{host} does not resolve: {e}")))?;
+    let mut last = None;
+    for address in addresses {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(SourceError::Timeout);
+        }
+        match TcpStream::connect_timeout(&address, left) {
+            Ok(socket) => return Ok(socket),
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => return Err(SourceError::Timeout),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(SourceError::Transport(match last {
+        Some(e) => format!("cannot reach the key exchange: {e}"),
+        None => format!("{host} resolves to nothing"),
+    }))
+}
+
 /// Run the key exchange against one server and come back with keys and cookies.
 fn negotiate(server: &NtsServer, timeout: Duration) -> Result<Session, SourceError> {
+    negotiate_on(server, KEY_EXCHANGE_PORT, timeout)
+}
+
+/// A socket that gives each read and write only what is left before one deadline.
+///
+/// A limit per read is not a limit on the exchange: a server that sends one byte just inside it,
+/// again and again, holds the call for as long as it likes. The TLS layer reads the socket many
+/// times inside one read of its own, so the limit has to sit under it, on every read it makes,
+/// rather than around it. Each one gets what is left of the one limit, and the key exchange as a
+/// whole ends inside it.
+struct Deadlined {
+    socket: TcpStream,
+    deadline: Instant,
+}
+
+impl Deadlined {
+    fn time_left(&self) -> std::io::Result<()> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::Error::from(std::io::ErrorKind::TimedOut));
+        }
+        self.socket.set_read_timeout(Some(left))?;
+        self.socket.set_write_timeout(Some(left))
+    }
+}
+
+impl Read for Deadlined {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.time_left()?;
+        self.socket.read(buf)
+    }
+}
+
+impl Write for Deadlined {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.time_left()?;
+        self.socket.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.socket.flush()
+    }
+}
+
+/// The key exchange on a port named here, so a test can reach one it runs itself.
+fn negotiate_on(server: &NtsServer, port: u16, timeout: Duration) -> Result<Session, SourceError> {
+    let deadline = Instant::now() + timeout;
     let roots = RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
@@ -329,12 +408,10 @@ fn negotiate(server: &NtsServer, timeout: Duration) -> Result<Session, SourceErr
     let mut connection = ClientConnection::new(Arc::new(config), name)
         .map_err(|e| SourceError::Transport(format!("no TLS session: {e}")))?;
 
-    let mut socket = TcpStream::connect((server.host.as_str(), KEY_EXCHANGE_PORT))
-        .map_err(|e| SourceError::Transport(format!("cannot reach the key exchange: {e}")))?;
-    socket
-        .set_read_timeout(Some(timeout))
-        .and_then(|()| socket.set_write_timeout(Some(timeout)))
-        .map_err(|e| SourceError::Transport(format!("no deadline on the socket: {e}")))?;
+    let mut socket = Deadlined {
+        socket: connect_within(&server.host, port, deadline)?,
+        deadline,
+    };
 
     let mut stream = Stream::new(&mut connection, &mut socket);
     stream
@@ -375,7 +452,7 @@ fn negotiate(server: &NtsServer, timeout: Duration) -> Result<Session, SourceErr
     // other end decided they mean.
     if stream.conn.alpn_protocol() != Some(ALPN) {
         return Err(SourceError::Malformed(
-            "the key exchange did not agree the application protocol NTS reserves, so this is not              an NTS session"
+            "the key exchange did not agree the application protocol NTS reserves, so this is not an NTS session"
                 .to_string(),
         ));
     }
@@ -1173,5 +1250,58 @@ mod tests {
         assert!(!printed.contains("171"), "{printed}");
         assert!(!printed.contains("ab"), "{printed}");
         assert!(printed.contains("example:123"));
+    }
+
+    #[test]
+    fn a_key_exchange_that_never_answers_the_connect_gives_up_inside_its_own_limit() {
+        // Found 2026-09-21: the connect had no limit of its own, so a host that swallowed the SYN
+        // held the call for 21 s on Windows and about 127 s by the Linux default, against a stated
+        // limit of 5 s a call. 192.0.2.1 is TEST-NET-1, which nobody answers from. A machine with
+        // no route at all refuses it at once, which passes too; what must never happen is the wait.
+        let limit = Duration::from_millis(400);
+        let started = std::time::Instant::now();
+        let answer = negotiate(&NtsServer::new("nobody", "192.0.2.1"), limit);
+        let took = started.elapsed();
+        assert!(answer.is_err(), "nobody answered and it did not say so");
+        assert!(
+            took < Duration::from_secs(3),
+            "the connect held the call for {took:?} against a limit of {limit:?}"
+        );
+    }
+
+    #[test]
+    fn a_key_exchange_that_answers_one_byte_at_a_time_still_ends_inside_its_limit() {
+        // A limit on each read is not a limit on the exchange. This server opens a TLS record and
+        // then sends one byte of it every 150 ms, each well inside a 400 ms limit, so a client that
+        // gives every read the whole limit waits for all sixty-four bytes, nearly ten seconds.
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a port on this machine");
+        let port = listener.local_addr().expect("its address").port();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut peer, _)) = listener.accept() {
+                let mut record = vec![0x16, 0x03, 0x03, 0x00, 0x40];
+                record.extend(std::iter::repeat_n(0u8, 0x40));
+                for byte in record {
+                    if peer.write_all(&[byte]).is_err() {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(150));
+                }
+            }
+        });
+
+        let limit = Duration::from_millis(400);
+        let started = std::time::Instant::now();
+        let answer = negotiate_on(&NtsServer::new("drip", "127.0.0.1"), port, limit);
+        let took = started.elapsed();
+        assert!(
+            answer.is_err(),
+            "a server that never finished was taken as an answer"
+        );
+        assert!(
+            took < Duration::from_secs(2),
+            "the key exchange held the call for {took:?} against a limit of {limit:?}"
+        );
+        drop(server);
     }
 }

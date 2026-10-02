@@ -673,6 +673,7 @@ impl ClockModel {
         // carries can be asserted on the arithmetic with no world in the test. Its documentation
         // says what the terms are and what the allowance assumes.
         let oscillator_holdover = oscillator_holdover(&self.policy, &sync.rate, elapsed);
+        let unclaimed_rate = unclaimed_rate(&sync.rate, elapsed, oscillator_holdover);
         let model_residual = scaled(sync.offset_stderr, self.policy.coverage_factor);
         let scheduling = self.scheduling_allowance;
         let safety_margin = self.policy.safety_margin;
@@ -700,6 +701,7 @@ impl ClockModel {
             widest_source_network_half: sync.widest_network_half,
             scheduling,
             oscillator_holdover,
+            unclaimed_rate,
             model_residual,
             safety_margin,
         };
@@ -1053,7 +1055,7 @@ pub struct RateKnowledge {
 /// magnitude it found instead. What it never did was say so, so an operator could not tell a machine
 /// the assumption holds for from one it does not.
 ///
-/// Four answers and not two, and the reason is the one this tree keeps relearning: a guard
+/// Five answers and not two, and the reason is the one this tree keeps relearning: a guard
 /// that answers "no finding" where it means "cannot tell" permits. Before a fit the model has not
 /// read this machine's rate against anything, which is not the same as having read it and found it
 /// inside, and a boolean would have said they were.
@@ -1075,8 +1077,52 @@ pub enum BandReading {
         /// How far past half the band the fit found this machine, in parts per million.
         by_ppm: f64,
     },
+    /// The fit's own error bar, scaled by the coverage factor, is wider than the whole band, so it
+    /// cannot say whether the rate is inside the band or past it.
+    ///
+    /// The fifth answer, added 2026-09-21. Until then the rate was read against the band and its
+    /// standard error never was, so a fit the model refuses as noise read as inside or as outside,
+    /// and outside is a positive claim about a crystal taken off a measurement of jitter. A fit like
+    /// this is what a short baseline gives, which is the ordinary state of a fresh agent.
+    CannotTell {
+        /// The fit's standard error times the coverage factor, in parts per million.
+        error_ppm: f64,
+    },
     /// The fitted rate, or the band, is not a number a rate can be read against.
     Unreadable,
+}
+
+impl core::fmt::Display for BandReading {
+    /// The answer in the words the agent prints, one sentence, with what it does not establish.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NotRead => write!(
+                f,
+                "nothing has been fitted yet, so this machine's rate has not been read against the \
+                 band the policy assumes"
+            ),
+            Self::Inside { magnitude_ppm } => write!(
+                f,
+                "the fitted rate is {magnitude_ppm:.3} ppm, inside the band the policy assumes, so \
+                 the assumption holds on this machine as far as the fit can see"
+            ),
+            Self::Outside { by_ppm } => write!(
+                f,
+                "the fitted rate is {by_ppm:.3} ppm past the band the policy assumes, so the model \
+                 stops claiming it and widens by what it measured"
+            ),
+            Self::CannotTell { error_ppm } => write!(
+                f,
+                "the fit cannot tell where this machine's rate sits, because its own error bar is \
+                 {error_ppm:.3} ppm and wider than the whole band, so the model claims no rate and \
+                 widens by the band"
+            ),
+            Self::Unreadable => write!(
+                f,
+                "the fitted rate or the band is not a number a rate can be read against"
+            ),
+        }
+    }
 }
 
 impl RateKnowledge {
@@ -1139,6 +1185,12 @@ fn read_against_the_band(fit: &Fit, policy: &Policy) -> BandReading {
     let half = half_band(policy);
     if !half.is_finite() || !fit.frequency_ppm.is_finite() {
         return BandReading::Unreadable;
+    }
+    // The same test `supports_a_rate` refuses a fit on, so the reading and the claim cannot
+    // disagree about which fits are measurements.
+    let error_ppm = fit.frequency_stderr_ppm * policy.coverage_factor;
+    if !separates_the_band(error_ppm, policy) {
+        return BandReading::CannotTell { error_ppm };
     }
     let magnitude_ppm = fit.frequency_ppm.abs();
     if magnitude_ppm > half {
@@ -1235,6 +1287,29 @@ fn read_against_the_band(fit: &Fit, policy: &Policy) -> BandReading {
 /// whose true rate magnitude never passes `frequency_span_ppm / 2`, a sample that held the truth
 /// when it was taken still holds it after ageing. A machine outside the band is [`BandReading`], is
 /// stated on the honesty surfaces, and is not something this arithmetic can promise.
+///
+/// **On two of the three branches that first assumption is the whole of it, and on the third it is
+/// not.** Before a fit, and on a fit the model will not stand behind, the widening is at least half
+/// the band, which is the largest magnitude a part may honestly show, so the sentence above holds
+/// whatever the rate inside the band turns out to be. `crates/clock/tests/the_band_before_a_fit.rs`
+/// asserts that on both. On a fit the model does stand behind, the widening is the sum of what the
+/// fit measured, and the sum can be smaller than half the band: a fit claiming 12.0 ppm at a
+/// standard error of 1.0 widens at 37 ppm, and a machine at -50.0 ppm is inside the band and has
+/// moved 50 ppm.
+///
+/// **So the claimed branch needs a second assumption, and it is this: the machine's true rate lies
+/// inside the coverage interval of the fit the model is standing behind.** A regression through the
+/// sources' own answers measures the rate it is fitting, so that is the ordinary case rather than a
+/// get-out, and under it the branch is sound at every age.
+/// `crates/clock/tests/the_band_after_a_claimed_fit.rs` asserts it, and asserts the counter-example
+/// beside it so the condition cannot be dropped without arguing with a number.
+///
+/// Where the second assumption fails the shortfall is bounded and small: at most 306 us on
+/// `Policy::default`, worst at a fit claiming nought at a standard error of nought against a machine
+/// at the band edge at seventeen seconds of age, against a bound this product reaches of about
+/// 154 ms. Nothing reachable produces a wrong bound from it. The sentence is written out because it
+/// is what a later run reads when it is deciding whether the floor can come out, and until
+/// 2026-09-20 it said less than it needed to.
 ///
 /// A term that cannot be read is infinite and never nought; see `readable`. `ppm_over` carries an
 /// infinite rate as [`WIDEST`] and the ceiling refuses it, which is the same refusal said plainly.
@@ -1407,6 +1482,17 @@ pub fn oscillator_holdover(policy: &Policy, rate: &RateKnowledge, elapsed: Nanos
         0
     };
     ppm_over(ppm, elapsed).saturating_add(fixed).min(WIDEST)
+}
+
+/// The part of an oscillator allowance that covers a rate the model is not correcting for.
+///
+/// The same term [`oscillator_holdover`] adds, over the same span, and never more than the allowance
+/// it is a part of. A receipt carries it beside the allowance rather than inside the sum, so a reader
+/// can see how much of the holdover is a rate the agent measured and declined to stand behind, or had
+/// not measured yet, rather than the oscillator's own uncertainty.
+#[must_use]
+pub fn unclaimed_rate(rate: &RateKnowledge, elapsed: Nanos, holdover: Nanos) -> Nanos {
+    ppm_over(readable(rate.unclaimed_frequency_ppm), elapsed).min(holdover)
 }
 
 /// Whether a fit has actually measured this machine's oscillator, or only its own noise.

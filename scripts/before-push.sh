@@ -230,6 +230,13 @@ step "The hook's steps are this file's" bash -c "node scripts/steps-match.mjs --
 # place that catches a markdown change before it ships without the site copy beside it. Strictly more
 # than CI does, which is the point of the hook rather than a difference to reconcile.
 step "The limitation list, on all three surfaces" bash scripts/three-surfaces.sh
+# The wire route's holding branch, driven against a local server with the holding page and nine pages
+# that are not it. Nothing above reads a served page, so without this only the schedule runs it.
+step "The wire route tells the holding page from a page carrying its tag" python3 scripts/the-apex-is-the-holding-page.py --self-test
+# And the newest release against its own copy of that list, which is a different question: the one
+# above asks whether three surfaces of this commit agree, and this asks whether the thing a reader
+# can actually download says what it can actually do.
+step "The newest release against its own limitation list" bash -c "bash scripts/the-order-item-matches-the-release.sh --self-test && bash scripts/the-order-item-matches-the-release.sh"
 # Here the site copy is beside this tree, so its sentences are held to the policy as well.
 step "Every sentence agrees with the shipped policy" bash -c "python3 scripts/policy-sentences.py && python3 scripts/policy-sentences.py --self-test"
 # Here the site repository is usually beside this one, so this run also holds the two copies of the
@@ -249,6 +256,20 @@ price_refuses() {
 }
 step "  and that check still refuses a precision tier" price_refuses precision "offers a reduced-precision tier"
 step "  and a price per receipt" price_refuses per-receipt "offers a price per receipt"
+# A count of checks says it came through the hosted checker, or it does not go out. Most checking
+# reaches nothing of ours, so a bare figure claims what nobody counted.
+step "A figure about how much checking happens says where it came from" node scripts/a-verification-figure-names-the-checker.mjs
+count_refuses() {
+  local said
+  if said="$(TW_COUNT_PROVE=1 node scripts/a-verification-figure-names-the-checker.mjs 2>&1)"; then
+    echo "$said"; echo "the check passed with a bare figure seeded into it, so it is not connected"; return 1
+  fi
+  case "$said" in
+    *"README.md states how much checking happens"*) ;;
+    *) echo "$said"; echo "it refused, and not for the seeded figure"; return 1 ;;
+  esac
+}
+step "  and that check still refuses a bare one" count_refuses
 step "The guard that reads the served page is still running" bash scripts/wire-guard-is-alive.sh
 step "Dependency advisories" bash scripts/check-advisories.sh
 

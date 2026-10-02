@@ -230,7 +230,7 @@ pub fn run(args: &Args) -> Outcome {
         // lost its socket is not one that should look like it stopped tidily.
         Ok(()) => fail("this server stopped reading its own socket"),
         Err(e) => fail(&format!(
-            "the socket this server reads gave back nothing but faults, so it is the socket              rather than the datagrams: {e}"
+            "the socket this server reads gave back nothing but faults, so it is the socket rather than the datagrams: {e}"
         )),
     }
 }
@@ -341,6 +341,7 @@ mod tests {
                 widest_source_network_half: 0,
                 scheduling: 0,
                 oscillator_holdover: 0,
+                unclaimed_rate: 0,
                 model_residual: 0,
                 safety_margin: 0,
             },

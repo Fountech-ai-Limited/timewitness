@@ -141,6 +141,77 @@ if [ "$mode" = "self-test" ]; then
     printf 'seed\n' >docs/a-third-seed.md
     git add -A
     git -c user.email="somebody@example.com" -c user.name="Somebody Else" commit --quiet -m "A seeded commit by somebody else" || exit 2
+
+    # Rule 1 allows one shape besides the one author, so the seeds for it are five merges that differ
+    # from each other in one condition each. Four have to be refused and the fifth has to be
+    # allowed, and a rule that lets the fifth through while letting any of the four through as well
+    # is worth nothing. Each sha is written out so the caller names the commit rather than the
+    # identity, because two of these carry identities the allowed one also carries.
+    seed_a_merge() {
+      local name="$1" author="$2" committer="$3" subject="$4" parents="$5"
+      printf 'seed\n' >"docs/a-seed-from-$name.md"
+      git add -A
+      git commit --quiet -m "A seeded commit for $name" || return 1
+      if [ "$parents" = "one" ]; then
+        GIT_AUTHOR_NAME="${author%% <*}" GIT_AUTHOR_EMAIL="$(printf '%s' "${author##*<}" | tr -d '>')" \
+        GIT_COMMITTER_NAME="${committer%% <*}" GIT_COMMITTER_EMAIL="$(printf '%s' "${committer##*<}" | tr -d '>')" \
+          git commit --quiet --amend --reset-author -m "$subject" || return 1
+      else
+        git checkout --quiet -b "$name" || return 1
+        printf 'seed\n' >"docs/a-branch-seed-from-$name.md"
+        git add -A
+        git commit --quiet -m "A seeded commit on the $name branch" || return 1
+        git checkout --quiet - || return 1
+        GIT_AUTHOR_NAME="${author%% <*}" GIT_AUTHOR_EMAIL="$(printf '%s' "${author##*<}" | tr -d '>')" \
+        GIT_COMMITTER_NAME="${committer%% <*}" GIT_COMMITTER_EMAIL="$(printf '%s' "${committer##*<}" | tr -d '>')" \
+          git merge --quiet --no-ff -m "$subject" "$name" || return 1
+      fi
+      git rev-parse HEAD >"$work/sha-$name" || return 1
+    }
+    nik_on_github="nikkai1007 <76212305+nikkai1007@users.noreply.github.com>"
+    github="GitHub <noreply@github.com>"
+
+    # Refused: a robot account opened it, which is the shape every dependency bump arrives in.
+    seed_a_merge robot-author "a-robot[bot] <49699333+a-robot[bot]@users.noreply.github.com>" \
+      "$github" "Merge pull request #101 from Fountech-ai-Limited/a-seeded-branch" two || exit 2
+    # Refused: somebody put the two identities on a commit of their own, with no pull request in it.
+    seed_a_merge hand-written "$nik_on_github" "$github" "A merge written by hand" two || exit 2
+    # Refused: a pull request from a fork, which is somebody else's branch however it is merged.
+    seed_a_merge outside-the-org "$nik_on_github" "$github" \
+      "Merge pull request #103 from somebody-else/a-seeded-branch" two || exit 2
+    # Refused: everything the button writes except the committer, so somebody merged it themselves.
+    seed_a_merge foreign-committer "$nik_on_github" "Somebody Else <somebody@example.com>" \
+      "Merge pull request #102 from Fountech-ai-Limited/a-seeded-branch" two || exit 2
+    # Refused: one parent, so it is an ordinary commit wearing the merge button's identities.
+    seed_a_merge one-parent "$nik_on_github" "$github" \
+      "Merge pull request #104 from Fountech-ai-Limited/a-seeded-branch" one || exit 2
+    # Refused: a name carrying the separators of the line this rule used to read, laid out so the
+    # fields after it say the merge button wrote a commit that somebody else wrote.
+    seed_a_merge bar-dressed-as-the-button \
+      "nikkai1007|76212305+nikkai1007@users.noreply.github.com|GitHub|noreply@github.com|Merge pull request #106 from Fountech-ai-Limited/a-seeded-branch <somebody@example.com>" \
+      "Somebody Else <somebody@example.com>" "A merge by somebody else" two || exit 2
+    # Allowed: what the button itself writes, and the only thing this rule lets past.
+    seed_a_merge the-button "$nik_on_github" "$github" \
+      "Merge pull request #105 from Fountech-ai-Limited/a-seeded-branch" two || exit 2
+
+    # Refused: a name that holds a bar. Git refuses only `<`, `>` and a newline in a name, and until
+    # 2026-09-21 rule 1 split every commit's line on bars, so each of these three set both addresses
+    # the rule compares to the one this repository requires. Each is written out by sha.
+    seed_an_identity() {
+      local name="$1"
+      printf 'seed\n' >"docs/a-seed-from-$name.md"
+      git add -A
+      GIT_AUTHOR_NAME="$2" GIT_AUTHOR_EMAIL="$3" GIT_COMMITTER_NAME="$4" GIT_COMMITTER_EMAIL="$5" \
+        git commit --quiet -m "A seeded commit for $name" || return 1
+      git rev-parse HEAD >"$work/sha-$name" || return 1
+    }
+    seed_an_identity bar-in-the-author-name \
+      "Somebody Else|nik@fountech.ai|Somebody Else|nik@fountech.ai" "somebody@example.com" \
+      "Somebody Else" "somebody@example.com" || exit 2
+    seed_an_identity bar-in-the-committer-name "Nik Kairinos" "nik@fountech.ai" \
+      "Somebody|nik@fountech.ai|" "somebody@example.com" || exit 2
+    seed_an_identity an-address-for-a-name "Somebody|nik@fountech.ai" "somebody@example.com" \
+      "nik@fountech.ai" "somebody@example.com" || exit 2
   ) || stop "the seeds could not be planted"
 
   said="$(bash "$here/repo-hygiene.sh" --repo "$work/clone" 2>&1)"
@@ -167,6 +238,39 @@ if [ "$mode" = "self-test" ]; then
         ;;
     esac
   done
+  # The near misses of the merge button and the three names that hold a bar, named by sha rather
+  # than by identity, because several carry the identities an allowed commit carries and the
+  # sentence would not tell them apart.
+  for seed in robot-author foreign-committer hand-written outside-the-org one-parent \
+    bar-dressed-as-the-button bar-in-the-author-name bar-in-the-committer-name an-address-for-a-name; do
+    seeded_sha="$(cat "$work/sha-$seed" 2>/dev/null)"
+    if [ -z "$seeded_sha" ]; then
+      echo "repo hygiene: the $seed seed was never planted, so nothing was watched refusing it" >&2
+      missed=1
+      continue
+    fi
+    case "$said" in
+      *"$seeded_sha is authored by"*) ;;
+      *)
+        echo "repo hygiene: the seeded clone was not refused for the $seed seed, $seeded_sha" >&2
+        missed=1
+        ;;
+    esac
+  done
+  # And the one shape the rule allows, which has to come back unreported or the allowance is a hole
+  # that happens to be quiet today.
+  button_sha="$(cat "$work/sha-the-button" 2>/dev/null)"
+  if [ -z "$button_sha" ]; then
+    echo "repo hygiene: the merge button seed was never planted, so nothing proved it is allowed" >&2
+    missed=1
+  else
+    case "$said" in
+      *"$button_sha"*)
+        echo "repo hygiene: the merge button's own commit was refused, $button_sha" >&2
+        missed=1
+        ;;
+    esac
+  fi
   # And the message path, with its two seeds.
   printf 'A message with a footer\n\nSigned-off-by: somebody <somebody@example.com>\n' >"$work/footer"
   if bash "$here/repo-hygiene.sh" --message "$work/footer" 2>/dev/null; then
@@ -187,16 +291,37 @@ if [ "$mode" = "self-test" ]; then
     printf '%s\n' "$said" >&2
     exit 1
   fi
-  echo "repo hygiene: every seed refused by its own rule, and the plain message passed"
+  echo "repo hygiene: every seed refused by its own rule, the merge button's own commit allowed, and the plain message passed"
   exit 0
 fi
 
 # The populations every rule below reads, read once and counted. A rule that reads an empty list
 # passes, so each list is held to what git says is there before any rule runs over it.
-commits="$(git log --all --format='%H|%an|%ae|%cn|%ce')" || stop "git log could not list the commits"
+#
+# The commits are read as seven fields each, and every field is ended by a NUL. Git writes no NUL
+# inside a name, an address or a subject, so no value can move another. Until 2026-09-21 this was
+# one line per commit joined by bars, and git accepts a bar in a name: a name laid out as
+# `Somebody|nik@fountech.ai|Somebody|nik@fountech.ai` set both addresses rule 1 compares, and a
+# commit by anybody went through. The fields are then held three ways, so a value that did move
+# another stops the check rather than passing it: seven fields for every commit git counts, a full
+# commit id in every first field, and nothing but commit ids in every second.
 commit_count="$(git rev-list --all --count)" || stop "git rev-list could not count the commits"
 [ "$commit_count" -ge 1 ] || stop "this repository has no commits"
-[ "$(printf '%s\n' "$commits" | grep -c .)" -eq "$commit_count" ] || stop "git log listed a different number of commits from git rev-list"
+fields_per_commit=7
+commit_file="$(mktemp)" || stop "no scratch file could be made for the commit list"
+trap 'rm -f "$commit_file"' EXIT
+git log --all -z --format='%H%x00%P%x00%an%x00%ae%x00%cn%x00%ce%x00%s' >"$commit_file" || stop "git log could not list the commits"
+commit_fields=()
+while IFS= read -r -d '' field; do
+  commit_fields+=("$field")
+done <"$commit_file"
+[ "${#commit_fields[@]}" -eq $((commit_count * fields_per_commit)) ] || stop "git log gave ${#commit_fields[@]} fields for $commit_count commits, where $fields_per_commit each were asked for, so one commit's fields cannot be told from the next"
+commit_ids=()
+for ((i = 0; i < ${#commit_fields[@]}; i += fields_per_commit)); do
+  [[ "${commit_fields[i]}" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || stop "field $i of the commit list should be a commit id and is '${commit_fields[i]}'"
+  [[ "${commit_fields[i + 1]}" =~ ^(([0-9a-f]{40}|[0-9a-f]{64})( |$))*$ ]] || stop "the parents of ${commit_fields[i]} read '${commit_fields[i + 1]}', which is not a list of commit ids"
+  commit_ids+=("${commit_fields[i]}")
+done
 
 tracked="$(git -c core.quotePath=false ls-files)" || stop "git ls-files could not list the tree"
 tracked_count="$(printf '%s\n' "$tracked" | grep -c .)"
@@ -209,12 +334,60 @@ eol="$(git -c core.quotePath=false ls-files --eol)" || stop "git ls-files --eol 
 #
 # Both fields on every commit, across every branch. They differ more often than people expect, and a
 # branch nobody has merged is still in a clone.
-while IFS='|' read -r sha an ae cn ce; do
-  [ -n "$sha" ] || continue
-  if [ "$ae" != "nik@fountech.ai" ] || [ "$ce" != "nik@fountech.ai" ]; then
-    report "a commit is authored by '$an <$ae>' and committed by '$cn <$ce>'"
-  fi
-done <<<"$commits"
+#
+# One other identity is allowed and it is GitHub itself, on the one commit the merge button writes.
+# Merging a pull request on the website produces a commit authored by the account that opened it and
+# committed by `GitHub <noreply@github.com>`, and no setting on the repository changes that
+# committer: the merge commit, the squash and the rebase all carry it. So the choice is between
+# allowing that one shape and never merging a pull request here at all. It is the platform recording
+# a merge the owner of this repository asked for, not a second person and not a tool writing code,
+# and refusing it says nothing true about who wrote what is here.
+#
+# It was refused twice before the allowance went in. Pull request 2 on 2026-09-19 merged as
+# `92c9299` and the run on `main` failed here; the commit was taken off `main` by a force push
+# twenty-four minutes later and nothing was written down. Pull request 3 on 2026-09-20 merged as
+# `502071a` and sat at the head of `main` with the required check red, so nothing else could merge
+# either, because the protection has `strict` on and every branch has to carry `main`'s head before
+# it goes in. The force push is the argument for the allowance rather than against it: it changed
+# what `main` reaches and removed nothing, `git fetch origin 92c9299` still answering with the
+# commit a day later.
+#
+# The allowance is four conditions and every one of them has to hold: the committer is exactly
+# GitHub's own identity, the author is the one account that owns this repository or the one address
+# every other commit here carries, the commit has two parents or more, and the subject is the
+# sentence GitHub writes when it merges a pull request of this organisation's own. Anything
+# missing one of them is refused, which includes a commit that copies
+# the two identities on to work somebody wrote by hand. An identity is a string anybody with push
+# rights can write, so what this refuses is a mistake or a stranger's commit, not somebody forging
+# all four on purpose.
+
+# GitHub's own merge commit on the four conditions above. Returns 0 only when all four hold.
+is_the_merge_button() {
+  local parents="$1" an="$2" ae="$3" cn="$4" ce="$5" subject="$6" parent_count=0 parent
+  [ "$cn <$ce>" = "GitHub <noreply@github.com>" ] || return 1
+  case "$an <$ae>" in
+    "Nik Kairinos <nik@fountech.ai>") ;;
+    "nikkai1007 <76212305+nikkai1007@users.noreply.github.com>") ;;
+    *) return 1 ;;
+  esac
+  # `%P` is the parents separated by spaces, so counting the words is counting the parents.
+  for parent in $parents; do
+    parent_count=$((parent_count + 1))
+  done
+  [ "$parent_count" -ge 2 ] || return 1
+  count_matching '^Merge pull request #[0-9]+ from Fountech-ai-Limited/' "$subject"
+  [ "$MATCH_COUNT" -eq 1 ]
+}
+
+# Each field is compared whole, as git wrote it, so an address matches only when it is the address.
+for ((i = 0; i < ${#commit_fields[@]}; i += fields_per_commit)); do
+  sha="${commit_fields[i]}" parents="${commit_fields[i + 1]}"
+  an="${commit_fields[i + 2]}" ae="${commit_fields[i + 3]}"
+  cn="${commit_fields[i + 4]}" ce="${commit_fields[i + 5]}" subject="${commit_fields[i + 6]}"
+  [ "$ae" = "nik@fountech.ai" ] && [ "$ce" = "nik@fountech.ai" ] && continue
+  is_the_merge_button "$parents" "$an" "$ae" "$cn" "$ce" "$subject" && continue
+  report "$sha is authored by '$an <$ae>' and committed by '$cn <$ce>'"
+done
 
 # 2. No trailers.
 #
@@ -228,13 +401,12 @@ done <<<"$commits"
 # it meant amending and force-pushing. A trailer lives in the last paragraph, git knows where that
 # is, and `%(trailers)` is that knowledge. The subject is exempt either way, because a subject may
 # legitimately be prefixed.
-while IFS='|' read -r sha rest; do
-  [ -n "$sha" ] || continue
+for sha in "${commit_ids[@]}"; do
   trailers="$(git log -1 --format='%(trailers:only=true)' "$sha")" || stop "git log could not read $sha"
   if [ -n "$trailers" ]; then
     report "the commit message of $sha carries a footer, and messages here are prose"
   fi
-done <<<"$commits"
+done
 
 # 3. Plain ASCII, everywhere, and one line ending.
 #

@@ -6,11 +6,27 @@
 //! Every refusal below is watched refusing against a value that passes, so a green run says the
 //! branch fired rather than that the test ran.
 
+use sha2::{Digest, Sha256};
 use timewitness_countersign::{
-    base64url, Exchange, Interval, Refusal, Role, MAX_WIRE_CHARS, PREFIX,
+    base64url, Exchange, Interval, Refusal, Role, Signed, MAX_WIRE_CHARS, PREFIX,
 };
 use timewitness_receipt::cbor;
-use timewitness_receipt::Value;
+use timewitness_receipt::{AgentKey, Value};
+
+/// The key the tests sign with. A fixed seed, so a failure is the same failure twice.
+fn a_key() -> AgentKey {
+    AgentKey::from_seed(&digest(42))
+}
+
+/// Sign a body, whatever it says, so a refusal of the body is reached through the signed door.
+///
+/// It signs with whichever key the body names where that key is ours, and with the test key where
+/// it is not, so a body that has had its key field attacked still travels as a real signed value.
+fn wire_of(pairs: Vec<(Value, Value)>) -> String {
+    let key = a_key();
+    let envelope = key.sign_value(&Value::Map(pairs));
+    format!("{PREFIX}{}", base64url::encode(&envelope))
+}
 
 fn digest(seed: u8) -> [u8; 32] {
     let mut out = [0u8; 32];
@@ -31,7 +47,7 @@ fn a_request() -> Exchange {
             latest_ns: 1_788_979_278_999_084_899,
         },
         receipt: digest(100),
-        key: digest(200).to_vec(),
+        key: a_key().public_key_bytes(),
         answers: None,
     }
 }
@@ -47,8 +63,8 @@ fn a_response() -> Exchange {
             latest_ns: 1_788_979_279_199_084_899,
         },
         receipt: digest(150),
-        key: digest(250).to_vec(),
-        answers: Some(a_request().body_hash()),
+        key: a_key().public_key_bytes(),
+        answers: Some(signed(&a_request()).envelope_hash()),
     }
 }
 
@@ -60,10 +76,17 @@ fn wire_with(exchange: &Exchange, edit: impl Fn(&mut Vec<(Value, Value)>)) -> St
     };
     edit(&mut pairs);
     pairs.sort_by_cached_key(|(k, _)| cbor::encode(k));
-    format!(
-        "{PREFIX}{}",
-        base64url::encode(&cbor::encode(&Value::Map(pairs)))
-    )
+    wire_of(pairs)
+}
+
+/// Sign an exchange, which is what every honest value on the wire is from slice two on.
+fn signed(exchange: &Exchange) -> Signed {
+    Signed::new(exchange, &a_key()).expect("our own exchange signs")
+}
+
+/// Read a wire value back and hand over the claim inside it, or the refusal.
+fn read(value: &str) -> Result<Exchange, Refusal> {
+    Signed::from_wire(value).map(|s| s.exchange)
 }
 
 fn key_of(name: &str) -> Value {
@@ -73,19 +96,19 @@ fn key_of(name: &str) -> Value {
 #[test]
 fn a_request_and_a_response_both_go_out_and_come_back_the_same() {
     for original in [a_request(), a_response()] {
-        let wire = original.to_wire();
-        let back = Exchange::from_wire(&wire).expect("our own value reads back");
+        let wire = signed(&original).to_wire();
+        let back = read(&wire).expect("our own value reads back");
         assert_eq!(back, original);
-        // And the bytes are the same bytes, which is what a signature will be over.
+        // And the bytes are the same bytes, which is what the signature is over.
         assert_eq!(back.to_cbor(), original.to_cbor());
-        assert_eq!(back.to_wire(), wire);
+        assert_eq!(signed(&back).to_wire(), wire);
     }
 }
 
 #[test]
 fn a_whole_exchange_fits_in_a_header_with_room_to_spare() {
-    let request = a_request().to_wire();
-    let response = a_response().to_wire();
+    let request = signed(&a_request()).to_wire();
+    let response = signed(&a_response()).to_wire();
     println!(
         "request {} characters, response {} characters, ceiling {MAX_WIRE_CHARS}",
         request.len(),
@@ -126,37 +149,31 @@ fn the_receipt_this_claim_came_from_is_named_and_not_carried() {
         "the receipt is {as_a_header} characters, which is no longer the reason this form names it \
          by hash, so the reason needs rewriting rather than the assertion relaxing"
     );
-    assert!(a_request().to_wire().len() < MAX_WIRE_CHARS / 8);
+    assert!(signed(&a_request()).to_wire().len() < MAX_WIRE_CHARS / 4);
 }
 
 #[test]
 fn a_value_that_is_not_ours_is_refused_without_being_parsed() {
     assert!(matches!(
-        Exchange::from_wire("tw0.AQ"),
+        read("tw0.AQ"),
         Err(Refusal::NotThisVersion { .. })
     ));
     assert!(matches!(
-        Exchange::from_wire("Bearer something"),
+        read("Bearer something"),
         Err(Refusal::NotThisVersion { .. })
     ));
-    assert!(matches!(
-        Exchange::from_wire(""),
-        Err(Refusal::NotThisVersion { .. })
-    ));
+    assert!(matches!(read(""), Err(Refusal::NotThisVersion { .. })));
 }
 
 #[test]
 fn a_value_past_the_ceiling_is_refused_before_anything_decodes_it() {
     let long = format!("{PREFIX}{}", "A".repeat(MAX_WIRE_CHARS));
-    assert!(matches!(
-        Exchange::from_wire(&long),
-        Err(Refusal::TooLong { .. })
-    ));
+    assert!(matches!(read(&long), Err(Refusal::TooLong { .. })));
     // And one exactly at the ceiling gets as far as the decoder, which is where it fails for its
     // own reason. The ceiling is not doing work the decoder should be doing.
     let at_the_ceiling = format!("{PREFIX}{}", "A".repeat(MAX_WIRE_CHARS - PREFIX.len()));
     assert!(!matches!(
-        Exchange::from_wire(&at_the_ceiling),
+        read(&at_the_ceiling),
         Err(Refusal::TooLong { .. })
     ));
 }
@@ -173,7 +190,7 @@ fn a_second_spelling_of_the_same_value_is_refused() {
     let out_of_order = [0xa2, 0x61, 0x62, 0x01, 0x61, 0x61, 0x02];
     let wire = format!("{PREFIX}{}", base64url::encode(&out_of_order));
     assert_eq!(
-        Exchange::from_wire(&wire),
+        read(&wire),
         Err(Refusal::NotDeterministicCbor),
         "an out of order map was not refused"
     );
@@ -181,34 +198,32 @@ fn a_second_spelling_of_the_same_value_is_refused() {
     // An indefinite length map, which is the other spelling CBOR allows and this format does not.
     let indefinite = [0xbf, 0x61, 0x61, 0x01, 0xff];
     let wire = format!("{PREFIX}{}", base64url::encode(&indefinite));
-    assert_eq!(
-        Exchange::from_wire(&wire),
-        Err(Refusal::NotDeterministicCbor)
-    );
+    assert_eq!(read(&wire), Err(Refusal::NotDeterministicCbor));
 
     // An integer in a longer form than it needs, which is the third.
     let padded_integer = [0xa1, 0x61, 0x61, 0x18, 0x01];
     let wire = format!("{PREFIX}{}", base64url::encode(&padded_integer));
-    assert_eq!(
-        Exchange::from_wire(&wire),
-        Err(Refusal::NotDeterministicCbor)
-    );
+    assert_eq!(read(&wire), Err(Refusal::NotDeterministicCbor));
 
-    // And a well formed map that is simply not an exchange gets past the encoding and fails on its
-    // fields, so the three above failed for the reason they say and not for being short.
+    // A well formed map that is simply not an exchange gets past the encoding and is refused for
+    // not being signed, so the three above failed for the reason they say and not for being short.
     let honest_but_empty = [0xa0];
     let wire = format!("{PREFIX}{}", base64url::encode(&honest_but_empty));
+    assert_eq!(read(&wire), Err(Refusal::NotSigned));
+
+    // And the same body signed gets past the envelope and fails on its fields, so the line above
+    // failed for the signature and not for the shape.
     assert_eq!(
-        Exchange::from_wire(&wire),
+        read(&wire_of(Vec::new())),
         Err(Refusal::MissingField { name: "v" })
     );
 }
 
 #[test]
 fn something_that_is_not_base64_is_refused() {
-    assert_eq!(Exchange::from_wire("tw1.!!!!"), Err(Refusal::NotBase64));
-    assert_eq!(Exchange::from_wire("tw1.AQ=="), Err(Refusal::NotBase64));
-    assert_eq!(Exchange::from_wire("tw1.A Q"), Err(Refusal::NotBase64));
+    assert_eq!(read("tw1.!!!!"), Err(Refusal::NotBase64));
+    assert_eq!(read("tw1.AQ=="), Err(Refusal::NotBase64));
+    assert_eq!(read("tw1.A Q"), Err(Refusal::NotBase64));
 }
 
 #[test]
@@ -217,7 +232,7 @@ fn every_field_the_form_needs_is_refused_by_its_absence() {
         let wire = wire_with(&a_request(), |pairs| {
             pairs.retain(|(k, _)| k != &key_of(name));
         });
-        let got = Exchange::from_wire(&wire);
+        let got = read(&wire);
         match name {
             // The version is checked before the rest, and its absence reads as a version this does
             // not know rather than as a missing field.
@@ -241,7 +256,7 @@ fn a_field_of_the_wrong_shape_is_refused() {
         }
     });
     assert_eq!(
-        Exchange::from_wire(&wrong_key_length),
+        read(&wrong_key_length),
         Err(Refusal::WrongType { name: "key" })
     );
 
@@ -253,7 +268,7 @@ fn a_field_of_the_wrong_shape_is_refused() {
         }
     });
     assert_eq!(
-        Exchange::from_wire(&hash_as_text),
+        read(&hash_as_text),
         Err(Refusal::WrongType { name: "hash" })
     );
 
@@ -265,7 +280,7 @@ fn a_field_of_the_wrong_shape_is_refused() {
         }
     });
     assert_eq!(
-        Exchange::from_wire(&unknown_role),
+        read(&unknown_role),
         Err(Refusal::WrongType { name: "role" })
     );
 
@@ -277,7 +292,7 @@ fn a_field_of_the_wrong_shape_is_refused() {
         }
     });
     assert_eq!(
-        Exchange::from_wire(&negative_sequence),
+        read(&negative_sequence),
         Err(Refusal::WrongType { name: "seq" })
     );
 }
@@ -292,7 +307,7 @@ fn an_interval_that_cannot_be_true_is_refused() {
         }
     });
     assert!(matches!(
-        Exchange::from_wire(&edges_swapped),
+        read(&edges_swapped),
         Err(Refusal::Incoherent { .. })
     ));
 
@@ -304,7 +319,7 @@ fn an_interval_that_cannot_be_true_is_refused() {
         }
     });
     assert!(matches!(
-        Exchange::from_wire(&reading_outside),
+        read(&reading_outside),
         Err(Refusal::Incoherent { .. })
     ));
 }
@@ -319,7 +334,7 @@ fn a_version_this_does_not_know_is_refused_inside_the_encoding_as_well_as_outsid
         }
     });
     assert!(matches!(
-        Exchange::from_wire(&inner_version),
+        read(&inner_version),
         Err(Refusal::NotThisVersion { .. })
     ));
 }
@@ -330,7 +345,7 @@ fn a_response_that_names_no_request_is_refused_and_a_request_that_names_one_is_t
         pairs.retain(|(k, _)| k != &key_of("req"));
     });
     assert_eq!(
-        Exchange::from_wire(&orphan_response),
+        read(&orphan_response),
         Err(Refusal::MissingField { name: "req" })
     );
 
@@ -338,7 +353,7 @@ fn a_response_that_names_no_request_is_refused_and_a_request_that_names_one_is_t
         pairs.push((key_of("req"), Value::Bytes(digest(9).to_vec())));
     });
     assert!(matches!(
-        Exchange::from_wire(&request_answering_something),
+        read(&request_answering_something),
         Err(Refusal::Incoherent { .. })
     ));
 }
@@ -348,7 +363,7 @@ fn the_same_body_reads_the_same_whether_it_came_from_a_header_or_a_tool_call() {
     // An MCP tool call carries the body as a field rather than as a header, so the two routes have
     // to agree about everything below the encoding or the protocol has two meanings.
     for original in [a_request(), a_response()] {
-        let as_a_header = Exchange::from_wire(&original.to_wire()).expect("the header route");
+        let as_a_header = read(&signed(&original).to_wire()).expect("the header route");
         let decoded = cbor::decode(&original.to_cbor()).expect("the tool call route");
         let as_a_field = Exchange::from_value(&decoded).expect("the tool call route");
         assert_eq!(as_a_header, as_a_field);
@@ -356,14 +371,23 @@ fn the_same_body_reads_the_same_whether_it_came_from_a_header_or_a_tool_call() {
 }
 
 #[test]
-fn the_hash_a_response_names_its_request_by_is_the_hash_of_the_request_body() {
-    let request = a_request();
+fn the_hash_a_response_names_its_request_by_is_the_hash_of_the_signed_request() {
+    // It names the envelope and not the claim inside it. One body can carry more than one valid
+    // signature, because Ed25519 verification asks only that a signature is valid and not that it is
+    // the one a well behaved signer would have produced, so a body hash would leave a sender holding
+    // two byte strings and able to present either as the thing that was answered.
+    let request = signed(&a_request());
     let response = a_response();
-    assert_eq!(response.answers, Some(request.body_hash()));
+    assert_eq!(response.answers, Some(request.envelope_hash()));
     // And it moves when the request does, or it is binding nothing.
-    let mut other = request.clone();
-    other.sequence += 1;
-    assert_ne!(other.body_hash(), request.body_hash());
+    let mut changed = a_request();
+    changed.sequence += 1;
+    assert_ne!(signed(&changed).envelope_hash(), request.envelope_hash());
+    // It is the hash of exactly what travels, which is the thing a reader can reproduce.
+    let mut hasher = Sha256::new();
+    hasher.update(request.to_bytes());
+    let by_hand: [u8; 32] = hasher.finalize().into();
+    assert_eq!(request.envelope_hash(), by_hand);
 }
 
 #[test]
@@ -390,7 +414,7 @@ fn a_field_the_form_does_not_name_is_refused() {
             pairs.push((key_of(name), extra.clone()));
         });
         assert_eq!(
-            Exchange::from_wire(&wire),
+            read(&wire),
             Err(Refusal::UnknownField {
                 name: (*name).to_string()
             }),
@@ -404,7 +428,7 @@ fn a_field_the_form_does_not_name_is_refused() {
         pairs.push((key_of("order"), Value::text("first")));
     });
     assert_eq!(
-        Exchange::from_wire(&wire),
+        read(&wire),
         Err(Refusal::UnknownField {
             name: "order".to_string()
         }),
@@ -431,7 +455,7 @@ fn a_field_the_form_does_not_name_is_refused() {
     let wire = wire_with(&a_request(), |pairs| {
         pairs.push((key_of(&long), Value::Int(1)));
     });
-    match Exchange::from_wire(&wire) {
+    match read(&wire) {
         Err(Refusal::UnknownField { name }) => assert_eq!(name.chars().count(), 32),
         other => panic!("a 200 character field name gave {other:?}"),
     }
@@ -440,12 +464,12 @@ fn a_field_the_form_does_not_name_is_refused() {
     let wire = wire_with(&a_request(), |pairs| {
         pairs.push((Value::Int(9), Value::Int(1)));
     });
-    assert_eq!(Exchange::from_wire(&wire), Err(Refusal::KeyIsNotText));
+    assert_eq!(read(&wire), Err(Refusal::KeyIsNotText));
 
     // The control: the same helper with nothing added still passes, so the six above failed for
     // the field and not for the rebuild.
     let wire = wire_with(&a_request(), |_| {});
-    assert_eq!(Exchange::from_wire(&wire), Ok(a_request()));
+    assert_eq!(read(&wire), Ok(a_request()));
 }
 
 #[test]
@@ -462,10 +486,7 @@ fn a_version_this_does_not_know_is_refused_before_its_unknown_fields_are() {
         pairs.push((key_of("something_v2_carries"), Value::Int(1)));
     });
     assert!(
-        matches!(
-            Exchange::from_wire(&wire),
-            Err(Refusal::NotThisVersion { .. })
-        ),
+        matches!(read(&wire), Err(Refusal::NotThisVersion { .. })),
         "a v2 body with a v2 field was refused for the field rather than for the version"
     );
 }

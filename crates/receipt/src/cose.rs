@@ -60,8 +60,61 @@ impl AgentKey {
                 "the receipt names a different public key from the one signing it".into(),
             ));
         }
+        // A receipt is signed in a version this code reads and in the shape that version has, so a
+        // version 1 receipt with a field missing is refused here rather than signed and then refused
+        // by every reader afterwards. The stamp command only ever builds version 1; version 0 is
+        // signed here only so the tests can go on proving that version 0 still reads.
+        if !crate::schema::READS.contains(&receipt.version) {
+            return Err(ReceiptError::UnknownVersion(receipt.version));
+        }
+        let c = &receipt.claim;
+        let version_1_fields = [
+            c.taken_by.is_some(),
+            c.breakdown.unclaimed_rate.is_some(),
+            c.policy.source_interval_floor.is_some(),
+            c.policy.frequency_slew_ppb_per_s.is_some(),
+            c.policy.frequency_span_ppb.is_some(),
+        ];
+        let whole = if receipt.version >= 1 {
+            version_1_fields.iter().all(|held| *held)
+                && c.policy.max_holdover.is_some()
+                && c.policy.min_operators.is_some()
+        } else {
+            version_1_fields.iter().all(|held| !*held)
+        };
+        if !whole {
+            return Err(ReceiptError::Signature(format!(
+                "this receipt says it is version {} and does not have that version's fields. \
+                 Version 1 states its width terms, the unclaimed part of its holdover, its two \
+                 limits and the path its reading came by, and version 0 states no width term, no \
+                 unclaimed part and no path",
+                receipt.version
+            )));
+        }
 
         Ok(self.sign_value(&receipt.to_value()))
+    }
+
+    /// Sign the statement that enrols this key with an organisation of the app, over a challenge the
+    /// app issued.
+    ///
+    /// The statement is built here from its three parts and never taken from the app as text, so the
+    /// key signs one thing only: words saying which organisation, which key and which challenge. It
+    /// begins with words rather than a CBOR list, so it can never be the `Sig_structure` a receipt
+    /// signs, which is a list beginning `Signature1`. A part that could break the statement's lines
+    /// is refused rather than signed.
+    pub fn sign_enrolment(
+        &self,
+        organisation: &str,
+        challenge: &str,
+    ) -> Result<Vec<u8>, ReceiptError> {
+        let public = self
+            .public_key_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        let message = enrolment_message(organisation, &public, challenge)?;
+        Ok(self.signing.sign(&message).to_bytes().to_vec())
     }
 
     /// Sign whatever value tree it is handed, without asking whether it is a sensible receipt.
@@ -93,6 +146,155 @@ impl AgentKey {
             Value::Bytes(signature.to_bytes().to_vec()),
         ]))
     }
+}
+
+/// The exact bytes a key signs to enrol with an organisation of the app.
+///
+/// The app builds the same bytes and checks the signature against them, in `enrolmentMessage` in
+/// `lib/accounts.ts` of the app's repository; a test on each side holds its copy to the same
+/// literal. The organisation is an identifier of hex digits and hyphens, the key 64 lowercase hex
+/// digits and the challenge unpadded base64url, and anything else is refused, so no part can carry
+/// a line of its own into the statement.
+pub fn enrolment_message(
+    organisation: &str,
+    public_key_hex: &str,
+    challenge: &str,
+) -> Result<Vec<u8>, ReceiptError> {
+    let fits = |text: &str, allowed: fn(char) -> bool, most: usize| {
+        !text.is_empty() && text.len() <= most && text.chars().all(allowed)
+    };
+    if !fits(organisation, |c| c.is_ascii_hexdigit() || c == '-', 64) {
+        return Err(ReceiptError::Signature(
+            "an organisation is named by hex digits and hyphens".into(),
+        ));
+    }
+    if public_key_hex.len() != 64
+        || !public_key_hex
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+    {
+        return Err(ReceiptError::Signature(
+            "a public key is 64 lowercase hex digits".into(),
+        ));
+    }
+    if !fits(
+        challenge,
+        |c| c.is_ascii_alphanumeric() || c == '-' || c == '_',
+        128,
+    ) {
+        return Err(ReceiptError::Signature(
+            "a challenge is unpadded base64url".into(),
+        ));
+    }
+    Ok(format!(
+        "timewitness enrols this key\norganisation {organisation}\nkey {public_key_hex}\nchallenge {challenge}\n"
+    )
+    .into_bytes())
+}
+
+/// A `COSE_Sign1` taken apart: the protected header, the payload, the signature, and the
+/// unprotected header as the value it decoded to.
+pub type Envelope = (Vec<u8>, Vec<u8>, Vec<u8>, Value);
+
+/// The three parts of a `COSE_Sign1` this product signs, with the algorithm already checked.
+///
+/// The protected header, the payload and the signature, in that order; the unprotected header is
+/// returned beside them as the value it decoded to, because a caller that cares what is in it has to
+/// hold it to its own rule and nothing here can do that for every caller.
+///
+/// Public because the countersign wire form signs its own body with the same envelope, and one copy
+/// of the arithmetic is the point: two readers of one format is two chances to disagree about what
+/// was signed.
+///
+/// # Errors
+///
+/// A [`ReceiptError::Signature`] where the bytes are not a `COSE_Sign1` of this shape, or where the
+/// protected header names an algorithm other than Ed25519.
+pub fn envelope_parts(bytes: &[u8]) -> Result<Envelope, ReceiptError> {
+    let envelope = cbor::decode(bytes)?;
+    let parts = envelope
+        .as_array()
+        .ok_or_else(|| ReceiptError::Signature("a signed value is a list of four things".into()))?;
+    if parts.len() != 4 {
+        return Err(ReceiptError::Signature(format!(
+            "a signed value has four parts and this one has {}",
+            parts.len()
+        )));
+    }
+
+    let protected = parts[0].as_bytes().ok_or_else(|| {
+        ReceiptError::Signature("the protected header is not a byte string".into())
+    })?;
+    let payload = parts[2]
+        .as_bytes()
+        .ok_or_else(|| ReceiptError::Signature("the payload is not a byte string".into()))?;
+    let signature = parts[3]
+        .as_bytes()
+        .ok_or_else(|| ReceiptError::Signature("the signature is not a byte string".into()))?;
+
+    // The protected header is itself deterministic CBOR and is checked as such, because it is part
+    // of what was signed.
+    let header = cbor::decode(protected)?;
+    let alg = header
+        .as_map_get(HEADER_ALG)
+        .and_then(|v| v.as_int())
+        .ok_or_else(|| ReceiptError::Signature("the protected header names no algorithm".into()))?;
+    if alg != ALG_EDDSA {
+        return Err(ReceiptError::Signature(format!(
+            "this is signed with COSE algorithm {alg} and this code checks Ed25519, which is minus \
+             eight"
+        )));
+    }
+
+    Ok((
+        protected.to_vec(),
+        payload.to_vec(),
+        signature.to_vec(),
+        parts[1].clone(),
+    ))
+}
+
+/// Check a signature over the `Sig_structure` the protected header and payload make.
+///
+/// The key is the caller's to find, and it comes from inside the payload rather than from the
+/// unprotected header, which is outside the signature and anybody's to rewrite.
+///
+/// # Errors
+///
+/// A [`ReceiptError::Signature`] where the key or the signature is not the right length or shape, or
+/// where the signature does not match.
+pub fn check_signature(
+    protected: &[u8],
+    payload: &[u8],
+    signature: &[u8],
+    key: &[u8],
+    key_owner: &str,
+    signed_thing: &str,
+) -> Result<(), ReceiptError> {
+    let key_bytes: [u8; 32] = key.try_into().map_err(|_| {
+        ReceiptError::Signature(format!("the {key_owner} public key is not 32 bytes"))
+    })?;
+    let verifying = VerifyingKey::from_bytes(&key_bytes).map_err(|e| {
+        ReceiptError::Signature(format!("the {key_owner} public key is not usable: {e}"))
+    })?;
+
+    let signature_bytes: [u8; 64] = signature
+        .try_into()
+        .map_err(|_| ReceiptError::Signature("an Ed25519 signature is 64 bytes".into()))?;
+    let signature = Signature::from_bytes(&signature_bytes);
+
+    // `verify_strict` rather than `verify`. The two differ on public keys and signature commitments
+    // with a small order component, which no honest signer produces and which give one signed
+    // message more than one valid signature. A format whose chain link is the hash of a file cannot
+    // afford a second valid spelling anywhere in it.
+    verifying
+        .verify_strict(&sig_structure(protected, payload), &signature)
+        .map_err(|_| {
+            ReceiptError::Signature(format!(
+                "the signature does not match the {signed_thing}, so either the {signed_thing} was \
+                 altered after it was signed or it was signed by a different key"
+            ))
+        })
 }
 
 /// What actually gets signed, per RFC 9052.
@@ -131,12 +333,100 @@ pub fn open_with(
     bytes: &[u8],
     anchors: &crate::anchors::TrustAnchors,
 ) -> Result<(Receipt, crate::report::Verified), ReceiptError> {
-    let receipt = read_and_check_signature(bytes)?;
-    let report = validate::validate_with(&receipt, anchors)?;
+    let (receipt, witness) = read_and_check_signature(bytes)?;
+    let mut report = validate::validate_with(&receipt, anchors)?;
+    if let Some((blob, signature)) = witness {
+        report.signature_witness = Some(validate::examine_signature_witness(
+            &blob, &signature, anchors, &report,
+        )?);
+    }
     Ok((receipt, report))
 }
 
-fn read_and_check_signature(bytes: &[u8]) -> Result<Receipt, ReceiptError> {
+/// The unprotected header's label for the witness over a receipt's own signature.
+///
+/// Text rather than a number, because a number in that header belongs to the COSE registry and this
+/// is not a registered parameter. Receipt format version 1 allows this entry beside the key
+/// identifier and nothing else, and version 0 allows only the key identifier.
+pub const SIGNATURE_WITNESS: &str = "signature_witness";
+
+/// The 64 signature bytes of a signed receipt, which is what a witness over the signature is about.
+pub fn signature_of(signed: &[u8]) -> Result<Vec<u8>, ReceiptError> {
+    let (_, _, signature, _) = envelope_parts(signed)?;
+    Ok(signature)
+}
+
+/// A signed receipt with a witness over its signature put into the unprotected header.
+///
+/// Nothing signed changes, so the signature still checks. `blob` is an `rfc3161` container over the
+/// SHA-256 of [`signature_of`], and a reader refuses any other. A receipt that already carries a
+/// witness is refused rather than given a second, because the header holds one.
+pub fn with_signature_witness(signed: &[u8], blob: &[u8]) -> Result<Vec<u8>, ReceiptError> {
+    let envelope = cbor::decode(signed)?;
+    let Some(parts) = envelope.as_array() else {
+        return Err(ReceiptError::Signature(
+            "a signed value is a list of four things".into(),
+        ));
+    };
+    if parts.len() != 4 {
+        return Err(ReceiptError::Signature(format!(
+            "a signed value has four parts and this one has {}",
+            parts.len()
+        )));
+    }
+    let Value::Map(header) = &parts[1] else {
+        return Err(ReceiptError::Signature(
+            "the unprotected header is not a map".into(),
+        ));
+    };
+    if header
+        .iter()
+        .any(|(k, _)| k.as_text() == Some(SIGNATURE_WITNESS))
+    {
+        return Err(ReceiptError::Signature(
+            "this receipt already carries a witness over its signature".into(),
+        ));
+    }
+    let mut header = header.clone();
+    header.push((Value::text(SIGNATURE_WITNESS), Value::Bytes(blob.to_vec())));
+    header.sort_by_cached_key(|(k, _)| cbor::encode(k));
+    let mut parts = parts.to_vec();
+    parts[1] = Value::Map(header);
+    Ok(cbor::encode(&Value::Array(parts)))
+}
+
+/// The receipt as its agent signed it: the same envelope with the witness over its signature taken
+/// out of the unprotected header, or `None` where there is none to take out or the bytes are not an
+/// envelope of that shape.
+///
+/// This is the inverse of [`with_signature_witness`], so for a receipt that function made it gives
+/// back the bytes it was handed. The decoder refuses any spelling that is not canonical, and the
+/// header's order is the canonical one, so taking an entry out leaves the others as they were.
+#[must_use]
+pub fn without_signature_witness(signed: &[u8]) -> Option<Vec<u8>> {
+    let envelope = cbor::decode(signed).ok()?;
+    let parts = envelope.as_array().filter(|parts| parts.len() == 4)?;
+    let Value::Map(header) = &parts[1] else {
+        return None;
+    };
+    let kept: Vec<(Value, Value)> = header
+        .iter()
+        .filter(|(k, _)| k.as_text() != Some(SIGNATURE_WITNESS))
+        .cloned()
+        .collect();
+    if kept.len() == header.len() {
+        return None;
+    }
+    let mut parts = parts.to_vec();
+    parts[1] = Value::Map(kept);
+    Some(cbor::encode(&Value::Array(parts)))
+}
+
+/// A receipt whose signature checks, and the witness over that signature where it carries one, as
+/// the witness's blob beside the signature bytes it has to be about.
+type Opened = (Receipt, Option<(Vec<u8>, Vec<u8>)>);
+
+fn read_and_check_signature(bytes: &[u8]) -> Result<Opened, ReceiptError> {
     if bytes.len() > crate::MAX_ENCODED_BYTES {
         return Err(ReceiptError::Signature(format!(
             "this file is {} bytes and a receipt is no more than {} bytes",
@@ -145,75 +435,25 @@ fn read_and_check_signature(bytes: &[u8]) -> Result<Receipt, ReceiptError> {
         )));
     }
 
-    let envelope = cbor::decode(bytes)?;
-    let parts = envelope.as_array().ok_or_else(|| {
-        ReceiptError::Signature("a signed receipt is a list of four things".into())
-    })?;
-    if parts.len() != 4 {
-        return Err(ReceiptError::Signature(format!(
-            "a signed receipt has four parts and this one has {}",
-            parts.len()
-        )));
-    }
+    let (protected, payload, signature, unprotected) = envelope_parts(bytes)?;
 
-    let protected = parts[0].as_bytes().ok_or_else(|| {
-        ReceiptError::Signature("the protected header is not a byte string".into())
-    })?;
-    let payload = parts[2]
-        .as_bytes()
-        .ok_or_else(|| ReceiptError::Signature("the payload is not a byte string".into()))?;
-    let signature_bytes = parts[3]
-        .as_bytes()
-        .ok_or_else(|| ReceiptError::Signature("the signature is not a byte string".into()))?;
-
-    // The protected header is itself deterministic CBOR and is checked as such, because it is part
-    // of what was signed.
-    let header = cbor::decode(protected)?;
-    let alg = header
-        .as_map_get(HEADER_ALG)
-        .and_then(|v| v.as_int())
-        .ok_or_else(|| ReceiptError::Signature("the protected header names no algorithm".into()))?;
-    if alg != ALG_EDDSA {
-        return Err(ReceiptError::Signature(format!(
-            "this receipt is signed with COSE algorithm {alg} and this code checks Ed25519, which \
-             is minus eight"
-        )));
-    }
-
-    let value = cbor::decode(payload)?;
+    let value = cbor::decode(&payload)?;
     validate::validate_shape(&value)?;
     let receipt = Receipt::from_value(&value)?;
 
-    let key_bytes: [u8; 32] =
-        receipt.agent_public_key.clone().try_into().map_err(|_| {
-            ReceiptError::Signature("the agent's public key is not 32 bytes".into())
-        })?;
-    let verifying = VerifyingKey::from_bytes(&key_bytes).map_err(|e| {
-        ReceiptError::Signature(format!("the agent's public key is not usable: {e}"))
-    })?;
+    check_signature(
+        &protected,
+        &payload,
+        &signature,
+        &receipt.agent_public_key,
+        "agent's",
+        "receipt",
+    )?;
 
-    let signature_bytes: [u8; 64] = signature_bytes
-        .try_into()
-        .map_err(|_| ReceiptError::Signature("an Ed25519 signature is 64 bytes".into()))?;
-    let signature = Signature::from_bytes(&signature_bytes);
+    let witness =
+        check_unprotected_header(&unprotected, &receipt)?.map(|blob| (blob, signature.clone()));
 
-    // `verify_strict` rather than `verify`. The two differ on public keys and signature commitments
-    // with a small order component, which no honest agent produces and which give one signed message
-    // more than one valid signature. A format whose chain link is the hash of a file cannot afford a
-    // second valid spelling anywhere in it.
-    verifying
-        .verify_strict(&sig_structure(protected, payload), &signature)
-        .map_err(|_| {
-            ReceiptError::Signature(
-                "the signature does not match the receipt, so either the receipt was altered after \
-                 it was signed or it was signed by a different key"
-                    .to_string(),
-            )
-        })?;
-
-    check_unprotected_header(&parts[1], &receipt)?;
-
-    Ok(receipt)
+    Ok((receipt, witness))
 }
 
 /// The unprotected header holds one entry, the key identifier, and it names the key inside the
@@ -234,7 +474,21 @@ fn read_and_check_signature(bytes: &[u8]) -> Result<Receipt, ReceiptError> {
 /// A disagreement here was previously a warning about the file rather than about the receipt,
 /// because the signed copy of the key is the one that counts. That reading is correct about what the
 /// receipt means and it is the wrong rule for a format that chains by hashing bytes.
-fn check_unprotected_header(header: &Value, receipt: &Receipt) -> Result<(), ReceiptError> {
+///
+/// **Version 1 allows one entry more, the witness over the signature, and it is the one part of the
+/// file that is not one spelling.** A holder can drop the witness, swap in a later genuine token over
+/// the same signature, or flip any of the many bits of a token its own signature does not cover, all
+/// without the agent's key; on 2026-09-23 a third of the single-bit flips inside the committed
+/// witness still verified. So the chain link is not taken over it: [`crate::chain_link`] hashes the
+/// receipt with this entry set aside, which is the file the agent wrote, and that form has exactly
+/// one spelling. What a respelled witness changes is what a reader is told about the signing, never
+/// which receipt it is, and nothing can move the signing earlier, because a token cannot be dated
+/// before the signature it is over existed. The blob is returned for the caller to check, since
+/// checking it needs the reader's anchors.
+fn check_unprotected_header(
+    header: &Value,
+    receipt: &Receipt,
+) -> Result<Option<Vec<u8>>, ReceiptError> {
     let pairs = match header {
         Value::Map(pairs) => pairs,
         _ => {
@@ -243,11 +497,27 @@ fn check_unprotected_header(header: &Value, receipt: &Receipt) -> Result<(), Rec
             ))
         }
     };
-    if pairs.len() != 1 {
+    let witness = pairs
+        .iter()
+        .find(|(k, _)| k.as_text() == Some(SIGNATURE_WITNESS))
+        .map(|(_, v)| v);
+    let allowed = if receipt.version >= 1 && witness.is_some() {
+        2
+    } else {
+        1
+    };
+    if pairs.len() != allowed {
         return Err(ReceiptError::Signature(format!(
-            "the unprotected header holds {} entries and a receipt carries one, the key identifier. \
-             Nothing there is signed, so anything else in it is a second spelling of this receipt",
-            pairs.len()
+            "the unprotected header holds {} entries and a version {} receipt carries the key \
+             identifier{}. Nothing there is signed, so anything else in it is a second spelling of \
+             this receipt",
+            pairs.len(),
+            receipt.version,
+            if receipt.version >= 1 {
+                " and at most a witness over its signature"
+            } else {
+                " and nothing else"
+            }
         )));
     }
 
@@ -256,7 +526,7 @@ fn check_unprotected_header(header: &Value, receipt: &Receipt) -> Result<(), Rec
         .and_then(Value::as_bytes)
         .ok_or_else(|| {
             ReceiptError::Signature(
-                "the unprotected header holds one entry and it is not the key identifier".into(),
+                "the unprotected header does not hold the key identifier".into(),
             )
         })?;
     if kid != receipt.agent_public_key.as_slice() {
@@ -264,7 +534,13 @@ fn check_unprotected_header(header: &Value, receipt: &Receipt) -> Result<(), Rec
             "the key named outside the signature is not the key named inside it".into(),
         ));
     }
-    Ok(())
+    match witness {
+        None => Ok(None),
+        Some(Value::Bytes(blob)) if !blob.is_empty() => Ok(Some(blob.clone())),
+        Some(_) => Err(ReceiptError::Signature(
+            "the witness over the signature is not a token held as bytes".into(),
+        )),
+    }
 }
 
 trait MapGet {

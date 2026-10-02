@@ -106,8 +106,10 @@ wait_budget="${TW_SURFACES_WAIT:-0}"
 wait_step="${TW_SURFACES_WAIT_STEP:-30}"
 
 sentences=(
-  "Nothing verifies order."
-  "Every receipt carries a sequence number and the hash of the receipt before it, both signed, and no code anywhere compares two receipts, so nothing that exists today can put two receipts in order."
+  # Replaced 2026-09-24, when `v0.2` shipped `timewitness order`. The two they replace said nothing
+  # compares two receipts, which was true of every release before it.
+  "Order is checked two receipts at a time, and nothing walks a chain."
+  "Two receipts signed by different agent keys are not a chain, so only their intervals are compared."
   "There is no refusal receipt."
   "A refusal is a return value inside the agent. Nothing signed and nothing portable is produced, so there is no artefact a third party could be shown."
   # Added 2026-09-08. Each of these is a figure or a claim that was
@@ -414,6 +416,36 @@ compare_site() {
   return "$bad"
 }
 
+# Whether the public address is in the holding state, where there is no site copy to read.
+#
+# While the product is in development the site's production deployment serves one holding page at
+# the root and answers every other page, the limitation list among them, with a 308 to the root. The
+# list then has no public copy on the site, and the copy a stranger can read is the markdown in this
+# repository. That is a state the wire route states rather than a surface it failed to reach, so it
+# is asserted on both halves: the list's address has to answer 308 to the root, and the root has to
+# be the holding page itself. A site that answers anything else is read and compared as it always
+# was, so the marketing site coming back to the public address is compared on the day it does.
+#
+# The root is read as a page by `scripts/the-apex-is-the-holding-page.py`, and until 2026-09-23 it
+# was searched for the tag's bytes instead: the tag in a comment, in a script string, in a textarea,
+# on a page with no link to the list, or in the body of a redirect elsewhere all passed, seven shapes
+# of eleven that were not the holding page. That script's self-test drives this branch with each of
+# them, because the scheduled guard is the only other thing that runs it.
+holding=1
+apex_holding() {
+  local apex answer status
+  apex="$(printf '%s' "$site_url" | sed -E 's#^(https?://[^/]+).*#\1/#')"
+  answer="$(curl -sS --max-time 30 -o /dev/null -w '%{http_code} %{redirect_url}' "$site_url" 2>/dev/null)" || return 1
+  [ "$answer" = "308 $apex" ] || return 1
+  status="$(curl -sS --max-time 30 -o "$scratch/apex.html" -w '%{http_code}' "$apex" 2>/dev/null)" || return 1
+  if ! python3 scripts/the-apex-is-the-holding-page.py "$status" "$scratch/apex.html" 2>"$scratch/apex.why"; then
+    echo "three surfaces: $site_url sends the list to $apex, and $apex is not the holding page:" >>"$attempt"
+    sed 's/^/  /' "$scratch/apex.why" >>"$attempt"
+    return 1
+  fi
+  return 0
+}
+
 # The tree routes take the file beside this tree, because that is the copy a pre-push hook is trying
 # to catch before it ships.
 if [ "$route" != wire ] && [ -f "$site" ]; then
@@ -435,6 +467,11 @@ if [ -z "$site_copy" ] && [ "$route" != tree ]; then
   wire_ok=1
   while true; do
     : > "$attempt"
+    if apex_holding; then
+      holding=0
+      wire_ok=0
+      break
+    fi
     if read_wire "$scratch/served.json" >>"$attempt" 2>&1; then
       wire_read=0
       if compare_site "$scratch/served.json" "$site_url" >>"$attempt" 2>&1; then
@@ -476,7 +513,9 @@ fi
 # route allowed to finish without the site, and it is allowed only because something else reads it
 # and `ci.yml` fails when that something has stopped running.
 if [ -z "$site_copy" ]; then
-  if [ "$route" = tree ]; then
+  if [ "$holding" -eq 0 ]; then
+    echo "three surfaces: $site_url answers 308 to the holding page, so while the product is in development the site carries no copy of the list, by design. The public copy is docs/what-timewitness-cannot-prove.md in this repository, and the markdown and the README were held to each other"
+  elif [ "$route" = tree ]; then
     echo "three surfaces: no site copy beside this tree, so this run held the markdown and the README to each other and to the committed receipt, and read nothing from the site"
     echo "three surfaces: the served page is read by .github/workflows/surfaces.yml, and scripts/wire-guard-is-alive.sh turns this build red when that has stopped running"
   else

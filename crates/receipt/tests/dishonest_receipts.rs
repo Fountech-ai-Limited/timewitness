@@ -19,6 +19,7 @@ use timewitness_core::{
     Operator, Reading, SmearPolicy, SourceId, SourceKind, SourceState, Stamp, Timescale, UnixNanos,
 };
 use timewitness_receipt::schema::{Role, SourceRecord};
+use timewitness_receipt::TakenBy;
 use timewitness_receipt::{
     open, sha256_payload, AgentKey, Evidence, PolicyRecord, Receipt, ReceiptError, Scheme,
 };
@@ -97,6 +98,7 @@ fn stamp() -> Stamp {
                 widest_source_network_half: 12 * MS,
                 scheduling: 10_000,
                 oscillator_holdover: 500_000,
+                unclaimed_rate: 0,
                 model_residual: 240_000,
                 safety_margin: 250_000,
             },
@@ -127,8 +129,27 @@ fn receipt() -> Receipt {
             min_sources: 3,
             min_operators: Some(3),
             max_holdover: Some(3_600 * MS * 1_000),
+            source_interval_floor: Some(100_000),
+            frequency_slew_ppb_per_s: Some(1_000),
+            frequency_span_ppb: Some(100_000),
         },
+        TakenBy::OneShot,
     )
+}
+
+/// The same receipt written in version 0, which is what every receipt issued before version 1 is.
+///
+/// Version 0 carries none of the fields version 1 added, and a limit it left out is a limit it did
+/// not state. The two tests that use this are about receipts written before a version 0 field
+/// existed, and those are version 0 receipts.
+fn as_version_0(mut r: Receipt) -> Receipt {
+    r.version = 0;
+    r.claim.taken_by = None;
+    r.claim.breakdown.unclaimed_rate = None;
+    r.claim.policy.source_interval_floor = None;
+    r.claim.policy.frequency_slew_ppb_per_s = None;
+    r.claim.policy.frequency_span_ppb = None;
+    r
 }
 
 /// Sign a receipt and read it back the way a stranger would.
@@ -371,7 +392,7 @@ fn a_receipt_that_states_an_operator_floor_and_names_nobody_is_refused() {
 /// The receipt the carve-out was written for, which never needed it.
 #[test]
 fn a_receipt_from_before_the_labels_existed_passes_on_its_own_merits() {
-    let mut r = receipt();
+    let mut r = as_version_0(receipt());
     r.claim.sources = vec![
         unlabelled("a-1", true),
         unlabelled("a-2", true),
@@ -642,7 +663,7 @@ fn a_receipt_that_states_no_holdover_ceiling_is_read_as_stating_none() {
     // One receipt in this repository predates the field and three real third parties signed it, so
     // it is not re-taken. A reader has to be able to open it and has to be told that there is no
     // ceiling here to hold the agent to, rather than being handed a nought that reads as a promise.
-    let mut r = receipt();
+    let mut r = as_version_0(receipt());
     r.claim.policy.max_holdover = None;
     r.claim.since_last_sync = 10 * 3_600 * MS * 1_000;
 
@@ -964,4 +985,184 @@ fn a_source_the_issuer_runs_itself_is_not_one_of_the_operators_behind_the_bound(
     // not the shape of the receipt.
     sign_and_open(&issuer_runs_them(false))
         .expect("three sources run by three other parties is three operators");
+}
+
+/// A timescale this format cannot read is refused, and so is a smear policy.
+///
+/// Both fields were carried on every source and read by nothing until 2026-09-20. A receipt whose
+/// sources stated a timescale of `tai+37`, one stating a smear of `linear/86400`, one stating a
+/// pending leap second and one whose timescale was a string nobody has ever defined all passed with
+/// exit nought, and no line of the report mentioned either field.
+///
+/// The direction is the one the leap allow-list settled: name the values that permit, so a string
+/// this format has never seen refuses rather than being read as whatever is convenient.
+#[test]
+fn a_timescale_or_a_smear_this_format_cannot_read_is_refused() {
+    for stated in [
+        "tai",
+        "tai+",
+        "tai+thirty-seven",
+        "tai+37.5",
+        "tai+-99999999999999999999",
+        // Each of these parses as a number, and none is a spelling the writer produces. Found
+        // 2026-09-21: all four were read, so one value had several spellings that hash differently.
+        "tai++37",
+        "tai+037",
+        "tai+-0",
+        "TAI+37",
+        "UTC",
+        "utc ",
+        "",
+        "gps",
+    ] {
+        let mut r = receipt();
+        r.claim.sources = vec![
+            SourceRecord {
+                timescale: stated.to_string(),
+                ..record("a-1", "a.example", false)
+            },
+            record("b-1", "b.example", true),
+            record("c-1", "c.example", true),
+            record("d-1", "d.example", true),
+        ];
+        r.claim.sources_offered = 4;
+        r.claim.sources_kept = 3;
+
+        let refusal = sign_and_open(&r)
+            .expect_err("a timescale nothing here can read is not a timescale to measure against");
+        assert!(
+            matches!(refusal, ReceiptError::Field(_)),
+            "on {stated:?} got {refusal}"
+        );
+        assert!(
+            refusal.to_string().contains("answers on"),
+            "on {stated:?} got {refusal}"
+        );
+    }
+
+    for stated in [
+        "linear",
+        "linear/",
+        "linear/a-day",
+        "linear/+86400",
+        "linear/086400",
+        // A smear spread over no time at all is a step, which is what `none` says.
+        "linear/0",
+        "Linear/86400",
+        "NONE",
+        "none ",
+        "",
+        "smeared",
+    ] {
+        let mut r = receipt();
+        r.claim.sources = vec![
+            SourceRecord {
+                smear: stated.to_string(),
+                ..record("a-1", "a.example", false)
+            },
+            record("b-1", "b.example", true),
+            record("c-1", "c.example", true),
+            record("d-1", "d.example", true),
+        ];
+        r.claim.sources_offered = 4;
+        r.claim.sources_kept = 3;
+
+        let refusal = sign_and_open(&r)
+            .expect_err("a smear policy nothing here can read says nothing about UTC");
+        assert!(
+            matches!(refusal, ReceiptError::Field(_)),
+            "on {stated:?} got {refusal}"
+        );
+        assert!(
+            refusal.to_string().contains("smears a leap second"),
+            "on {stated:?} got {refusal}"
+        );
+    }
+}
+
+/// The shapes it does read still read, so the allow-list is a list and not a wall.
+///
+/// A rule that refuses everything is as wrong as one that permits everything, and only running both
+/// says which this is. A source off UTC is allowed to be in the list; what it may not be is kept,
+/// which the test below is about.
+#[test]
+fn the_timescales_and_smears_this_format_knows_are_read() {
+    for timescale in ["utc", "unknown", "tai+37", "tai+0", "tai+-1"] {
+        for smear in ["none", "unknown", "linear/86400", "linear/1"] {
+            let mut r = receipt();
+            r.claim.sources = vec![
+                SourceRecord {
+                    timescale: timescale.to_string(),
+                    smear: smear.to_string(),
+                    ..record("a-1", "a.example", false)
+                },
+                record("b-1", "b.example", true),
+                record("c-1", "c.example", true),
+                record("d-1", "d.example", true),
+            ];
+            r.claim.sources_offered = 4;
+            r.claim.sources_kept = 3;
+            sign_and_open(&r).unwrap_or_else(|e| {
+                panic!("{timescale} with a smear of {smear} is a shape this format reads, got {e}")
+            });
+        }
+    }
+}
+
+/// A source the selection kept had to have answered on UTC.
+///
+/// The conversion from anything else is the agent's, made with the offset the source itself stated,
+/// and nothing in a receipt lets a reader check it happened. On TAI that is thirty-seven seconds
+/// between what a receipt claims and what its sources said, which is the one thing a receipt exists
+/// to take out of the signer's hands. Every shipped source client speaks UTC, so this refuses
+/// nothing this product writes.
+#[test]
+fn a_source_the_bound_rests_on_had_to_have_answered_on_utc() {
+    for (timescale, said) in [
+        ("tai+37", "a conversion the agent made"),
+        ("tai+0", "a conversion the agent made"),
+        // The agent converts nothing for a source that named no timescale, so the refusal must
+        // not say it did. Found 2026-09-21: it said the bound rested on a conversion.
+        ("unknown", "named no timescale"),
+    ] {
+        let mut r = receipt();
+        r.claim.sources = vec![
+            SourceRecord {
+                timescale: timescale.to_string(),
+                ..record("a-1", "a.example", true)
+            },
+            record("b-1", "b.example", true),
+            record("c-1", "c.example", true),
+        ];
+        r.claim.sources_offered = 3;
+        r.claim.sources_kept = 3;
+
+        let refusal = sign_and_open(&r)
+            .expect_err("a bound resting on a conversion nobody can check is not a bound");
+        assert!(
+            matches!(refusal, ReceiptError::Inconsistent(_)),
+            "on {timescale:?} got {refusal}"
+        );
+        assert!(
+            refusal.to_string().contains(said),
+            "on {timescale:?} got {refusal}"
+        );
+    }
+
+    // The same source, not kept, holds up. So the refusal above is about the bound resting on it
+    // and not about the value being in the list at all.
+    let mut r = receipt();
+    r.claim.sources = vec![
+        SourceRecord {
+            timescale: "tai+37".to_string(),
+            ..record("a-1", "a.example", false)
+        },
+        record("b-1", "b.example", true),
+        record("c-1", "c.example", true),
+        record("d-1", "d.example", true),
+    ];
+    r.claim.sources_offered = 4;
+    r.claim.sources_kept = 3;
+    sign_and_open(&r)
+        .expect("a source on TAI that the selection dropped is a fact about the round");
 }

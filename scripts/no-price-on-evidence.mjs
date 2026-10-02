@@ -37,7 +37,27 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const here = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// Which tree to read, and what counts as a surface in it.
+//
+// By default this repository, with the list further down. `--tree <path> --surfaces <pattern>`
+// reads somewhere else instead, which is how the app is held to these rules without a third copy of
+// them: one set of rules, read wherever the tree happens to be. The two options are given together
+// or not at all, because a tree read with this repository's list would find almost nothing, and a
+// check that reads nothing and prints clean is worse than no check at all.
+const argv = process.argv.slice(2);
+const option = (name) => {
+  const at = argv.indexOf(`--${name}`);
+  return at === -1 ? null : argv[at + 1];
+};
+const elsewhere = option('tree');
+const pattern = option('surfaces');
+if ((elsewhere === null) !== (pattern === null)) {
+  console.error('no price on evidence: --tree and --surfaces are given together or not at all');
+  process.exit(2);
+}
+const root = elsewhere ?? here;
 
 // RULES BEGIN
 // A sentence that offers one of these things is refused, unless the offer itself is denied.
@@ -321,10 +341,13 @@ if (prove && !SEEDS[prove]) {
 // the verifier page, the scripts that write the Action's summary, and the command line's verdicts.
 // Until 2026-09-14 this was README.md and docs/ alone, so a PRICING.md at the root was never read.
 const SURFACE = /(^|\/)[^/]+\.(md|markdown|txt|text)$|^(LICENSE|NOTICE|action\.yml|verifier-page\/[^/]+\.html|scripts\/action-[^/]+\.(sh|py)|crates\/cli\/src\/render\.rs|crates\/verify\/src\/[^/]+\.rs)$/i;
+const READ = pattern === null ? SURFACE : new RegExp(pattern, 'i');
 const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' })
   .split('\n')
-  .filter((path) => SURFACE.test(path) && existsSync(join(root, path)));
+  .filter((path) => READ.test(path) && existsSync(join(root, path)));
 
+// Every tree this reads carries a README and more than a handful of surfaces, so too few of them
+// means the pattern is wrong rather than that the tree has nothing to say.
 if (!files.includes('README.md') || files.length < 5) {
   console.error(`no price on evidence: only ${files.length} surfaces were found, so the list of what to read has gone wrong`);
   process.exit(1);
@@ -348,4 +371,7 @@ if (failures) {
   console.error(`no price on evidence: ${failures} refused over ${files.length} surfaces`);
   process.exit(1);
 }
-console.log(`no price on evidence: ${files.length} surfaces read, no tier on precision and no price per receipt`);
+console.log(
+  `no price on evidence: ${files.length} surfaces read${elsewhere ? ` in ${elsewhere}` : ''}, ` +
+    'no tier on precision and no price per receipt',
+);

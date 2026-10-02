@@ -66,6 +66,10 @@ const ALLOWED: &[(&str, &[&str])] = &[
             // disciplined exactly as the agent's is and hands the server a reading per request,
             // because the server refuses to decide its own uncertainty.
             "timewitness-roughtime-server",
+            // What `timewitness countersign` reads. The subcommand takes one half of an exchange
+            // off the command line and says what it establishes, which is the same kind of local,
+            // network-free check `verify` is.
+            "timewitness-countersign",
         ],
     ),
     ("timewitness-architecture", &[]),

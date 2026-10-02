@@ -17,6 +17,7 @@ policy off the code and asks each sentence whether it contradicts it.
     python3 scripts/policy-sentences.py --prints FILE   the sentence prints to record when a set becomes fitted
     python3 scripts/policy-sentences.py --attributions [FILE]   record the generated subject grade for the register, and write it
     python3 scripts/policy-sentences.py FILE...         only the files named, for a copy of an old tree
+    python3 scripts/policy-sentences.py --tree DIR --surfaces PATTERN   the claims in another tree, the app's
 
 **The only number anybody may quote about this file comes from `--score` on a set whose sha256 was
 frozen before this file was opened.** `--self-test` proves each seed is refused by the rule it is
@@ -718,8 +719,15 @@ VOUCHING = [re.compile(p, re.I) for p in (
 # moment as its object is the claim whoever is said to be doing it.
 # The moment, in the words the surfaces use for it. "They pin when it was taken to 2 s" said the
 # whole claim without the noun, and the first draft of the rule below read straight past it.
-MOMENT = (r'(?:the moment|when it was taken|when that reading was taken|'
-          r'when the (?:reading|stamp|receipt|event) was taken)')
+#
+# The signing is the same moment in other words, and the app's front page said "they pin when it was
+# signed" from 2026-09-14 to 2026-09-23 with this rule green, because it read taken and not signed.
+# The verifier says the opposite on the receipt every surface points at: nothing outside it says when
+# it was signed, only when its subject existed. A version 1 receipt can carry a witness over its own
+# signature, and that one does say when it was signed, but its authority states no accuracy either,
+# so it pins nothing in UTC.
+MOMENT = (r'(?:the moment|the signing|when it was (?:taken|signed|made|issued)|when that reading was taken|'
+          r'when (?:the|a|this|that) (?:reading|stamp|receipt|event|signature) was (?:taken|signed|made|issued))')
 BRACKETING = [re.compile(p, re.I) for p in (
     r'\b(pins?|pinning|pinned|brackets?|bracketing|bracketed|encloses?|enclosing|enclosed|straddles?|straddling|'
     r'sandwiches|sandwiched)\b[^.;]{0,40}?\b' + MOMENT + r'\b',
@@ -869,6 +877,14 @@ SOURCES_ENOUGH = re.compile(r'\b(' + COUNT + r') (?:good |healthy |independent |
 REFUSAL_RECEIPT = re.compile(r'\b(?:signed )?refusal receipts?\b', re.I)
 REFUSAL_HYPOTHETICAL = re.compile(r'\bwould\b|\bif one\b|\bnot yet\b|\bis not (?:built|shipped|issued)\b|\bphrase rather than\b|'
                                   r'\bthere is no\b|\bno refusal receipt\b', re.I)
+# A refusal said to be kept somewhere. Nothing keeps one: a receiver that declines to countersign
+# signs nothing and writes nothing, and the agent's own refusal is a return value. Version 21 of the
+# list said a declining receiver "records a refusal" for a day, and no check read the verb.
+REFUSAL_RECORDED = re.compile(r'\b(?:records?|recorded|recording|logs?|logged|logging|keeps?|kept|keeping|stores?|stored|storing|'
+                              r'files?|filed|filing) (?:a |an |its |the |their |every |each )?refusals?\b|'
+                              r'\brefusals? (?:is|are|gets?|got|will be|was|were|has been|have been|stays?) '
+                              r'(?:recorded|logged|kept|stored|written down|filed)\b|'
+                              r'\b(?:recorded|logged|kept|stored|filed) as (?:a )?refusals?\b', re.I)
 # A ceiling, in the forms a sentence gives one: refused over, up to, capped at, nothing wider than,
 # holds itself to, at worst, will happily sign a bound of.
 CEILING = re.compile(r'(?:refuses? (?:any|an|one|a)(?: interval| bound| width| receipt)? (?:wider|over|more|past|beyond) (?:than )?|'
@@ -1290,6 +1306,14 @@ def judge(sentence, policy, landing=None, read=None):
         m = REFUSAL_RECEIPT.search(sentence)
         if m and not negated(sentence, m) and not REFUSAL_HYPOTHETICAL.search(sentence):
             faults.append('speaks of a refusal receipt as a thing that exists, and there is no refusal receipt')
+
+    # The negation has to sit on the verb itself. The clause-wide reading `negated` gives would let
+    # "a receiver that will not countersign records a refusal" through on the "not" that belongs to
+    # countersigning, and that is the sentence this rule was written for.
+    m = REFUSAL_RECORDED.search(sentence)
+    if m and not re.search(r"(?:\b(?:no|not|never|nothing|none|nor|cannot|without)|n't)\s+$", sentence[:m.start()], re.I):
+        faults.append('says a refusal is recorded, and nothing records one: a receiver that declines to countersign '
+                      'signs nothing and keeps nothing, and the agent\'s own refusal is a return value')
 
     def whose(before):
         # Whose ceiling the figure is, read off the nearest subject before it in the sentence, and
@@ -2858,6 +2882,72 @@ def stale_excuses(excused, surfaces_read):
             for e in excused if e['used'] == 0 and e['surfaces'] <= surfaces_read]
 
 
+def ceiling_of(full):
+    """The widest bound the agent that signed this receipt would sign for, in words, read off the
+    receipt through the verifier.
+
+    The number is not written here. The committed receipt was signed under a ceiling of 30 s, the
+    one-shot default until 2026-09-15, and a reader who reproduces the width without that condition
+    reproduces it under a ceiling fifteen times the shipped one. The ceiling moves when the fixture
+    is re-taken, so a copy of it in this file would be the next figure to go stale beside the thing
+    it describes, which is the fault this whole rule is about.
+    """
+    passed, failed, text = verify_receipt(full)
+    if not passed:
+        raise Unreadable(f'{full.name} does not verify, so nothing can be read off it: {", ".join(sorted(failed))}')
+    said = re.search(r'signed for nothing wider than ([0-9]+(?:\.[0-9]+)?) (ms|s)\b', text)
+    if not said:
+        raise Unreadable(f'timewitness verify prints no ceiling for {full.name}, so this rule has nothing to '
+                         f'hold a surface to and is not going to pass by saying so')
+    return said.group(1), said.group(2)
+
+
+def the_ceiling_is_stated(read_from):
+    """Every surface quoting the committed receipt's width says what ceiling the run was signed
+    under. Found on 2026-09-18 by a reader trying to reproduce the width.
+
+    A width is a figure, and this product's first rule about numbers is that a figure is quoted
+    with the conditions it was measured under. The ceiling is one of those conditions and it was
+    the one nobody wrote down: that receipt was signed under 30 s, the default for the one-shot
+    path until 2026-09-15, which is fifteen times what the same command signs under today. Five of
+    the seven surfaces quoting the width said nothing about it.
+
+    The rule is over a surface rather than over a sentence, and deliberately. The limitation list
+    states the ceiling once, in the item about ceilings, three hundred lines from where it quotes
+    the width, and that is a document that states its condition rather than one that hides it. A
+    per-sentence rule would have refused both copies of that list, and the site's copy moves only
+    when the public address moves, so this check would have stood red on a surface that was already
+    honest until somebody shipped a release to fix it.
+    """
+    try:
+        figures = verifier_fields(ROOT / COMMITTED_RECEIPT)
+        in_words = figures.get('width_in_words', '')
+        width = in_words.split()[0]
+        ceiling, ceiling_unit = ceiling_of(ROOT / COMMITTED_RECEIPT)
+    except (Unreadable, OSError, IndexError) as e:
+        return [f'{COMMITTED_RECEIPT}: the receipt every surface points a reader at could not be read, so '
+                f'whether those surfaces state its ceiling is unknown and this run has not checked it: {e}']
+    if not width:
+        return [f'{COMMITTED_RECEIPT}: timewitness verify prints no width in words for it']
+    # Both spellings of the same number, because a surface writes 30 s where the verifier writes
+    # 30.000 s, and holding prose to the verifier's own decimal places would be a rule about
+    # typography.
+    forms = {f'{ceiling} {ceiling_unit}'}
+    if '.' in ceiling:
+        forms.add(f'{ceiling.rstrip("0").rstrip(".")} {ceiling_unit}')
+    quotes, states = set(), set()
+    for where, sentence in read_from:
+        surface = surface_of(where)
+        if width in sentence:
+            quotes.add(surface)
+        if 'ceiling' in sentence.lower() and any(form in sentence for form in forms):
+            states.add(surface)
+    return [f'{surface}: quotes the committed receipt at {in_words} '
+            f'and never says it was signed under a ceiling of {sorted(forms)[0]}, which is the condition a reader '
+            f'reproducing that width today would not be under'
+            for surface in sorted(quotes - states)]
+
+
 # Seeds, each the sentence a fault took on a served or shipped surface before 2026-09-15 or a
 # paraphrase of it, and each has to be refused by the rule it is here for. The paraphrases were
 # added the evening of 2026-09-15, when the rotation found every rule matched only the sentence
@@ -2902,6 +2992,10 @@ SEEDS = [
     ('a refusal receipt records', 'A refusal receipt records that TimeWitness declined to sign.'),
     ('a refusal receipt records', 'The refusal receipt proves the agent declined.'),
     ('a refusal receipt records', 'A signed refusal receipt is issued when the agent declines.'),
+    ('a refusal said to be recorded', 'A receiver that declines to countersign records a refusal and stops nothing.'),
+    ('a refusal said to be recorded', 'A receiver that will not countersign records a refusal and stops nothing.'),
+    ('a refusal said to be recorded', 'The refusal is logged and nothing is stopped.'),
+    ('a refusal said to be recorded', 'A declined request is kept as a refusal.'),
     ('a ceiling without saying whose', 'The shipped default refuses any interval wider than 250 ms, and the GitHub Action raises that to 30 s, which is headroom and not a measurement.'),
     ('a ceiling stated wrongly', 'The resident agent refuses any interval wider than 500 ms.'),
     ('a ceiling stated wrongly', 'The agent will answer with a bound of up to half a second.'),
@@ -3014,15 +3108,27 @@ SEEDS = [
     ('a shipped authority proves not-later-than', 'DigiCert signed for the payload hash, so the document existed no later than the moment its token states.'),
     ('a shipped authority proves not-later-than', 'The Sectigo token proves not-later-than for everything this agent stamps.'),
     ('outside signatures bracket the moment', 'The outside signatures it carries are checked and pin the moment to a few seconds, and nothing issues a receipt whose width rests on them.'),
+    # The app's front page, word for word, from 2026-09-14 until it was taken down on 2026-09-23.
+    ('outside signatures bracket the moment', 'The outside signatures in it can be checked without trusting either party, and they pin when it was signed.'),
+    ('outside signatures bracket the moment', 'The outside signatures pin when the receipt was signed.'),
+    ('outside signatures bracket the moment', 'Its witnesses bracket the signing to a few seconds.'),
+    ('outside signatures bracket the moment', 'When the receipt was signed is pinned by the signatures it carries.'),
 ]
 
 # The sentences that replaced them and the sentences the surfaces carry that sit nearest a rule,
 # which have to pass, so a rule wide enough to refuse everything cannot pass this test either.
 HONEST = [
+    # What the verifier and the app's front page say instead of the seeds of 2026-09-23 above.
+    'The signature itself carries no witness, so nothing outside this receipt says when it was signed, only when its subject existed.',
+    'They say when the thing it stamps existed, and only a witness over the receipt\'s own signature says when it was signed.',
+    'The timestamp authorities used today state no accuracy of their own, so a token from them bounds nothing in UTC.',
+    'They do not pin when it was signed.',
     'A machine that can reach only the three public Roughtime servers reaches three operators, which is under the shipped floor of four, so it refuses to sign, and nothing that ships lowers the floor.',
     'The resident agent refuses any interval wider than 250 ms, and the one-shot command, which the GitHub Action runs, refuses one wider than 2 s.',
     'Every receipt this product issues says its bound rests on the agent\'s own model, so no receipt yet carries third-party signed evidence for its bound.',
     'There is no refusal receipt.',
+    'A receiver that declines to countersign signs nothing, keeps nothing and stops nothing.',
+    'Nothing records a refusal.',
     'A refusal records that TimeWitness declined to sign, and today that record is a return value inside the agent rather than anything a third party can be shown.',
     'The shipped policy will not sign on fewer than four operators standing behind the round.',
     'Nine servers reach six operators, so two can go dark and the agent carries on.',
@@ -3175,6 +3281,39 @@ def every_attribute_a_reader_is_given_is_read(policy):
     return faults
 
 
+def a_surface_hiding_the_ceiling_is_refused():
+    """Whether a surface quoting the committed receipt's width without its ceiling is refused.
+
+    Three probes, because the rule has three ways to be wrong and only the first is obvious. A
+    surface that quotes the width and says nothing has to be named. A surface that states the
+    ceiling anywhere in itself has to pass, since the rule is over a surface and not over a
+    sentence, and that is the half that keeps the limitation list green. And a surface that states
+    some other ceiling has to be refused, because the number is read off the receipt and a surface
+    carrying the agent's 250 ms instead has not stated the condition this width was taken under.
+    """
+    faults = []
+    width = 'a bound of 153.875 ms on the receipt committed in this repository'
+    probes = [
+        ('says nothing', [('a made-up surface', width)], True),
+        ('states it elsewhere in itself',
+         [('a made-up surface', width),
+          ('a made-up surface', 'The ceiling it was signed under was 30 s until 2026-09-15.')], False),
+        ('states another ceiling',
+         [('a made-up surface', width),
+          ('a made-up surface', 'The ceiling it was signed under was 250 ms.')], True),
+    ]
+    for what, read_from, refuse in probes:
+        try:
+            said = the_ceiling_is_stated(read_from)
+        except (Unreadable, OSError) as e:
+            return [f'the ceiling rule could not be run against a made-up surface: {e}']
+        if refuse and not said:
+            faults.append(f'a surface that quotes the committed receipt and {what} passed the ceiling rule')
+        if not refuse and said:
+            faults.append(f'a surface that quotes the committed receipt and {what} was refused: {said[0]}')
+    return faults
+
+
 def every_figure_is_read(policy):
     """Whether a figure nothing has a rule for is refused, watched on the three that were not.
 
@@ -3185,16 +3324,35 @@ def every_figure_is_read(policy):
     longer carry is reported rather than left standing.
     """
     faults = []
+
+    def refused_for(sentence, figure, surface='a made-up surface', excused=None):
+        """The refusals of one sentence, and whether one of them names the figure the probe is for.
+
+        A probe that asks only whether a sentence was refused passes on any figure in it, so a
+        sentence carrying two is green while the one it was written for goes through. That held a
+        walk green for a day on 2026-09-18, and this function carried the same shape on its first
+        probe, whose sentence carries ninety-nine percent beside the 12 milliseconds it is for.
+        """
+        refused = unclaimed([(surface, sentence)], policy, None, [] if excused is None else excused)[0]
+        return refused, any(f' {figure} ' in line.splitlines()[0] for line in refused)
+
     probes = [
-        'Ninety-nine percent of receipts come in under 12 milliseconds.',
-        'TimeWitness bounds every stamp at 153.875 ms.',
-        'Every stamp carries an error bound of 128.7 ms.',
-        'Measured on 2026-09-09 on an ordinary desktop, every stamp is 128.7 ms wide.',
+        ('Ninety-nine percent of receipts come in under 12 milliseconds.', '12 milliseconds'),
+        ('TimeWitness bounds every stamp at 153.875 ms.', '153.875 ms'),
+        ('Every stamp carries an error bound of 128.7 ms.', '128.7 ms'),
+        ('Measured on 2026-09-09 on an ordinary desktop, every stamp is 128.7 ms wide.', '128.7 ms'),
     ]
-    for probe in probes:
-        refused, _ = unclaimed([('a made-up surface', probe)], policy, None, [])
-        if not refused:
-            faults.append(f'a figure nothing has a rule for passed: {probe}')
+    for probe, figure in probes:
+        refused, named = refused_for(probe, figure)
+        if not named:
+            faults.append(f'a figure nothing has a rule for passed, or the sentence was refused for another figure than {figure}: {probe}')
+    # And the check above can tell the difference: with the figure a probe is for excused, the
+    # sentence is still refused, for the other figure in it, and the probe no longer counts it.
+    only = [{'figures': {'12 milliseconds'}, 'surfaces': {'a made-up surface'},
+             'sentence': probes[0][0], 'reason': 'for the self-test', 'used': 0}]
+    refused, named = refused_for(probes[0][0], '12 milliseconds', excused=only)
+    if not refused or named:
+        faults.append('with its figure excused, the first probe must be refused for the other figure and not counted, and was not')
     # An honest sentence of the same shape has to pass, or this is refusing figures rather than
     # unread ones.
     for honest in ('Measured 2026-09-09 at 21:41 on an ordinary desktop at sixteen rounds: 153.875 ms wide.',
@@ -3209,18 +3367,18 @@ def every_figure_is_read(policy):
                    'On a GitHub runner,', 'Over sixteen polling rounds,', 'At thirty-six minutes of uptime,',
                    'Measured,', 'On a desktop,'):
         probe = f'{prefix} receipts come in under 12 ms.'
-        if not unclaimed([('a made-up surface', probe)], policy, None, [])[0]:
-            faults.append(f'an invented figure passed on its conditions word: {probe}')
+        if not refused_for(probe, '12 ms')[1]:
+            faults.append(f'an invented figure passed on its conditions word, or was refused for another: {probe}')
     # Somebody else's figure written as ours, refused by what its entry says rather than by the word.
     public = 'Between 5 and 50 ms over the public internet, measured by us.'
     refused = unclaimed([('a made-up surface', public)], policy, None, [])[0]
     if not refused or 'public research' not in refused[0]:
         faults.append(f'a public research figure written as ours was not refused by name: {public}')
     # The width of a receipt since replaced, and a round count given a width nobody read.
-    for stale in ('Our bound was 149.8 ms on the receipt we ship as a fixture.',
-                  'Sixteen polling rounds gets you under a hundred milliseconds of error.'):
-        if not unclaimed([('a made-up surface', stale)], policy, None, [])[0]:
-            faults.append(f'a figure no register holds as said passed: {stale}')
+    for stale, figure in (('Our bound was 149.8 ms on the receipt we ship as a fixture.', '149.8 ms'),
+                          ('Sixteen polling rounds gets you under a hundred milliseconds of error.', 'hundred milliseconds')):
+        if not refused_for(stale, figure)[1]:
+            faults.append(f'a figure no register holds as said passed, or was refused for another than {figure}: {stale}')
     # The honest sentences of a cold set written from the product's rules alone and frozen at sha256
     # e4c2a62 before the figure walk was opened, all twelve, named, through both halves of this file.
     cold = {
@@ -3473,15 +3631,16 @@ def every_figure_is_read(policy):
         faults.append('two hundred milliseconds was not read as one figure')
     # The excuse itself, watched covering the sentence it names and nothing beside it.
     entry = [{'figures': {'12 milliseconds', 'ninety-nine percent'}, 'surfaces': {'a made-up surface'},
-              'sentence': probes[0], 'reason': 'for the self-test', 'used': 0}]
-    if unclaimed([('a made-up surface', probes[0])], policy, None, entry)[0]:
+              'sentence': probes[0][0], 'reason': 'for the self-test', 'used': 0}]
+    if unclaimed([('a made-up surface', probes[0][0])], policy, None, entry)[0]:
         faults.append('an excused figure was refused in the sentence its entry quotes')
-    if not unclaimed([('another surface', probes[0])], policy, None, entry)[0]:
-        faults.append('an excuse covered a surface it does not name')
+    if not all(refused_for(probes[0][0], figure, 'another surface', entry)[1]
+               for figure in ('12 milliseconds', 'ninety-nine percent')):
+        faults.append('an excuse covered a surface it does not name, for one of its two figures')
     entry[0]['used'] = 0
-    if not unclaimed([('a made-up surface', 'Ninety-nine percent of receipts come in under 12 milliseconds today.')],
-                     policy, None, entry)[0]:
-        faults.append('an excuse covered a sentence it does not quote')
+    if not all(refused_for('Ninety-nine percent of receipts come in under 12 milliseconds today.', figure,
+                           excused=entry)[1] for figure in ('12 milliseconds', 'ninety-nine percent')):
+        faults.append('an excuse covered a sentence it does not quote, for one of its two figures')
     if not stale_excuses(entry, {'a made-up surface'}):
         faults.append('an entry that matched nothing on a surface it names was not reported')
     if stale_excuses(entry, {'another surface'}):
@@ -4780,12 +4939,84 @@ def the_score_refuses_a_fitted_set_however_it_is_written(policy):
     return faults
 
 
+def another_tree(tree, pattern, policy):
+    """The claim rules over the surfaces of a tree that is not this one, as (sentences read, files
+    read, problems).
+
+    The app's front page told every reader that the outside signatures pin when a receipt was signed,
+    for nine days, while this file held the site and the README to the opposite. Nothing read the
+    app. The rules are read from here rather than copied there, which is how the price rules already
+    reach it, so there is still one copy of them.
+
+    Only the claims are held. The figures are not, because what answers a figure is a register of
+    this tree's surfaces, and a tree it has never heard of would be refused on every number it holds,
+    which is a check nobody keeps switched on. The ceiling rule is held, because it asks only whether
+    a surface quoting the committed receipt also says what that receipt was signed under.
+    """
+    base = Path(tree).resolve()
+    if not base.is_dir():
+        raise Unreadable(f'{tree} is not a directory')
+    # What a build or a tool leaves behind is not a surface: a dot folder, dependencies, build output.
+    skip = {'node_modules', 'out', 'target'}
+    files = sorted(p for p in base.rglob('*')
+                   if p.is_file()
+                   and not any(part.startswith('.') or part in skip for part in p.relative_to(base).parts[:-1])
+                   and pattern.search(p.relative_to(base).as_posix()))
+    # Every tree this is pointed at has a README and at least one page of content, so fewer than two
+    # files means the pattern is wrong rather than that the tree has nothing to say.
+    if len(files) < 2:
+        raise Unreadable(f'the pattern found {len(files)} surfaces in {tree}, so it is not reading the tree')
+    read_from, _ = surfaces([str(p) for p in files], None, 1)
+    names = {str(p): p.relative_to(base).as_posix() for p in files}
+    read_from = [(names.get(where, where), sentence) for where, sentence in read_from]
+    problems = []
+    for where, sentence in read_from:
+        for fault in judge(sentence, policy):
+            problems.append(f'{where}: {fault}:\n    "{sentence[:220]}"')
+    problems += the_ceiling_is_stated(read_from)
+    return len(read_from), len(files), problems
+
+
+def a_tree_elsewhere_is_read(policy):
+    """Whether --tree reads the tree it is given and refuses the sentence the app actually served.
+
+    A tree made up here with a README and a page of content: once honest, where it has to pass, and
+    once with the app's own sentence of 2026-09-14 planted in the page, where it has to be refused
+    and the refusal has to name the page rather than the README."""
+    import tempfile
+    page = {'free': {'body': 'Anyone can verify a receipt, free and with no account. The outside signatures in a '
+                             'receipt can be checked without trusting either party. They say when the thing it stamps '
+                             'existed, and only a witness over the receipt\'s own signature says when it was signed.'}}
+    planted = {'free': {'body': 'Anyone can verify a receipt, free and with no account. The outside signatures in it '
+                                'can be checked without trusting either party, and they pin when it was signed.'}}
+    faults = []
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        (base / 'content').mkdir()
+        (base / 'README.md').write_text('# A made-up tree\n\nIt holds one page and nothing else.\n', encoding='utf-8')
+        for what, body, refuse in (('honest', page, False), ('planted', planted, True)):
+            (base / 'content' / 'app.json').write_text(json.dumps(body), encoding='utf-8')
+            try:
+                _, files, problems = another_tree(tmp, re.compile(r'\.(md|txt)$|^content/'), policy)
+            except (Unreadable, OSError) as e:
+                return [f'--tree could not read a made-up tree: {e}']
+            if files != 2:
+                faults.append(f'--tree read {files} files of a made-up tree holding 2')
+            if refuse and not any(p.startswith('content/app.json: ') for p in problems):
+                faults.append('--tree passed the app\'s own sentence of 2026-09-14 planted in a made-up tree')
+            if not refuse and problems:
+                faults.append(f'--tree refused an honest made-up tree: {problems[0]}')
+    return faults
+
+
 def self_test(policy):
     missed = (content_reader_reads_the_leaf() + the_fetch_refuses_a_redirect()
+              + a_tree_elsewhere_is_read(policy)
               + every_attribute_a_reader_is_given_is_read(policy)
               + every_figure_is_read(policy) + the_register_holds_a_figure_to_its_subject(policy)
               + the_score_refuses_a_fitted_set(policy)
-              + the_score_refuses_a_fitted_set_however_it_is_written(policy))
+              + the_score_refuses_a_fitted_set_however_it_is_written(policy)
+              + a_surface_hiding_the_ceiling_is_refused())
     for rule, seed in SEEDS:
         faults = judge(seed, policy)
         if not faults:
@@ -4866,6 +5097,28 @@ def main(argv):
             print(f'policy sentences: that set could not be read: {e}', file=sys.stderr)
             return 2
 
+    if '--tree' in argv or '--surfaces' in argv:
+        try:
+            tree = argv[argv.index('--tree') + 1]
+            pattern = re.compile(argv[argv.index('--surfaces') + 1])
+        except (ValueError, IndexError, re.error):
+            print('policy sentences: --tree and --surfaces are given together or not at all, each with its value',
+                  file=sys.stderr)
+            return 2
+        try:
+            count, files, problems = another_tree(tree, pattern, policy)
+        except (Unreadable, OSError, ValueError) as e:
+            print(f'policy sentences: a surface could not be read: {e}', file=sys.stderr)
+            return 2
+        for p in problems:
+            print('policy sentences: ' + p, file=sys.stderr)
+        if problems:
+            print(f'policy sentences: {len(problems)} sentences in {tree} contradict the shipped policy', file=sys.stderr)
+            return 1
+        print(f'policy sentences: {count} sentences over {files} surfaces read in {tree} agree with the shipped '
+              f'policy. Their figures are not read here: what answers a figure is this tree\'s register')
+        return 0
+
     site = None
     files = [a for a in argv if not a.startswith('--')]
     if '--site' in argv:
@@ -4895,6 +5148,7 @@ def main(argv):
     figure_faults, figures = unclaimed(read_from, policy, landing, excused, known)
     problems += figure_faults
     problems += stale_excuses(excused, {surface_of(w) for w, _ in read_from})
+    problems += the_ceiling_is_stated(read_from)
     for p in problems:
         print('policy sentences: ' + p, file=sys.stderr)
     said = (f'floor {policy["floor"]}, {policy["roughtime_operators"]} Roughtime operators, agent '

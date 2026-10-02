@@ -1,4 +1,4 @@
-//! Receipt format v0.
+//! The receipt format, which this code writes at version 1 and reads at versions 0 and 1.
 //!
 //! A receipt is a long-lived artefact. Once one is issued it has to keep meaning the same thing
 //! years later, to a verifier that never spoke to us, so the format is frozen and versioned from
@@ -14,7 +14,8 @@
 //!
 //! This crate never learns how a bound is computed. It carries one.
 //!
-//! The specification is `docs/receipt-format-v0.md` beside the code.
+//! The specification is `docs/receipt-format-v0.md` beside the code, and `docs/receipt-format-v1.md`
+//! for what version 1 adds to it.
 
 #![forbid(unsafe_code)]
 
@@ -29,12 +30,15 @@ pub mod validate;
 pub mod value;
 
 pub use anchors::{RoughtimeServerKey, TrustAnchors};
-pub use cose::{open, open_with, AgentKey};
+pub use cose::{
+    check_signature, enrolment_message, envelope_parts, open, open_with, signature_of,
+    with_signature_witness, without_signature_witness, AgentKey, Envelope, SIGNATURE_WITNESS,
+};
 pub use error::ReceiptError;
 pub use report::{Bracket, EntryReport, Outcome, Verified};
 pub use schema::{
-    AgentClaim, BreakdownRecord, Evidence, Operators, Payload, PolicyRecord, Receipt, Role, Scheme,
-    SourceRecord, CLAIM_KIND, FORMAT_VERSION,
+    ppm_as_ppb, AgentClaim, BreakdownRecord, Evidence, Operators, Payload, PolicyRecord, Receipt,
+    Role, Scheme, SourceRecord, TakenBy, CLAIM_KIND, FORMAT_VERSION, READS,
 };
 pub use validate::{validate, validate_shape, validate_with};
 pub use value::Value;
@@ -62,11 +66,25 @@ pub fn sha256_payload(bytes: &[u8]) -> Payload {
     }
 }
 
-/// The SHA-256 of a signed receipt, which is what the next receipt in a chain links back to.
+/// The SHA-256 of a signed receipt as its agent signed it, which is what the next receipt in a chain
+/// links back to and what a reader is told the receipt hashes to.
+///
+/// For every version 0 receipt, and every version 1 receipt with no witness over its signature, that
+/// is the hash of the file. Where the unprotected header carries the witness, it is the hash of the
+/// file with that entry taken out, which is the file the agent wrote before the witness came back.
+/// The witness is outside the signature, and a timestamp token carries plenty its own signature does
+/// not cover either, so a holder with no key can respell it: on 2026-09-23 a third of the single-bit
+/// flips inside the committed witness still verified. A hash of the file would make each of those a
+/// receipt of its own and let a holder fork or break a chain. A hash of what was signed cannot move
+/// without the agent's key.
+///
+/// Bytes that are not an envelope of that shape are hashed as they are. Nothing here decides whether
+/// they are a receipt; [`open`] does, and it refuses anything else in that header.
 #[must_use]
 pub fn chain_link(signed_receipt: &[u8]) -> Vec<u8> {
     use sha2::{Digest, Sha256};
+    let as_signed = cose::without_signature_witness(signed_receipt);
     let mut hasher = Sha256::new();
-    hasher.update(signed_receipt);
+    hasher.update(as_signed.as_deref().unwrap_or(signed_receipt));
     hasher.finalize().to_vec()
 }

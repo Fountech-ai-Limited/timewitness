@@ -48,11 +48,11 @@
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use timewitness_agent::crossing::{ask, WhatTheCallerKnows, WILDNESS};
 use timewitness_agent::resident::note_interruptions;
-use timewitness_agent::wire::{carrier, Endpoint};
+use timewitness_agent::wire::{carrier, policy_record, Endpoint};
 use timewitness_clock::monotonic::SystemMonotonic;
 use timewitness_clock::{
     Applied, ClockModel, Discipline, MonotonicClock, Policy, ShadowDiscipline,
@@ -61,8 +61,10 @@ use timewitness_core::evidence::roughtime::MIN_RADIUS_SECONDS;
 use timewitness_core::time::{Nanos, NANOS_PER_SEC};
 use timewitness_core::{Attestation, UnixNanos};
 use timewitness_platform::EnvironmentWatch;
-use timewitness_receipt::schema::{Evidence, PolicyRecord, Receipt, Role, Scheme};
-use timewitness_receipt::{chain_link, sha256_payload, AgentKey};
+use timewitness_receipt::schema::{Evidence, Receipt, Role, Scheme, TakenBy};
+use timewitness_receipt::{
+    chain_link, sha256_payload, signature_of, with_signature_witness, AgentKey,
+};
 use timewitness_sources::drand::DrandClient;
 use timewitness_sources::ntp::{NtpClient, NtpServer};
 use timewitness_sources::nts::{NtsClient, NtsServer};
@@ -180,6 +182,102 @@ fn a_gap_between_rounds(args: &Args) -> Result<u64, String> {
     }
 }
 
+/// How long the whole command may take before it answers by refusing, in seconds.
+///
+/// Every call this command makes carries its own timeout, five seconds for NTP and Roughtime and for
+/// each of NTS's two steps, its key exchange as a whole and its time request, eight for drand,
+/// fifteen for RFC 3161 and two for the agent socket, and there is no retry loop.
+/// What none of that bounds is the command. Sixteen rounds by nine sources by five seconds is 720 s
+/// of polling before the evidence calls are made, on a network that drops the packets rather than
+/// refusing them, and a blackholing network is the ordinary shape of a locked-down build
+/// environment rather than an exotic one. The one line this product asks a stranger to put in a
+/// workflow runs this command, on somebody else's build minutes.
+///
+/// **Five minutes rather than something tighter, and the reason is a run that should still finish.**
+/// A run where a third of the sources blackhole spends 16 by 3 by 5 s, which is 240 s, waiting on
+/// them alone and then answers correctly on the rest. A default under that would refuse a run this
+/// command handles today, which is a worse fault than the one being fixed. Five minutes keeps that
+/// run and cuts the whole-network case from twelve minutes to five.
+///
+/// It is the same figure as `MAX_GAP_SECONDS` and that is a coincidence of two arguments landing in
+/// the same place rather than one constant: the gap ceiling is about what a cadence is for, and this
+/// is about what a build can be asked to wait.
+const DEFAULT_DEADLINE_SECONDS: u64 = 300;
+
+/// The longest `--deadline` this command takes, in seconds.
+///
+/// An hour. Past that a deadline is not bounding anything a build would notice, and a caller who
+/// wants a run measured in hours wants `timewitness agent`.
+const MAX_DEADLINE_SECONDS: u64 = 3_600;
+
+/// The whole command's own clock.
+///
+/// Held by value and read from a monotonic instant, so nothing about it depends on the system clock
+/// this command exists because nobody should trust.
+#[derive(Clone, Copy)]
+struct Deadline {
+    started: Instant,
+    whole: Duration,
+}
+
+impl Deadline {
+    fn of(seconds: u64) -> Self {
+        Self {
+            started: Instant::now(),
+            whole: Duration::from_secs(seconds),
+        }
+    }
+
+    /// How long is left, or nothing where the deadline has passed.
+    fn left(&self) -> Option<Duration> {
+        self.whole.checked_sub(self.started.elapsed())
+    }
+
+    /// The refusal, naming what the run was doing when the time ran out.
+    fn refusal(&self, doing: &str) -> String {
+        format!(
+            "this run passed its {} s deadline while {doing}, so it is refusing rather than \
+             running long. Every call it makes carries its own timeout and nothing bounded the \
+             command until 2026-09-20; on a network that drops packets rather than refusing them \
+             the shipped settings can poll for twelve minutes. Raise it with --deadline, or reduce \
+             --rounds",
+            self.whole.as_secs()
+        )
+    }
+}
+
+/// The seconds the whole command may take, or the sentence that refuses the number given.
+fn a_deadline(args: &Args) -> Result<u64, String> {
+    match args.number("--deadline") {
+        Ok(Some(n)) if n < 1 => Err("--deadline is a number of seconds and is at least one".into()),
+        Ok(Some(n)) if n > i128::from(MAX_DEADLINE_SECONDS) => Err(format!(
+            "--deadline is at most {MAX_DEADLINE_SECONDS} seconds. A run measured in hours is the \
+             agent's: `timewitness agent`"
+        )),
+        Ok(Some(n)) => Ok(u64::try_from(n).unwrap_or(DEFAULT_DEADLINE_SECONDS)),
+        Ok(None) => Ok(DEFAULT_DEADLINE_SECONDS),
+        Err(e) => Err(e.0),
+    }
+}
+
+/// Refuse a run whose own deliberate waiting already passes its deadline, before a packet is sent.
+///
+/// `--rounds 16 --gap 60` is fifteen minutes of sleeping that the caller asked for, and under the
+/// default deadline it would be refused a quarter of the way through, having spent the build's time
+/// and produced nothing. The two settings disagreeing is something this can see before it starts, so
+/// it says so then.
+fn the_waiting_fits_the_deadline(rounds: usize, gap: u64, deadline: u64) -> Result<(), String> {
+    let deliberate = (rounds as u64).saturating_sub(1).saturating_mul(gap);
+    if deliberate >= deadline {
+        return Err(format!(
+            "--rounds {rounds} at --gap {gap} spends {deliberate} s waiting on purpose, which is \
+             already past the {deadline} s deadline, so this run could not finish. Raise \
+             --deadline past {deliberate}, or ask for fewer rounds or a shorter gap"
+        ));
+    }
+    Ok(())
+}
+
 /// How far a beacon round may sit from where the model thinks the present is.
 ///
 /// Two minutes. A drand relay can lag by a few rounds of three seconds, and a value further out than
@@ -218,6 +316,12 @@ pub fn run(args: &Args) -> Outcome {
         // The same reason: a gap past the ceiling is turned down before a key exists for it.
         return fail(&text);
     }
+    // And the whole command's own clock, parsed here so a bad number is refused before a key
+    // exists for it, and started here so it covers the evidence calls as well as the polling.
+    let deadline = match a_deadline(args) {
+        Ok(seconds) => Deadline::of(seconds),
+        Err(text) => return fail(&text),
+    };
 
     let subject_path = match args.required("--subject") {
         Ok(path) => path,
@@ -237,6 +341,13 @@ pub fn run(args: &Args) -> Outcome {
         Ok(hash) => hash,
         Err(_) => return fail("a sha-256 hash is 32 bytes"),
     };
+
+    // Before a key is made or a source is asked. Where a certificate is needed and not held, nothing
+    // is stamped, and a refusal after `key_from` would leave a key on disk for a run that never
+    // happened. The certificate is a file fetched earlier; reading it opens no connection.
+    if let Err(missing) = a_certificate_where_one_is_needed(args) {
+        return uncertified(&missing, args.value("--key").unwrap_or("<key>"));
+    }
 
     let key = match key_from(args) {
         Ok(key) => key,
@@ -264,7 +375,7 @@ pub fn run(args: &Args) -> Outcome {
             Ok(reading) => reading,
             Err(text) => return fail(&text),
         },
-        None => match from_a_model_of_our_own(args) {
+        None => match from_a_model_of_our_own(args, deadline) {
             Ok(reading) => reading,
             Err(text) => return fail(&text),
         },
@@ -278,7 +389,7 @@ pub fn run(args: &Args) -> Outcome {
     receipt.agent_public_key = key.public_key_bytes();
 
     if !args.flag("--no-evidence") {
-        let (evidence, gathered) = gather(&subject_hash, receipt.utc_estimate);
+        let (evidence, gathered) = gather(&subject_hash, receipt.utc_estimate, deadline);
         receipt.evidence = evidence;
         notes.extend(gathered);
     }
@@ -286,6 +397,15 @@ pub fn run(args: &Args) -> Outcome {
     let signed = match key.sign(&receipt) {
         Ok(bytes) => bytes,
         Err(e) => return fail(&format!("the receipt would not sign: {e}")),
+    };
+    // After signing, because it is about the signature. Every attestation gathered above is about
+    // the subject, so it places the thing stamped and not the signing; this one places the signing.
+    let signed = if args.flag("--no-evidence") {
+        signed
+    } else {
+        let (witnessed, said) = witness_the_signature(signed, deadline);
+        notes.push(said);
+        witnessed
     };
     if let Err(e) = fs::write(out_path, &signed) {
         return fail(&format!("{out_path} could not be written: {e}"));
@@ -386,7 +506,12 @@ fn from_the_agent(args: &Args, endpoint_path: &str) -> Result<Reading, String> {
     };
 
     let clock = SystemMonotonic::new();
-    let crossed = ask(&endpoint, &clock, knows).map_err(|e| format!("{e}"))?;
+    let mut crossed = ask(&endpoint, &clock, knows).map_err(|e| format!("{e}"))?;
+
+    // An agent from an older build answering in an older format is refused inside `ask`, by
+    // `decode_reply`, with what to run instead. Which path the reading came by is this end's to say
+    // and never the answer's.
+    crossed.carrier.claim.taken_by = Some(TakenBy::ResidentAgent);
 
     let age = crossed.carrier.claim.since_last_sync;
     let apart = crossed.carrier.utc_estimate.as_nanos() - knows.local_wall.as_nanos();
@@ -422,7 +547,7 @@ fn from_the_agent(args: &Args, endpoint_path: &str) -> Result<Reading, String> {
 /// This is what runs under continuous integration and it is what the whole of the module comment
 /// above describes. The residual it carries is the price of a baseline measured in seconds.
 #[allow(clippy::too_many_lines)]
-fn from_a_model_of_our_own(args: &Args) -> Result<Reading, String> {
+fn from_a_model_of_our_own(args: &Args, deadline: Deadline) -> Result<Reading, String> {
     let rounds = match args.number("--rounds") {
         Ok(Some(n)) if n >= 1 => usize::try_from(n).unwrap_or(DEFAULT_ROUNDS),
         Ok(Some(_)) => return Err("--rounds is at least one".into()),
@@ -477,6 +602,7 @@ fn from_a_model_of_our_own(args: &Args) -> Result<Reading, String> {
     let polls_per_round = disciplining.len();
 
     let gap = a_gap_between_rounds(args)?;
+    the_waiting_fits_the_deadline(rounds, gap, deadline.whole.as_secs())?;
 
     // What the model cannot see for itself: the machine going to sleep, and another time service
     // moving the clock underneath it. Both are read from the operating system's own counters and
@@ -488,10 +614,26 @@ fn from_a_model_of_our_own(args: &Args) -> Result<Reading, String> {
     let mut answered = 0usize;
     for round in 0..rounds {
         if round > 0 && gap > 0 {
-            std::thread::sleep(std::time::Duration::from_secs(gap));
+            std::thread::sleep(Duration::from_secs(gap));
+        }
+        if deadline.left().is_none() {
+            return Err(deadline.refusal(&format!(
+                "waiting to start polling round {} of {rounds}, with {answered} of {} polls answered so far",
+                round + 1,
+                round * polls_per_round
+            )));
         }
         note_interruptions(&mut model, watch.look(clock.now()), &mut notes);
         for source in &mut disciplining {
+            // Before each call rather than once a round. One round is nine sources at five seconds
+            // each, so a per-round check would run up to forty-five seconds past the deadline it
+            // is there to keep.
+            if deadline.left().is_none() {
+                return Err(deadline.refusal(&format!(
+                    "polling round {} of {rounds}, with {answered} polls answered so far",
+                    round + 1
+                )));
+            }
             // Thirty-two random bytes, whatever the source does with them. Roughtime signs over all
             // of them and an NTP server echoes the first eight, so the same call serves both and
             // neither is handed a challenge it did not get to choose.
@@ -564,15 +706,7 @@ fn from_a_model_of_our_own(args: &Args) -> Result<Reading, String> {
     }
 
     Ok(Reading {
-        carrier: carrier(
-            &stamp,
-            PolicyRecord {
-                max_bound_width: policy.max_bound_width,
-                min_sources: policy.min_sources as u32,
-                min_operators: Some(policy.min_operators as u32),
-                max_holdover: Some(policy.max_holdover),
-            },
-        ),
+        carrier: carrier(&stamp, policy_record(&policy), TakenBy::OneShot),
         notes,
     })
 }
@@ -582,14 +716,37 @@ fn from_a_model_of_our_own(args: &Args) -> Result<Reading, String> {
 /// `reading` is where the receipt says the moment was, and it is used to pick the beacon round
 /// nearest that moment. Nothing else here depends on how the reading was arrived at, which is why
 /// this takes the one value rather than the whole stamp.
-fn gather(subject_hash: &[u8; 32], reading: UnixNanos) -> (Vec<Evidence>, Vec<String>) {
+fn gather(
+    subject_hash: &[u8; 32],
+    reading: UnixNanos,
+    deadline: Deadline,
+) -> (Vec<Evidence>, Vec<String>) {
     let mut evidence = Vec::new();
     let mut notes = Vec::new();
     let clock = SystemMonotonic::new();
 
+    // The deadline reaches here too, and it does something different. Past it the polling refuses,
+    // because a reading from a model that was not finished is not a reading. Here the reading
+    // exists and is signed either way, and every attestation is already optional: what could not be
+    // gathered is absent rather than implied, and the verifier reports what is there. So a run out
+    // of time stops asking and says so, which is answering rather than running long.
+    let out_of_time = |notes: &mut Vec<String>, what: &str| -> bool {
+        if deadline.left().is_some() {
+            return false;
+        }
+        notes.push(format!(
+            "no {what}: this run passed its {} s deadline before asking for one, so the receipt carries what was gathered before that and nothing else",
+            deadline.whole.as_secs()
+        ));
+        true
+    };
+
     // The corridor. The nonce is derived from the hash of what is being stamped and a fresh salt, so
     // the response is about this subject and could not have been fetched in advance.
     for server in RoughtimeServer::published() {
+        if out_of_time(&mut notes, "corridor") {
+            break;
+        }
         let client = RoughtimeClient::new(server);
         match client.poll_for_subject(clock.now(), subject_hash) {
             Ok(exchange) => {
@@ -616,6 +773,9 @@ fn gather(subject_hash: &[u8; 32], reading: UnixNanos) -> (Vec<Evidence>, Vec<St
 
     // Not earlier than.
     let beacon = DrandClient::quicknet();
+    if out_of_time(&mut notes, "freshness beacon") {
+        return (evidence, notes);
+    }
     match beacon.latest_near(reading, BEACON_TOLERANCE) {
         Ok(attestation) => evidence.push(entry(
             Role::NotEarlierThan,
@@ -629,6 +789,9 @@ fn gather(subject_hash: &[u8; 32], reading: UnixNanos) -> (Vec<Evidence>, Vec<St
     // Not later than.
     let mut witnessed = false;
     for authority in published_authorities() {
+        if out_of_time(&mut notes, "final witness") {
+            return (evidence, notes);
+        }
         let name = authority.name.clone();
         let client = TimestampClient::new(authority);
         match client.witness(subject_hash) {
@@ -660,6 +823,54 @@ fn gather(subject_hash: &[u8; 32], reading: UnixNanos) -> (Vec<Evidence>, Vec<St
     (evidence, notes)
 }
 
+/// A timestamp over the receipt's own signature, put outside the signed body where version 1 allows
+/// it, from the first published authority that answers.
+///
+/// Optional, as every attestation is: a receipt whose signature nobody witnessed is signed all the
+/// same and says so, and the verifier reports it as a receipt that places its subject and not its
+/// signing. What comes back is the receipt to write and the line the run prints about it.
+fn witness_the_signature(signed: Vec<u8>, deadline: Deadline) -> (Vec<u8>, String) {
+    let signature = match signature_of(&signed) {
+        Ok(signature) => signature,
+        Err(e) => return (signed, format!("no witness over the signature: {e}")),
+    };
+    let digest = sha256_payload(&signature).hash;
+    let mut refusals = Vec::new();
+    for authority in published_authorities() {
+        if deadline.left().is_none() {
+            refusals.push(format!(
+                "this run passed its {} s deadline first",
+                deadline.whole.as_secs()
+            ));
+            break;
+        }
+        let name = authority.name.clone();
+        match TimestampClient::new(authority).witness(&digest) {
+            Ok(attestation) => match with_signature_witness(&signed, &attestation.blob) {
+                Ok(witnessed) => {
+                    return (
+                        witnessed,
+                        format!(
+                            "the signature itself was witnessed by {name}, so a reader can place \
+                             the signing and not only the subject"
+                        ),
+                    )
+                }
+                Err(e) => refusals.push(format!("{name}: {e}")),
+            },
+            Err(e) => refusals.push(format!("{name}: {e}")),
+        }
+    }
+    (
+        signed,
+        format!(
+            "no witness over the signature, so nothing outside this receipt says when it was \
+             signed, only when its subject existed ({})",
+            refusals.join("; ")
+        ),
+    )
+}
+
 fn entry(role: Role, scheme: &str, attestation: &Attestation, detail: String) -> Evidence {
     Evidence {
         role,
@@ -688,57 +899,44 @@ fn entry(role: Role, scheme: &str, attestation: &Attestation, detail: String) ->
 /// as this agent.
 fn key_from(args: &Args) -> Result<AgentKey, String> {
     let path = args.required("--key").map_err(|e| e.0)?;
-    if let Ok(bytes) = fs::read(path) {
-        let seed: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| format!("{path} is not a 32 byte seed"))?;
-        return Ok(AgentKey::from_seed(&seed));
-    }
-
-    let mut seed = [0u8; 32];
-    getrandom::getrandom(&mut seed)
-        .map_err(|e| format!("this machine would not give us random bytes: {e}"))?;
-    write_private(Path::new(path), &seed)
-        .map_err(|e| format!("{path} could not be written: {e}"))?;
-    Ok(AgentKey::from_seed(&seed))
+    crate::key_file::key_or_new(path)
 }
 
-/// Write a private key, readable and writable by its owner and nobody else.
+/// Whether this run may sign, where a certificate is asked for.
 ///
-/// The permission goes on at creation rather than after the write, because a `chmod` after the fact
-/// leaves a window with the bytes on disk and the world able to read them. On a platform with no
-/// mode bits this is an ordinary create and the file inherits whatever the directory gives it, which
-/// is stated here rather than left to be discovered.
-///
-/// `create_new` rather than `create`. Reaching here means the file could not be read, which is
-/// usually because it is not there and could be because somebody else is writing it; either way,
-/// writing over a key would orphan every receipt already signed with the old one.
-fn write_private(path: &Path, seed: &[u8; 32]) -> std::io::Result<()> {
-    use std::io::Write;
+/// One is asked for once certification has begun, which is the cutoff the verifier holds, or where
+/// the caller names a certificate file. Until then nothing can be certified and nothing is asked.
+fn a_certificate_where_one_is_needed(args: &Args) -> Result<(), String> {
+    let key_path = args.required("--key").map_err(|e| e.0)?;
+    let Some(certificate) = crate::certificate_file::needed(
+        timewitness_verify::anchor_file::CERTIFICATION_BEGAN,
+        args.value("--certificate"),
+        key_path,
+    ) else {
+        return Ok(());
+    };
+    let key = crate::key_file::key_at(key_path)?.ok_or_else(|| {
+        format!("there is no key at {key_path}, so there is no certificate for it")
+    })?;
+    let public = render::hex(&key.public_key_bytes());
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "this machine's clock reads before 1970".to_string())?
+        .as_nanos();
+    let now = i128::try_from(now)
+        .map_err(|_| "this machine's clock is past any certificate".to_string())?;
+    crate::certificate_file::current(&certificate, &public, now).map(|_| ())
+}
 
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            let mut builder = fs::DirBuilder::new();
-            builder.recursive(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::DirBuilderExt;
-                builder.mode(0o700);
-            }
-            builder.create(parent)?;
-        }
-    }
-
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(seed)?;
-    file.sync_all()
+/// A stamp refused for want of a certificate. It names what is missing and the command that fetches
+/// one, and says that no receipt was written, which is the part a job log has to make plain.
+fn uncertified(missing: &str, key_path: &str) -> Outcome {
+    fail(&format!(
+        "no receipt was written: {missing}. A receipt is a TimeWitness certificate only where the \
+         app certified the key that signed it, so a stamp signs only under a current certificate \
+         for its key. Fetch one first with `timewitness certificate --key {key_path}`, which asks \
+         the app for it; a stamp never does"
+    ))
 }
 
 fn fail(what: &str) -> Outcome {
@@ -794,7 +992,7 @@ mod tests {
 
         let mut seed = [0u8; 32];
         seed[0] = 7;
-        write_private(&path, &seed).expect("a key in a folder that was not there");
+        crate::key_file::write_private(&path, &seed).expect("a key in a folder that was not there");
 
         assert_eq!(fs::read(&path).unwrap().len(), 32);
 
@@ -818,8 +1016,8 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("agent.key");
 
-        write_private(&path, &[1u8; 32]).expect("the first one");
-        let second = write_private(&path, &[2u8; 32]);
+        crate::key_file::write_private(&path, &[1u8; 32]).expect("the first one");
+        let second = crate::key_file::write_private(&path, &[2u8; 32]);
 
         assert!(second.is_err(), "the second write should have been refused");
         assert_eq!(fs::read(&path).unwrap(), vec![1u8; 32]);

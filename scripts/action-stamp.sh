@@ -21,6 +21,7 @@ event="${TW_EVENT:-build}"
 output="${TW_OUTPUT:-timewitness-receipt.cbor}"
 key="${TW_KEY:-timewitness-agent.key}"
 rounds="${TW_ROUNDS:-16}"
+deadline="${TW_DEADLINE:-300}"
 max_width="${TW_MAX_WIDTH:-2000000000}"
 previous="${TW_PREVIOUS:-}"
 sequence="${TW_SEQUENCE:-1}"
@@ -37,7 +38,8 @@ if [ ! -f "$subject" ]; then
 fi
 
 stamp_args=(stamp --subject "$subject" --key "$key" --out "$output"
-            --rounds "$rounds" --max-width "$max_width" --sequence "$sequence")
+            --rounds "$rounds" --deadline "$deadline" --max-width "$max_width"
+            --sequence "$sequence")
 if [ -n "$previous" ]; then
     stamp_args+=(--previous "$previous")
 fi

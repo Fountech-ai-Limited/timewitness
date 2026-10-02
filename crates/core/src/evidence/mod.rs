@@ -61,6 +61,12 @@ pub struct Checked {
     pub nonce: Option<Vec<u8>>,
     /// What was checked, one line each, in the order it was checked.
     pub checks: Vec<String>,
+    /// The instant the signed content states, on the signer's own clock, where it states one.
+    ///
+    /// Not an edge in UTC and never read as one: a token whose authority states no accuracy has
+    /// this and has no `latest`. It is what a reader can say the attestation dates itself to, in
+    /// the signer's words, and nothing narrower.
+    pub stated: Option<UnixNanos>,
 }
 
 impl Checked {
@@ -91,6 +97,7 @@ impl Checked {
             latest: Some(latest),
             nonce,
             checks,
+            stated: None,
         })
     }
 
@@ -114,7 +121,15 @@ impl Checked {
             latest: None,
             nonce,
             checks,
+            stated: None,
         }
+    }
+
+    /// The same, carrying the instant the content states on its signer's own clock.
+    #[must_use]
+    pub fn stating(mut self, at: UnixNanos) -> Self {
+        self.stated = Some(at);
+        self
     }
 
     /// What checking a blob established about a single instant.
@@ -135,6 +150,7 @@ impl Checked {
             latest: Some(at),
             nonce,
             checks,
+            stated: Some(at),
         }
     }
 

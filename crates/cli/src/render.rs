@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 
 use timewitness_core::SourceKind;
-use timewitness_receipt::schema::Receipt;
+use timewitness_receipt::schema::{Receipt, SourceRecord, TakenBy};
 use timewitness_verify::{
     cannot_prove, width_in_words, Assessment, State, Subject, KEPT_LOG_QUESTION, KEY_LOG_QUESTION,
 };
@@ -98,6 +98,20 @@ pub fn usage() -> String {
     out.push_str("      --gap <s>           seconds to wait between polling rounds, none by\n");
     out.push_str("                          default and at most 300. A longer cadence is the\n");
     out.push_str("                          agent's, `timewitness agent --interval`\n");
+    out.push_str(
+        "      --deadline <s>      how long the whole run may take before it answers by\n",
+    );
+    out.push_str(
+        "                          refusing, 300 by default and at most 3600. Every call\n",
+    );
+    out.push_str(
+        "                          it makes has its own timeout and nothing bounded the\n",
+    );
+    out.push_str(
+        "                          command: on a network that drops packets rather than\n",
+    );
+    out.push_str("                          refusing them the shipped settings poll for twelve\n");
+    out.push_str("                          minutes before answering\n");
     out.push_str("      --sequence <n>      where this receipt sits in a chain\n");
     out.push_str("      --previous <file>   the receipt before it in that chain\n");
     out.push_str(
@@ -122,7 +136,14 @@ pub fn usage() -> String {
     out.push_str(
         "                          not evidence; the third-party corridor is what catches\n",
     );
-    out.push_str("                          a careful forgery, and --no-evidence skips it\n\n");
+    out.push_str("                          a careful forgery, and --no-evidence skips it\n");
+    out.push_str("      --certificate <file> the certificate for this key, fetched earlier by\n");
+    out.push_str("                          `timewitness certificate`. Once certification has\n");
+    out.push_str("                          begun the stamp refuses, and writes no receipt,\n");
+    out.push_str("                          without a current one with an hour of its window\n");
+    out.push_str("                          left, looked for beside the key unless named here.\n");
+    out.push_str("                          It is read from disk; a stamp never asks the app\n");
+    out.push_str("                          for anything\n\n");
     out.push_str("  timewitness agent --endpoint <file> [options]\n");
     out.push_str("      Discipline this machine's clock continuously and answer readings to\n");
     out.push_str("      `stamp --agent`. It runs in the foreground until it is stopped. It\n");
@@ -176,6 +197,90 @@ pub fn usage() -> String {
     out.push_str("      --at <ns>           the moment the retirement takes effect. Now by\n");
     out.push_str("                          default\n");
     out.push_str("      --sign <file>       sign the head over what the log now holds\n\n");
+    out.push_str("  timewitness countersign <value> [<response>] | --from <file>\n");
+    out.push_str("      Read a countersign exchange and say what it establishes. One value is\n");
+    out.push_str("      one half of one. Two values are a request and the response to it, and\n");
+    out.push_str("      the response has to name that request by the bytes it travelled as.\n");
+    out.push_str("      Given both, it also says which moment came first, or that the two\n");
+    out.push_str("      claims do not settle it. No network and no account, the same as\n");
+    out.push_str("      verify. A verified signature says the party holding that key signed\n");
+    out.push_str("      that statement about its own clock, and nothing about whether the\n");
+    out.push_str("      clock was right.\n\n");
+    out.push_str("      --from <file>       read the header values out of a file rather than\n");
+    out.push_str("                          taking them on the command line, one to a line\n");
+    out.push_str("      --fields            the pair as lines a script reads, rather than as\n");
+    out.push_str("                          words. Both halves and one of established,\n");
+    out.push_str("                          undecided or contradicted\n");
+    out.push_str("      --ask               make the send half and sign it, rather than reading\n");
+    out.push_str("                          one. Needs --receipt and --key, takes no value, and\n");
+    out.push_str("                          every number in it comes out of that receipt. This\n");
+    out.push_str("                          and --answer are the two halves two machines make\n");
+    out.push_str("                          for each other, with nothing of ours in between\n");
+    out.push_str("      --answer            make the receive half of this exchange and sign it,\n");
+    out.push_str("                          rather than reading one. Needs --receipt and --key.\n");
+    out.push_str("                          Everything the response says about your clock comes\n");
+    out.push_str("                          out of that receipt, so there is no way to state an\n");
+    out.push_str(
+        "                          interval your own agent never read. No account and no\n",
+    );
+    out.push_str("                          network: answering costs the receiver nothing\n");
+    out.push_str("      --receipt <file>    the receipt your agent signed for what you are\n");
+    out.push_str("                          sending back. Its interval, its place in your chain\n");
+    out.push_str("                          and its hash are what the response carries\n");
+    out.push_str("      --key <file>        the key that signed that receipt. It is read and\n");
+    out.push_str("                          never made: a new key would be the one key certain\n");
+    out.push_str("                          not to have signed it\n\n");
+    out.push_str("  timewitness order <receipt> <receipt> [options]\n");
+    out.push_str("      Read two receipts and say which moment came first. Both are checked the\n");
+    out.push_str("      way verify checks one, and then the two bounds are compared. No network\n");
+    out.push_str("      and no account. Where the two bounds overlap the answer is that nobody\n");
+    out.push_str("      can say, which is an answer: it means the two stamps are closer\n");
+    out.push_str("      together than the bound on either of them. Where the two receipts are\n");
+    out.push_str("      of one chain it also says which was signed first, which is a different\n");
+    out.push_str("      statement, resting on a hash rather than on a clock, and it never\n");
+    out.push_str("      settles the question the bounds left open.\n\n");
+    out.push_str("      --anchors <file>    your own trust material, as verify takes it\n");
+    out.push_str("      --no-anchors        trust nothing, and report an attestation as\n");
+    out.push_str("                          unchecked rather than checking it\n");
+    out.push_str("      --min-width <ns>    the narrowest bound you will accept, applied to\n");
+    out.push_str("                          both of them\n");
+    out.push_str("      --fields            the reading as one field per line, for a script.\n");
+    out.push_str("                          One of established, undecided, contradicted or\n");
+    out.push_str("                          not-sayable, and whether it stands\n\n");
+    out.push_str("  timewitness send <receipt> [options]\n");
+    out.push_str("      Give a copy of a receipt this machine signed to the app that keeps an\n");
+    out.push_str("      organisation's receipts. The machine credential is read from\n");
+    out.push_str("      TIMEWITNESS_MACHINE_CREDENTIAL and never from the command line. What\n");
+    out.push_str("      travels is the receipt and the figures it states; the thing it stamps\n");
+    out.push_str("      never does. Sending is separate from stamping, so a send that fails\n");
+    out.push_str("      leaves the receipt where it was and changes nothing about it.\n\n");
+    out.push_str("      --event <word>      what happened, such as build or test, to search by\n");
+    out.push_str("      --repository <name> the repository it happened in, owner/name\n");
+    out.push_str("      --to <address>      another address of the app, such as a test one\n\n");
+    out.push_str("  timewitness enrol --key <file> [options]\n");
+    out.push_str("      Enrol this machine's key with the organisation whose machine credential\n");
+    out.push_str("      is in TIMEWITNESS_MACHINE_CREDENTIAL, making the key where the file is\n");
+    out.push_str("      absent. The app asks the key to sign a challenge, so only a machine\n");
+    out.push_str("      holding the secret half can enrol it, and what is signed is built here\n");
+    out.push_str("      rather than taken from the app as text.\n\n");
+    out.push_str("      --label <name>      what the organisation's people see the machine as\n");
+    out.push_str("      --to <address>      another address of the app, such as a test one\n\n");
+    out.push_str("  timewitness certificate --key <file> [options]\n");
+    out.push_str("      Fetch a certificate for an enrolled key and keep it beside the key, for\n");
+    out.push_str("      `stamp` to read. It is the one thing a machine asks the app for before\n");
+    out.push_str("      it stamps, and it is asked here, never during a stamp.\n\n");
+    out.push_str("      --kind <kind>       agent, for a week, or action, for a day; agent by\n");
+    out.push_str("                          default\n");
+    out.push_str("      --out <file>        where to keep it, beside the key by default\n");
+    out.push_str("      --to <address>      another address of the app, such as a test one\n\n");
+    out.push_str("  timewitness status --agent <file>\n");
+    out.push_str(
+        "      Whether the agent is up, and how wide its bound is right now: the width,\n",
+    );
+    out.push_str("      how many sources it rests on and how long since it last heard from one.\n");
+    out.push_str("      It asks the agent what a stamp asks it, signs nothing and writes\n");
+    out.push_str("      nothing, and it says so plainly where no agent is running.\n\n");
+    out.push_str("      --agent <file>      the endpoint file the agent wrote\n\n");
     out.push_str("  timewitness cannot-prove\n");
     out.push_str("      What this product cannot prove, in full. It ships with the claim rather\n");
     out.push_str("      than under it.\n\n");
@@ -192,10 +297,15 @@ pub fn usage() -> String {
 /// nothing of the building machine's own environment comes in through it.
 #[must_use]
 pub fn version() -> String {
+    let reads: Vec<String> = timewitness_receipt::READS
+        .iter()
+        .map(|v| format!("v{v}"))
+        .collect();
     format!(
-        "timewitness {}\nreads receipt format v{}",
+        "timewitness {}\nwrites receipt format v{} and reads {}",
         env!("CARGO_PKG_VERSION"),
-        timewitness_receipt::FORMAT_VERSION
+        timewitness_receipt::FORMAT_VERSION,
+        reads.join(" and ")
     )
 }
 
@@ -210,8 +320,20 @@ pub fn version() -> String {
 pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
     let mut out = String::new();
 
+    // Where this reader grades certificates, the grade comes first when it changes what a reader
+    // should take away, with what it rests on under it, and the verdict every version 0 check
+    // earned follows, so the outside signatures a receipt that is not a certificate still carries
+    // are never hidden behind it.
+    if let Some(first) = a.certificate.as_ref().and_then(|g| g.first_line()) {
+        out.push_str(&first);
+        out.push('\n');
+    }
     out.push_str(&a.verdict());
     out.push('\n');
+    if let Some(grade) = &a.certificate {
+        out.push_str(&grade.detail());
+        out.push('\n');
+    }
     // Directly under the verdict, and under `--quiet` too, because this is the line that stops the
     // one above being read as outside parties vouching for the width. One line, unwrapped like the
     // verdict, so a script taking the first two lines takes both whole.
@@ -303,6 +425,15 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
             width_in_words(b.network_half)
         ));
         out.push_str("                first line rather than added to it\n");
+        if let Some(unclaimed) = b.unclaimed_rate {
+            out.push_str(&format!(
+                "  {:>12}  of the oscillator's share, a rate the agent is not correcting for.\n\
+                 \x20               Reported, and already inside the third line\n",
+                width_in_words(unclaimed)
+            ));
+        }
+
+        out.push_str(&terms_lines(receipt));
     }
 
     if let Some(evidence) = &a.evidence {
@@ -328,11 +459,24 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
     for rule in a.floor.lines() {
         out.push_str(&format!("  {rule}\n"));
     }
-    out.push_str(&format!(
-        "  The receipt as handed over is {} bytes and hashes to {}.\n",
-        a.encoded_bytes,
-        hex(&a.link)
-    ));
+    if a.witness_set_aside {
+        // The file hashes to something else, and saying so is what stops a reader who hashes the
+        // file concluding that one of the two was altered.
+        out.push_str(&format!(
+            "  The receipt as handed over is {} bytes. As its agent signed it, without the witness\n  \
+             over its signature, it hashes to {}, and that is what the next receipt in a\n  \
+             chain names. The witness is outside the signature, so a hash of the whole file is not\n  \
+             the receipt's.\n",
+            a.encoded_bytes,
+            hex(&a.link)
+        ));
+    } else {
+        out.push_str(&format!(
+            "  The receipt as handed over is {} bytes and hashes to {}.\n",
+            a.encoded_bytes,
+            hex(&a.link)
+        ));
+    }
     if matches!(subject, Subject::NotSupplied) {
         out.push_str("  No subject was supplied, so this bounds a moment and not a moment for\n");
         out.push_str("  anything in particular.\n");
@@ -375,7 +519,7 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
 /// say that a character could not be represented. Dropping would quietly turn one value into
 /// another that reads as sound; replacing leaves something on the line that is obviously neither a
 /// number nor a word, and keeps every field on the line it belongs to.
-fn write_field(out: &mut String, name: &str, value: impl core::fmt::Display) {
+pub(crate) fn write_field(out: &mut String, name: &str, value: impl core::fmt::Display) {
     let written = value.to_string();
     let held: String = written
         .chars()
@@ -394,6 +538,10 @@ fn write_field(out: &mut String, name: &str, value: impl core::fmt::Display) {
 pub fn fields(a: &Assessment) -> String {
     let mut out = String::new();
     write_field(&mut out, "accepted", a.accepted());
+    if let Some(grade) = &a.certificate {
+        write_field(&mut out, "certificate", grade.word());
+        write_field(&mut out, "holds", a.holds());
+    }
     if let Some(step) = a.refusal() {
         write_field(&mut out, "refused_at", &step.question);
         write_field(&mut out, "refusal", step.state.detail());
@@ -443,6 +591,15 @@ pub fn fields(a: &Assessment) -> String {
         write_field(&mut out, "payload_hash", hex(&receipt.payload.hash));
         write_field(&mut out, "sources_offered", receipt.claim.sources_offered);
         write_field(&mut out, "sources_kept", receipt.claim.sources_kept);
+        // What version 1 added, each a whole number, a path, or `none` on a version 0 receipt,
+        // which could not say.
+        for (name, value) in receipt.what_version_1_states() {
+            match value {
+                timewitness_receipt::Value::Int(n) => write_field(&mut out, name, n),
+                timewitness_receipt::Value::Text(t) => write_field(&mut out, name, t),
+                _ => write_field(&mut out, name, "none"),
+            }
+        }
         // The two counts a script needs to tell nine names at one company from nine at nine, and
         // the kinds behind them. Without these a caller reading this output has only the flattering
         // number, which is how several addresses at one company pass for several independent
@@ -450,19 +607,30 @@ pub fn fields(a: &Assessment) -> String {
         let operators = receipt.claim.operators();
         write_field(&mut out, "operators_offered", operators.offered);
         write_field(&mut out, "operators_kept", operators.kept);
-        let mut kinds: BTreeMap<&str, usize> = BTreeMap::new();
-        for source in &receipt.claim.sources {
-            *kinds.entry(source.kind.as_str()).or_default() += 1;
+        // The kinds, and what each source said it was speaking, counted the same way. The
+        // validator refuses a receipt on the timescale and the smear, so a script has to be able to
+        // see both rather than take the verdict on trust.
+        type Spoken = fn(&SourceRecord) -> &str;
+        let spoken: [(&str, Spoken); 3] = [
+            ("source_kinds", |s| s.kind.as_str()),
+            ("source_timescales", |s| s.timescale.as_str()),
+            ("source_smears", |s| s.smear.as_str()),
+        ];
+        for (name, of) in spoken {
+            let mut counted: BTreeMap<&str, usize> = BTreeMap::new();
+            for source in &receipt.claim.sources {
+                *counted.entry(of(source)).or_default() += 1;
+            }
+            write_field(
+                &mut out,
+                name,
+                counted
+                    .iter()
+                    .map(|(spelling, count)| format!("{spelling}:{count}"))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
         }
-        write_field(
-            &mut out,
-            "source_kinds",
-            kinds
-                .iter()
-                .map(|(kind, count)| format!("{kind}:{count}"))
-                .collect::<Vec<_>>()
-                .join(","),
-        );
     }
     if let Some(evidence) = &a.evidence {
         // The span the checked outside evidence brackets the moment to, or `none` where nothing
@@ -477,6 +645,16 @@ pub fn fields(a: &Assessment) -> String {
         );
         write_field(&mut out, "attestations_carried", evidence.entries.len());
         write_field(&mut out, "attestations_checked", evidence.checked());
+        // The witness over the signature itself, which is the only one that places the signing.
+        write_field(
+            &mut out,
+            "signature_witness",
+            match &evidence.signature_witness {
+                None => "none",
+                Some(w) if w.outcome.is_checked() => "checked",
+                Some(_) => "not-checked",
+            },
+        );
         write_field(&mut out, "basis_granted", evidence.basis_granted);
     }
     out
@@ -568,6 +746,41 @@ fn operators_line(receipt: &Receipt) -> String {
 /// a source that could sign and a signature in the file are different facts, and reading the first
 /// as the second is the central dishonesty available to a product in this field.
 ///
+/// The path the reading came by and the terms that set the width, as a person reads them.
+///
+/// Both arrived in receipt format version 1. A version 0 receipt could state neither, and the line
+/// for it says so rather than leaving a reader to wonder whether the terms were left out.
+fn terms_lines(receipt: &Receipt) -> String {
+    let c = &receipt.claim;
+    let (Some(taken_by), Some(floor), Some(slew), Some(span)) = (
+        c.taken_by,
+        c.policy.source_interval_floor,
+        c.policy.frequency_slew_ppb_per_s,
+        c.policy.frequency_span_ppb,
+    ) else {
+        return "\n  This receipt is format version 0, which does not state the terms that set its\n  \
+                width or which path its reading came by.\n"
+            .to_string();
+    };
+    let path = match taken_by {
+        TakenBy::OneShot => {
+            "The reading was taken by the process that signed it, from sources it chose."
+        }
+        TakenBy::ResidentAgent => {
+            "The reading was read from a resident agent on the signing machine, so it rests\n  \
+             on whatever answered that agent's endpoint."
+        }
+    };
+    format!(
+        "\nThe terms that set the width, as the agent stated them\n  {path}\n  \
+         No source's answer counted as narrower than {} either side.\n  \
+         The oscillator's rate was assumed to move by at most {slew} parts per billion a second,\n  \
+         inside a band {span} parts per billion wide. Assumptions, stated so they can be\n  \
+         checked, and not measured by this reader.\n",
+        width_in_words(floor)
+    )
+}
+
 /// A kind this code has never heard of is counted and reported as one whose worth this reader
 /// cannot judge, rather than being folded into the ones it knows. Reading an unknown kind as plain
 /// NTP would be a guess that happens to be conservative today and stops being conservative the
@@ -813,7 +1026,7 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 /// Break a long line at spaces, so a terminal does not do it in the middle of a number.
-fn wrap(text: &str, width: usize) -> Vec<String> {
+pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
     for word in text.split_whitespace() {
@@ -866,6 +1079,7 @@ mod tests {
                 oscillator_holdover: 0,
                 model_residual: 0,
                 safety_margin: 0,
+                unclaimed_rate: None,
             },
             since_last_sync: 0,
             frequency_ppb: 0,
@@ -877,7 +1091,11 @@ mod tests {
                 min_sources: 1,
                 min_operators: None,
                 max_holdover: None,
+                source_interval_floor: None,
+                frequency_slew_ppb_per_s: None,
+                frequency_span_ppb: None,
             },
+            taken_by: None,
         }
     }
 

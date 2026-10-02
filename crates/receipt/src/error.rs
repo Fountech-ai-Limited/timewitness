@@ -48,8 +48,8 @@ impl fmt::Display for ReceiptError {
             ),
             ReceiptError::UnknownVersion(v) => write!(
                 f,
-                "this receipt says it is version {v} and this code reads version 0, so it will not \
-                 guess at what the fields mean"
+                "this receipt says it is version {v} and this code reads versions 0 and 1, so it \
+                 will not guess at what the fields mean. A verifier that reads version {v} will"
             ),
             ReceiptError::MislabelledEvidence { role, scheme, why } => write!(
                 f,

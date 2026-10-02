@@ -33,7 +33,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -464,23 +464,31 @@ fn delegation_from(
 /// switch: fill the map and every client not already in it is turned away, which is every agent
 /// synchronising for the first time and every agent after a reboot.
 ///
-/// The shared allowance is what stops the other direction. Answering everything past the ceiling
-/// would make this a server that signs on demand for anyone willing to send it 65,536 packets
-/// first. One allowance the size of one network's bounds the work at the ceiling's share plus one,
-/// and it is emptied with the map.
+/// Answering everything past the ceiling would make this a server that signs on demand for anyone
+/// willing to send it 65,536 packets first, so what is past it is counted too, against a wider
+/// network: the /16 for IPv4 and the /32 for IPv6, each with one network's share. Until 2026-09-21
+/// it all shared a single allowance, and an attacker who filled the map and spent that one
+/// allowance shut out every first-ever client for the rest of the window, 65,596 packets at the
+/// default sizes. Now the attacker spends the share of the wider networks it sends from, and a
+/// client from any other is answered. The wider networks are held under the same ceiling, and what
+/// is past that shares one allowance, so the work in a window is bounded at two ceilings' shares
+/// plus one. Every IPv4 /16 there is fits under the default ceiling, so for IPv4 that last
+/// allowance is only reached by IPv6. All of it is emptied with the map.
 pub struct RateLimit {
     per_window: u32,
     window: Duration,
     started: Instant,
     seen: HashMap<IpAddr, u32>,
     address_ceiling: usize,
+    wider: HashMap<IpAddr, u32>,
     past_the_ceiling: u32,
 }
 
-/// How many distinct addresses one window will count before a new one is refused.
+/// How many distinct networks one window will count before a new one is counted against its wider
+/// network instead, and how many wider networks it will count before the rest share one allowance.
 ///
-/// At a few tens of bytes an entry this is under three megabytes, which is the most the map can
-/// ever hold, and it is far above what two servers of ours see in a minute.
+/// At a few tens of bytes an entry this is under three megabytes a map and two maps, which is the
+/// most they can ever hold, and it is far above what two servers of ours see in a minute.
 pub const DEFAULT_ADDRESS_CEILING: usize = 65_536;
 
 impl RateLimit {
@@ -493,6 +501,7 @@ impl RateLimit {
             started: Instant::now(),
             seen: HashMap::new(),
             address_ceiling: DEFAULT_ADDRESS_CEILING,
+            wider: HashMap::new(),
             past_the_ceiling: 0,
         }
     }
@@ -510,20 +519,33 @@ impl RateLimit {
         self.seen.len()
     }
 
+    /// How many wider networks this window has counted past the ceiling.
+    #[must_use]
+    pub fn wider_networks(&self) -> usize {
+        self.wider.len()
+    }
+
     /// Whether this address may send another packet now, counting this one.
     pub fn allows(&mut self, from: SocketAddr, now: Instant) -> bool {
         if now.duration_since(self.started) >= self.window {
             self.seen.clear();
+            self.wider.clear();
             self.past_the_ceiling = 0;
             self.started = now;
         }
         let network = Self::network_of(from.ip());
         if !self.seen.contains_key(&network) && self.seen.len() >= self.address_ceiling {
-            // Answered rather than refused, and out of one allowance rather than its own, so the
-            // map stays bounded and so does the work. See the note on this type for why refusing
-            // here is the switch an attacker was being handed.
-            self.past_the_ceiling = self.past_the_ceiling.saturating_add(1);
-            return self.past_the_ceiling <= self.per_window;
+            // Answered rather than refused, out of the wider network's share rather than its own,
+            // so the maps stay bounded and so does the work. See the note on this type for why
+            // refusing here is the switch an attacker was being handed.
+            let wider = Self::wider_network_of(from.ip());
+            if !self.wider.contains_key(&wider) && self.wider.len() >= self.address_ceiling {
+                self.past_the_ceiling = self.past_the_ceiling.saturating_add(1);
+                return self.past_the_ceiling <= self.per_window;
+            }
+            let count = self.wider.entry(wider).or_insert(0);
+            *count = count.saturating_add(1);
+            return *count <= self.per_window;
         }
         let count = self.seen.entry(network).or_insert(0);
         *count += 1;
@@ -536,11 +558,28 @@ impl RateLimit {
     /// 64 bits are free for it to vary. An IPv4 address names one host, so it is its own network
     /// and grouping it further would put unrelated clients on one allowance.
     fn network_of(address: IpAddr) -> IpAddr {
+        Self::prefix_of(address, 4, 8)
+    }
+
+    /// The network past the ceiling is counted against: the /16 for IPv4, the /32 for IPv6.
+    ///
+    /// Wide enough that one attacker holds few of them. An IPv6 /32 is what a provider is given,
+    /// so a client handed a /48 or a /56 sits inside one; an IPv4 /16 is 65,536 addresses.
+    fn wider_network_of(address: IpAddr) -> IpAddr {
+        Self::prefix_of(address, 2, 4)
+    }
+
+    /// The first `v4` octets of an IPv4 address or the first `v6` octets of an IPv6 one, the rest zero.
+    fn prefix_of(address: IpAddr, v4: usize, v6: usize) -> IpAddr {
         match address {
-            IpAddr::V4(v4) => IpAddr::V4(v4),
-            IpAddr::V6(v6) => {
-                let mut octets = v6.octets();
-                octets[8..].fill(0);
+            IpAddr::V4(address) => {
+                let mut octets = address.octets();
+                octets[v4..].fill(0);
+                IpAddr::V4(Ipv4Addr::from(octets))
+            }
+            IpAddr::V6(address) => {
+                let mut octets = address.octets();
+                octets[v6..].fill(0);
                 IpAddr::V6(Ipv6Addr::from(octets))
             }
         }
@@ -1104,6 +1143,99 @@ mod tests {
         assert!(
             limit.allows(fresh, later),
             "the window ends and so does that"
+        );
+    }
+
+    #[test]
+    fn an_attacker_who_fills_the_map_cannot_spend_the_overflow_for_everybody() {
+        // Until 2026-09-21 everything past the ceiling shared one allowance, so an attacker who
+        // filled the map and sent one allowance more shut out every first-ever client for the rest
+        // of the window: 65,596 packets a window at the default sizes. The overflow is now counted
+        // per wider network, so the attacker spends the share of the networks it sends from and a
+        // client from anywhere else still has its own.
+        let mut limit = RateLimit::new(3, Duration::from_secs(60)).with_address_ceiling(2);
+        let start = Instant::now();
+        for n in 1..=2u32 {
+            let filler: SocketAddr = format!("198.51.100.{n}:2002").parse().unwrap();
+            assert!(limit.allows(filler, start));
+        }
+        assert_eq!(limit.addresses(), 2, "the map is at its ceiling");
+        let mut spent = 0;
+        for n in 10..40u32 {
+            let from: SocketAddr = format!("198.51.{n}.9:2002").parse().unwrap();
+            let _ = limit.allows(from, start);
+            spent += 1;
+        }
+        assert_eq!(spent, 30);
+        for n in 0..20u32 {
+            let from: SocketAddr = format!("198.51.77.{n}:2002").parse().unwrap();
+            let _ = limit.allows(from, start);
+        }
+        let honest: SocketAddr = "203.0.113.50:2002".parse().unwrap();
+        assert!(
+            limit.allows(honest, start),
+            "a first-ever client from a network the attacker does not hold is answered"
+        );
+        let beside: SocketAddr = "198.51.77.200:2002".parse().unwrap();
+        assert!(
+            !limit.allows(beside, start),
+            "a client in the wider network the attacker spent shares what the attacker spent"
+        );
+        assert_eq!(limit.addresses(), 2, "and none of it grew the map");
+    }
+
+    #[test]
+    fn the_overflow_is_bounded_however_many_wider_networks_ask() {
+        // Answering past the ceiling is still bounded: each wider network gets one share, the
+        // wider networks are held under the same ceiling, and what is past that shares one
+        // allowance, as everything past the first ceiling used to.
+        let mut limit = RateLimit::new(3, Duration::from_secs(60)).with_address_ceiling(2);
+        let start = Instant::now();
+        for n in 1..=2u32 {
+            let filler: SocketAddr = format!("192.0.2.{n}:2002").parse().unwrap();
+            assert!(limit.allows(filler, start));
+        }
+        let mut answered = 0;
+        for n in 0..100u32 {
+            let from: SocketAddr = format!("10.{n}.0.1:2002").parse().unwrap();
+            for _ in 0..5 {
+                if limit.allows(from, start) {
+                    answered += 1;
+                }
+            }
+        }
+        assert_eq!(
+            answered,
+            3 * 2 + 3,
+            "two wider networks at three each, then one shared allowance of three"
+        );
+        assert_eq!(
+            limit.wider_networks(),
+            2,
+            "the second map has the same ceiling"
+        );
+        let later = start + Duration::from_secs(61);
+        let fresh: SocketAddr = "10.200.0.1:2002".parse().unwrap();
+        assert!(
+            limit.allows(fresh, later),
+            "and both are emptied with the window"
+        );
+        assert_eq!(limit.wider_networks(), 0);
+    }
+
+    #[test]
+    fn a_wider_network_is_a_slash_sixteen_or_a_slash_thirty_two() {
+        // Wide enough that an attacker cannot hold many of them, which is the whole point, and a
+        // whole IPv4 /16 is 65,536 of them at most, so that map is bounded by the address space.
+        let v4: SocketAddr = "198.51.100.7:1".parse().unwrap();
+        assert_eq!(
+            RateLimit::wider_network_of(v4.ip()),
+            "198.51.0.0".parse::<IpAddr>().unwrap()
+        );
+        let v6: SocketAddr = "[2001:db8:abcd:12::1]:1".parse().unwrap();
+        assert_eq!(
+            RateLimit::wider_network_of(v6.ip()),
+            "2001:db8::".parse::<IpAddr>().unwrap()
         );
     }
 

@@ -21,6 +21,9 @@ pub struct Args {
 
 /// Options that take a value after them. Anything else beginning with two dashes is a flag.
 const TAKES_A_VALUE: &[&str] = &[
+    "--from",
+    "--certificate",
+    "--kind",
     "--subject",
     "--digest",
     "--anchors",
@@ -30,6 +33,7 @@ const TAKES_A_VALUE: &[&str] = &[
     "--out",
     "--rounds",
     "--gap",
+    "--deadline",
     "--max-width",
     "--sequence",
     "--previous",
@@ -37,6 +41,7 @@ const TAKES_A_VALUE: &[&str] = &[
     "--agent",
     "--endpoint",
     "--interval",
+    "--receipt",
     "--bind",
     "--log",
     "--add",
@@ -48,6 +53,9 @@ const TAKES_A_VALUE: &[&str] = &[
     "--role",
     "--retire",
     "--at",
+    "--event",
+    "--repository",
+    "--to",
 ];
 
 /// What each subcommand accepts, and how many things it takes that are not options.
@@ -81,11 +89,13 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
             "--out",
             "--rounds",
             "--gap",
+            "--deadline",
             "--max-width",
             "--sequence",
             "--previous",
             "--no-evidence",
             "--agent",
+            "--certificate",
         ],
         0,
     ),
@@ -103,6 +113,30 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
         ],
         0,
     ),
+    // Two, because a request and the response to it are read together. One is still one half.
+    (
+        "countersign",
+        &[
+            "--from",
+            "--fields",
+            "--ask",
+            "--answer",
+            "--receipt",
+            "--key",
+        ],
+        2,
+    ),
+    // Two, and two exactly: the order question is about a pair, and one receipt has nothing to be
+    // in order with.
+    (
+        "order",
+        &["--anchors", "--no-anchors", "--min-width", "--fields"],
+        2,
+    ),
+    ("send", &["--event", "--repository", "--to"], 1),
+    ("enrol", &["--key", "--label", "--to"], 0),
+    ("certificate", &["--key", "--kind", "--out", "--to"], 0),
+    ("status", &["--agent"], 0),
     ("cannot-prove", &[], 0),
 ];
 

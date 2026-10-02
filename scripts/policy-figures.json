@@ -15,7 +15,8 @@
   "a fact about the page rather than about time": "The figure describes the page a reader is looking at, how long an animation runs or how often it repeats, and says nothing about a clock, a bound or a receipt. There is no measurement behind it and nothing for a reader to reproduce beyond watching the page.",
   "the conditions are in the table line this figure sits in": "The page puts the figure in a value field and the conditions in the note beside it, which is one line of a table a reader sees whole and this check reads as two strings. The content reader yields each string on its own, so the conditions are on the page and one field away rather than absent. That is a shortcoming of the reader rather than of the copy, and these entries go the moment the reader hands a table line over in one piece.",
   "a share of a drawing rather than a duration": "The figure is a proportion of the picture it sits in, how much of a bar or a bracket one part fills, and it is there so the drawing adds up. It measures the drawing and never a clock, so there are no conditions it could carry.",
-  "a figure the product has stopped printing, said as history": "The figure was read off the committed receipt until 2026-09-19, when an authority's unstated accuracy stopped being read as a nought and the verifier stopped printing a span at all. So no artefact carries it any more and no register entry can be held to one: the entry that quoted it was removed the same day, which is what took the claim off the README and off five served surfaces. The sentence it appears in is the record of that change, in the past tense and dated, on the page that documents the verifier. It is excused here rather than registered because a register entry is a figure somebody may still quote, and this is a figure nobody may."
+  "a figure the product has stopped printing, said as history": "The figure was read off the committed receipt until 2026-09-19, when an authority's unstated accuracy stopped being read as a nought and the verifier stopped printing a span at all. So no artefact carries it any more and no register entry can be held to one: the entry that quoted it was removed the same day, which is what took the claim off the README and off five served surfaces. The sentence it appears in is the record of that change, in the past tense and dated, on the page that documents the verifier. It is excused here rather than registered because a register entry is a figure somebody may still quote, and this is a figure nobody may.",
+  "arithmetic from the shipped settings, checkable from the sentence": "The figure is the product of numbers given in the same sentence, every one of them a setting this code ships or a timeout it states, and nothing was measured to arrive at it. There are no conditions because there is no reading: a reader multiplies the figures beside it and gets the same answer. It is written out rather than left to the reader because a worst case somebody has to compute for themselves is a worst case nobody computes."
  },
  "excused": [
   {
@@ -543,6 +544,16 @@
    ],
    "sentence": "Until 2026-09-19 both printed a bracket, 2 s on the first and about 2.95 years on the second, and both numbers were arithmetic that took an unstated accuracy for a stated nought.",
    "reason": "a figure the product has stopped printing, said as history"
+  },
+  {
+   "figures": [
+    "240 seconds"
+   ],
+   "surfaces": [
+    "action.yml"
+   ],
+   "sentence": "It sits above the arithmetic for a run where a third of the sources blackhole, which is sixteen rounds by three sources by five seconds, or 240 seconds of waiting, after which that run still answers correctly on the rest.",
+   "reason": "arithmetic from the shipped settings, checkable from the sentence"
   }
  ]
 }

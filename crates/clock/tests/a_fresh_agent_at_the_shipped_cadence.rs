@@ -49,6 +49,15 @@ impl MonotonicClock for ClockHandle {
 }
 
 /// The agent's shipped schedule, as `timewitness_agent::Cadence` ships it.
+///
+/// Written down here because the crate that ships the cadence depends on this one and not the other
+/// way round, and held to `Cadence::default` from outside by
+/// `crates/agent/tests/the_shipped_cadence.rs`, which reads these three lines and the default
+/// together. A change to either copy alone turns that file red and names which of the two moved.
+///
+/// Until 2026-09-20 this file held them with an assertion of each literal against itself, which
+/// could not fail. A cadence change would have left this rig simulating the old schedule, green,
+/// while the P0 it is the regression case for is a P0 about the schedule the agent actually keeps.
 const SETTLING_ROUNDS: usize = 4;
 const SETTLING_GAP_MS: u64 = 250;
 const INTERVAL_S: u64 = 32;
@@ -167,15 +176,4 @@ fn a_fresh_agent_signs_before_three_minutes_and_keeps_signing() {
          than one in ten",
         settled.len()
     );
-}
-
-#[test]
-fn the_schedule_is_the_one_the_agent_ships() {
-    // Asserted here so a change to the cadence turns this file red rather than quietly changing
-    // what it measures. The crate that ships the cadence is not a dependency of this one, so the
-    // figures are written down, and `Cadence::default` in `crates/agent/src/serve.rs` is where
-    // they have to match.
-    assert_eq!(SETTLING_ROUNDS, 4);
-    assert_eq!(SETTLING_GAP_MS, 250);
-    assert_eq!(INTERVAL_S, 32);
 }

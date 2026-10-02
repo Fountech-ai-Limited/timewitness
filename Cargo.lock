@@ -770,14 +770,17 @@ name = "timewitness-cli"
 version = "0.1.0"
 dependencies = [
  "getrandom",
+ "rustls",
  "timewitness-agent",
  "timewitness-clock",
  "timewitness-core",
+ "timewitness-countersign",
  "timewitness-platform",
  "timewitness-receipt",
  "timewitness-roughtime-server",
  "timewitness-sources",
  "timewitness-verify",
+ "webpki-roots",
 ]
 
 [[package]]

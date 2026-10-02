@@ -29,17 +29,23 @@
 
 pub mod anchor_file;
 pub mod cannot_prove;
+pub mod certificate;
 pub mod floor;
+pub mod order;
 
 use timewitness_core::keylog::file::{HeadCheck, KeyLog};
 use timewitness_core::keylog::{check_consistency, consistency_proof, KeyEntry, Standing};
 use timewitness_core::time::{Nanos, NANOS_PER_MICRO, NANOS_PER_MILLI, NANOS_PER_SEC};
+use timewitness_core::{SmearPolicy, Timescale};
 use timewitness_receipt::anchors::TrustAnchors;
 use timewitness_receipt::report::Verified;
-use timewitness_receipt::schema::Role;
-use timewitness_receipt::{chain_link, open_with, sha256_payload, Receipt, ReceiptError};
+use timewitness_receipt::schema::{reads_smear, reads_timescale, Role, SourceRecord};
+use timewitness_receipt::{
+    chain_link, open_with, sha256_payload, without_signature_witness, Receipt, ReceiptError,
+};
 
 pub use floor::Floor;
+pub use order::{order_of_receipts, Link, PairReading, Verdict, Which};
 
 /// What the reader supplied as the thing the receipt is supposed to be about.
 #[derive(Clone, Copy, Debug)]
@@ -137,13 +143,16 @@ pub struct Assessment {
     pub receipt: Option<Receipt>,
     /// What was established about the evidence entries, where the receipt could be read.
     pub evidence: Option<Verified>,
-    /// The SHA-256 of the bytes exactly as they were handed over.
+    /// The SHA-256 of the receipt as its agent signed it, which is what a chain link is taken over,
+    /// so it is printed: two readers comparing what they hold are comparing this.
     ///
-    /// This is what a chain link is taken over today, so it is printed: two readers comparing what
-    /// they hold are comparing this. A holder can restate a receipt as different bytes carrying the
-    /// same claim, which changes this value and changes nothing else, and that question is not
-    /// settled.
+    /// It is the hash of the bytes as handed over unless they carry a witness over the signature,
+    /// and then it is the hash of the same bytes with that witness taken out. The witness is outside
+    /// the signature and can be respelled by anybody holding the file, so a hash that moved with it
+    /// would let one receipt be many. See [`timewitness_receipt::chain_link`].
     pub link: Vec<u8>,
+    /// Whether the bytes carried a witness over the signature, which the link is taken without.
+    pub witness_set_aside: bool,
     /// How large the receipt was.
     pub encoded_bytes: usize,
     /// The numbers this reader judged it against.
@@ -152,6 +161,9 @@ pub struct Assessment {
     pub anchors_held: usize,
     /// What was established about the key log, where the reader supplied one.
     pub key_log: Option<KeyLogReport>,
+    /// Whether the receipt is a TimeWitness certificate, where this reader holds that
+    /// certification has begun and every version 0 check held.
+    pub certificate: Option<certificate::Grade>,
 }
 
 /// What a reader established about the key log they supplied, for a script reading fields.
@@ -174,6 +186,9 @@ pub const KEY_LOG_QUESTION: &str = "is that key one of ours";
 /// The question the kept log step answers.
 pub const KEPT_LOG_QUESTION: &str = "is this log an extension of the one you kept";
 
+/// The question asked of the certificate a receipt is held on, once it is found.
+pub const CERTIFICATE_QUESTION: &str = "was that certificate published before its window began";
+
 impl Assessment {
     /// Whether every check that ran held.
     ///
@@ -183,6 +198,27 @@ impl Assessment {
     #[must_use]
     pub fn accepted(&self) -> bool {
         !self.steps.iter().any(|s| s.state.is_failure())
+    }
+
+    /// Whether the receipt stands: every check that ran held, and where this reader grades
+    /// certificates, it is one or was signed before there were any. This is the exit code.
+    #[must_use]
+    pub fn holds(&self) -> bool {
+        self.accepted()
+            && self
+                .certificate
+                .as_ref()
+                .map_or(true, certificate::Grade::stands)
+    }
+
+    /// The line a reader stops at: the certificate grade where it changes what they should take
+    /// away, and the verdict otherwise.
+    #[must_use]
+    pub fn headline(&self) -> String {
+        self.certificate
+            .as_ref()
+            .and_then(certificate::Grade::first_line)
+            .unwrap_or_else(|| self.verdict())
     }
 
     /// The step that refused it, where one did.
@@ -422,6 +458,7 @@ fn assess(
         receipt: None,
         evidence: None,
         link,
+        witness_set_aside: without_signature_witness(signed_receipt).is_some(),
         encoded_bytes,
         floor: *floor,
         anchors_held: anchors.count(),
@@ -430,6 +467,7 @@ fn assess(
             agent_entries: log.agent_entries(),
             head: log.check_head(&held),
         }),
+        certificate: None,
     };
 
     // Size first, because everything after it allocates from what the file says about itself.
@@ -470,7 +508,10 @@ fn assess(
             short_hex(&receipt.agent_public_key)
         ),
     ));
-    steps.push(against_the_key_log(&receipt, key_log, &held));
+    match anchors.certification_began {
+        None => steps.push(against_the_key_log(&receipt, key_log, &held)),
+        Some(began) => steps.push(the_log_for_certificates(key_log, anchors, &held, began)),
+    }
     if let (Some(log), Some(kept)) = (key_log, kept) {
         steps.push(against_the_kept_log(log, kept, &held));
     }
@@ -480,9 +521,26 @@ fn assess(
          of the sources that answered were kept, and the agent kept to the policy it states",
     ));
 
+    steps.push(what_the_sources_spoke(&receipt));
     steps.push(check_floor(&receipt, floor));
     steps.push(check_subject(&receipt, subject));
     steps.push(check_order(&receipt));
+
+    // The certificate grade, only over a receipt every other check held, because a refusal is
+    // already the first thing a reader is told and a grade beside it would be a second verdict.
+    if let Some(began) = anchors.certification_began {
+        if !steps.iter().any(|s| s.state.is_failure()) {
+            let grade = certificate::grade(&receipt, &evidence, key_log, &held, began);
+            if let (certificate::Grade::Held { entry, .. }, Some(log)) = (&grade, key_log) {
+                if let Err(why) = certificate::check_the_certificate(log, *entry, anchors) {
+                    steps.push(Step::failed(CERTIFICATE_QUESTION, why));
+                }
+            }
+            if !steps.iter().any(|s| s.state.is_failure()) {
+                assessment.certificate = Some(grade);
+            }
+        }
+    }
 
     assessment.steps = steps;
     assessment.receipt = Some(receipt);
@@ -644,6 +702,82 @@ fn against_the_key_log(receipt: &Receipt, key_log: Option<&KeyLog>, held: &[[u8;
     }
 }
 
+/// `is that key one of ours`, where this reader grades certificates.
+///
+/// The window is no longer judged here, and never on the receipt's reading: the certificate grade
+/// above the steps judges it on outside evidence. What is left for this step is the log itself:
+/// whether it is ours, and whether it states the cutoff this reader holds. A log that states another
+/// cutoff, or certifies a window before it, fails here, and the receipt read against it is refused.
+fn the_log_for_certificates(
+    key_log: Option<&KeyLog>,
+    anchors: &TrustAnchors,
+    held: &[[u8; 32]],
+    began: timewitness_core::UnixNanos,
+) -> Step {
+    let question = KEY_LOG_QUESTION;
+    let Some(log) = key_log else {
+        return Step::not_checked(
+            question,
+            "no key log was supplied, so whether the app certified this key is not answered. The \
+             line above the steps says so",
+        );
+    };
+    let signer =
+        match log.check_head(held) {
+            HeadCheck::Checked(signer) => signer,
+            HeadCheck::BadSignature => return Step::failed(
+                question,
+                "the head on this key log is not signed by the key the head itself names, so the \
+                 log has been edited or the signature was moved onto it from somewhere else. \
+                 Nothing in it is worth reading",
+            ),
+            HeadCheck::SignerNotHeld(signer) => {
+                return Step::not_checked(
+                    question,
+                    format!(
+                    "the log carries {} entries under a head signed by {}, and that is not a key \
+                     this reader holds for us. Whatever the list says, it is not us saying it",
+                    log.entries.len(),
+                    short_hex(&signer)
+                ),
+                )
+            }
+            HeadCheck::None => {
+                return Step::not_checked(
+                    question,
+                    format!(
+                        "the log carries {} entries and no signed head, so it is signed by nobody",
+                        log.entries.len()
+                    ),
+                )
+            }
+        };
+    if !log.checkpoints_are_ours(held) {
+        return Step::not_checked(
+            question,
+            "an earlier head in this log is not signed by a key this reader holds for us, so the \
+             dates it gives the entries under it are nobody's",
+        );
+    }
+    if let Err(why) = certificate::check_the_log(log, anchors, began) {
+        return Step::failed(question, why);
+    }
+    Step::held(
+        question,
+        format!(
+            "the log states {} entries under {} heads, the newest signed by {}, a key this reader \
+             holds for us, and it does not contradict certification beginning at {} ns. **This is \
+             a list we signed and not third-party evidence.** Whether this key was certified when \
+             the receipt was signed is judged above the steps on outside evidence alone, never on \
+             the receipt's own reading",
+            log.entries.len(),
+            log.heads().count(),
+            short_hex(&signer),
+            began.as_nanos()
+        ),
+    )
+}
+
 /// `is this log an extension of the one you kept`, for a reader holding an earlier copy.
 ///
 /// The only thing a log we alone sign proves, and it proves it only to this reader: nothing they
@@ -775,6 +909,101 @@ fn describe_difference(old: &KeyEntry, new: &KeyEntry) -> String {
 }
 
 /// The verifier's own floor, applied to the numbers rather than to what the receipt says about them.
+/// `what did each source say it was speaking`, which is the one thing in a receipt nobody read.
+///
+/// Every source carries the timescale it answered on and what it does with a leap second, and until
+/// 2026-09-20 no reader anywhere touched either. The agent reads the timescale, in
+/// `Sample::from_exchange`, where a source on TAI is converted to UTC using the offset it stated. A
+/// reader checking a receipt a stranger handed them was trusting the signer to have done that and
+/// had no way to see it, and on TAI the difference is thirty-seven seconds.
+///
+/// The refusals sit in `validate`, which is where a value nothing can read belongs, and which also
+/// refuses a kept source that answered on anything but UTC. So by the time a receipt reaches here
+/// every value is one this format knows and every source the bound rests on spoke UTC. What is left
+/// is to say so, because a reader who is told nothing cannot tell a receipt whose sources all spoke
+/// UTC from a receipt nobody looked at.
+///
+/// It never fails. A source off UTC that the selection dropped is a fact about the round rather
+/// than a fault in the receipt, and a source that smears is a source whose answers may be up to a
+/// second from UTC inside its own window, which the reading's own width already has to cover. Both
+/// are named rather than graded.
+fn what_the_sources_spoke(receipt: &Receipt) -> Step {
+    let question = "what did each source say it was speaking";
+    let sources = &receipt.claim.sources;
+
+    let mut said: Vec<String> = Vec::new();
+    for source in sources.iter().filter(|s| worth_saying(s)) {
+        let mut about: Vec<String> = Vec::new();
+        if !matches!(reads_timescale(&source.timescale), Some(Timescale::Utc)) {
+            about.push(format!("answered on {}", source.timescale));
+        }
+        if let Some(SmearPolicy::Linear { window_seconds }) = reads_smear(&source.smear) {
+            about.push(format!(
+                "spreads a leap second over {window_seconds} seconds rather than stepping"
+            ));
+        }
+        match source.leap.as_str() {
+            "add-second" => about.push("announced a leap second being added".to_string()),
+            "delete-second" => about.push("announced a leap second being removed".to_string()),
+            _ => {}
+        }
+        said.push(format!(
+            "{} {}{}",
+            source.id,
+            about.join(" and "),
+            if source.kept {
+                ""
+            } else {
+                ", and was not kept"
+            }
+        ));
+    }
+
+    if said.is_empty() {
+        return Step::held(
+            question,
+            format!(
+                "all {} of them answered on UTC, and none said it spreads a leap second out or \
+                 announced one, so nothing was converted on the way into this receipt",
+                sources.len()
+            ),
+        );
+    }
+
+    Step::held(
+        question,
+        format!(
+            "{} of {} said something beyond plain UTC: {}. A source on another timescale was \
+             converted by the agent using the offset that source itself stated, which is the \
+             agent's arithmetic rather than anything this reader can check, and no source this \
+             bound rests on is one of them. A source spreading a leap second out may be up to a \
+             second from UTC inside its own window, and around an announced leap second two \
+             sources can differ by the second itself",
+            said.len(),
+            sources.len(),
+            said.join("; ")
+        ),
+    )
+}
+
+/// Whether what this source said about its own timescale is worth putting in front of a reader.
+///
+/// Three things are: a timescale that is not UTC, including one the source would not name, a
+/// source that says it spreads a leap second out rather than stepping, and a source announcing a
+/// leap second. The first two move a source's answers away from the UTC the receipt claims, and the
+/// third says the second itself is about to be one two sources can disagree by. The third was left
+/// out until 2026-09-21, so a kept source announcing a leap was reported as nothing to say.
+///
+/// A smear of `unknown` is not one of them, and that matters because it is the ordinary case: every
+/// shipped source client sets it, since NTP, NTS and Roughtime have no field in which a server says
+/// what it does with a leap second. Reporting it would put a line in front of every reader of every
+/// receipt, which is how a step that says something becomes a step nobody reads.
+fn worth_saying(source: &SourceRecord) -> bool {
+    !matches!(reads_timescale(&source.timescale), Some(Timescale::Utc))
+        || matches!(reads_smear(&source.smear), Some(SmearPolicy::Linear { .. }))
+        || matches!(source.leap.as_str(), "add-second" | "delete-second")
+}
+
 fn check_floor(receipt: &Receipt, floor: &Floor) -> Step {
     let question = "does the bound clear this reader's own floor";
     let width = receipt.width();

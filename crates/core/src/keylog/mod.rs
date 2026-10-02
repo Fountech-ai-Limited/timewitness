@@ -85,6 +85,17 @@ pub enum Role {
     /// A retirement is permanent. Keys are cheap and a retired one is never reissued, so a reader
     /// who finds this entry needs to read nothing else about the key for any later moment.
     Retired,
+    /// The app certified this key to an organisation for a short window.
+    ///
+    /// Carries the organisation and the method in [`KeyEntry::issued`], and always an end. It is a
+    /// statement of ours, in a log we sign, and never third-party evidence.
+    Certificate,
+    /// Certification began at `valid_from`, and no certificate window starts before it.
+    ///
+    /// One entry, written once. Its key is the key that signs the log's heads from then on, and the
+    /// head that first carries it holds a beacon round and a timestamp token, so a stranger can see
+    /// the moment was fixed after it had passed.
+    Cutoff,
 }
 
 impl Role {
@@ -96,6 +107,8 @@ impl Role {
             Role::Agent => 0x01,
             Role::Server => 0x02,
             Role::Retired => 0x03,
+            Role::Certificate => 0x04,
+            Role::Cutoff => 0x05,
         }
     }
 
@@ -106,6 +119,8 @@ impl Role {
             Role::Agent => "agent",
             Role::Server => "server",
             Role::Retired => "retired",
+            Role::Certificate => "certificate",
+            Role::Cutoff => "cutoff",
         }
     }
 
@@ -116,6 +131,8 @@ impl Role {
             "agent" => Some(Role::Agent),
             "server" => Some(Role::Server),
             "retired" => Some(Role::Retired),
+            "certificate" => Some(Role::Certificate),
+            "cutoff" => Some(Role::Cutoff),
             _ => None,
         }
     }
@@ -152,6 +169,18 @@ pub struct KeyEntry {
     /// retiring a key appends a [`Role::Retired`] entry, because a log whose old entries change is
     /// not a log. A retirement carries no end of its own.
     pub valid_until: Option<UnixNanos>,
+    /// Who the app certified the key to and how, on a [`Role::Certificate`] entry and on no other.
+    pub issued: Option<Issued>,
+}
+
+/// What a certificate says beyond the key and the window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Issued {
+    /// The organisation the key was certified to, as the app identifies it. An identifier and not a
+    /// name, because the log is public and permanent and a name is somebody's to change.
+    pub organisation: String,
+    /// How the key reached the app: `machine-credential` or `github-oidc`.
+    pub method: String,
 }
 
 impl KeyEntry {
@@ -180,6 +209,19 @@ impl KeyEntry {
                 out.extend_from_slice(&until.0.to_le_bytes());
             }
             None => out.push(0),
+        }
+        // A certificate carries two more fields, after everything an older entry carries, so the
+        // bytes of every other role are exactly what they were before certificates existed and
+        // every proof already given over them still holds.
+        if self.role == Role::Certificate {
+            let (organisation, method) = self
+                .issued
+                .as_ref()
+                .map_or(("", ""), |i| (i.organisation.as_str(), i.method.as_str()));
+            for field in [organisation, method] {
+                out.extend_from_slice(&(field.len() as u64).to_le_bytes());
+                out.extend_from_slice(field.as_bytes());
+            }
         }
         out
     }
@@ -257,6 +299,13 @@ pub struct TreeHead {
     pub root: [u8; 32],
     /// When we said so.
     pub at: UnixNanos,
+    /// A drand round, stored as the evidence blob a receipt carries, published before the head was
+    /// signed.
+    ///
+    /// Signed over with the rest of the head, so the head was made after that round existed. That
+    /// is the one thing about a head's time a stranger can check without trusting us: `at` is our
+    /// own clock.
+    pub beacon: Option<Vec<u8>>,
 }
 
 impl TreeHead {
@@ -270,6 +319,13 @@ impl TreeHead {
         out.extend_from_slice(&(self.size as u64).to_le_bytes());
         out.extend_from_slice(&self.root);
         out.extend_from_slice(&self.at.0.to_le_bytes());
+        // Appended only where there is one, so a head without a beacon signs over exactly the bytes
+        // it always did and the head already served still checks. With one, the bytes are longer
+        // than any head without, so a signature cannot move between the two.
+        if let Some(beacon) = &self.beacon {
+            out.extend_from_slice(&(beacon.len() as u64).to_le_bytes());
+            out.extend_from_slice(beacon);
+        }
         out
     }
 }
@@ -579,7 +635,7 @@ pub fn standing(entries: &[KeyEntry], key: &[u8; 32], at: UnixNanos) -> Standing
                 }
             }
             Role::Server => as_server = true,
-            Role::Retired => {}
+            Role::Retired | Role::Certificate | Role::Cutoff => {}
         }
     }
     if as_agent {
@@ -591,12 +647,76 @@ pub fn standing(entries: &[KeyEntry], key: &[u8; 32], at: UnixNanos) -> Standing
     }
 }
 
+/// What a reader concluded about a key's certificate, from the log and two outside instants.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Certified {
+    /// A certificate for this key holds a window containing both instants, and no retirement of
+    /// the key comes at or before the later one. Carries the entry's index in the log.
+    Held(usize),
+    /// The key was retired at the moment carried, at or before the later instant.
+    Retired(UnixNanos),
+    /// The key holds a certificate, and no window of it contains both instants.
+    OutsideItsWindow,
+    /// No certificate in this log names the key.
+    NotCertified,
+}
+
+/// Whether a certificate in these entries holds a key across a span placed by outside evidence.
+///
+/// `not_earlier` and `not_later` are instants a reader verified against keys they chose, never
+/// anything the receipt says about itself: the latest beacon inside the signature, and the earliest
+/// witness after it. The signing sits somewhere between them, so a window holds the signing only
+/// where it holds the whole span. A window containing one end and not the other is not enough,
+/// because nothing says which end the signing was nearer. Only [`Role::Certificate`] entries answer,
+/// and a retirement answers first for every moment from its own on, as it does in [`standing`].
+#[must_use]
+pub fn certified(
+    entries: &[KeyEntry],
+    key: &[u8; 32],
+    not_earlier: UnixNanos,
+    not_later: UnixNanos,
+) -> Certified {
+    let about_this_key = || {
+        entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.public_key == *key)
+    };
+    let certificates: Vec<(usize, &KeyEntry)> = about_this_key()
+        .filter(|(_, e)| e.role == Role::Certificate)
+        .collect();
+    if certificates.is_empty() {
+        return Certified::NotCertified;
+    }
+    if let Some(retired) = about_this_key()
+        .filter(|(_, e)| e.role == Role::Retired)
+        .map(|(_, e)| e.valid_from)
+        .min()
+    {
+        if retired <= not_later {
+            return Certified::Retired(retired);
+        }
+    }
+    if not_earlier > not_later {
+        return Certified::OutsideItsWindow;
+    }
+    certificates
+        .into_iter()
+        .find(|(_, e)| {
+            e.valid_from <= not_earlier && e.valid_until.is_some_and(|until| not_later <= until)
+        })
+        .map_or(Certified::OutsideItsWindow, |(index, _)| {
+            Certified::Held(index)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn entry(key: u8, from: i128, until: Option<i128>) -> KeyEntry {
         KeyEntry {
+            issued: None,
             public_key: [key; 32],
             role: Role::Agent,
             deployment: format!("deployment-{key}"),
@@ -607,6 +727,7 @@ mod tests {
 
     fn retired(key: u8, at: i128) -> KeyEntry {
         KeyEntry {
+            issued: None,
             public_key: [key; 32],
             role: Role::Retired,
             deployment: "retired".to_string(),
@@ -623,6 +744,7 @@ mod tests {
         // bytes, and a new layout that hashes the same entries differently orphans every one of
         // them.
         let e = KeyEntry {
+            issued: None,
             public_key: [5u8; 32],
             role: Role::Agent,
             deployment: "a".to_string(),
@@ -795,6 +917,7 @@ mod tests {
             *b = u8::try_from(i).unwrap();
         }
         let a = KeyEntry {
+            issued: None,
             public_key: key,
             role: Role::Agent,
             deployment: String::from_utf8(long_name.to_vec()).unwrap(),
@@ -809,6 +932,7 @@ mod tests {
         let mut until_b = [0u8; 16];
         until_b[..15].copy_from_slice(&from_a[1..16]);
         let b = KeyEntry {
+            issued: None,
             public_key: key,
             role: Role::Agent,
             deployment: String::from_utf8(long_name[..1].to_vec()).unwrap(),
@@ -870,12 +994,14 @@ mod tests {
         for new in 1..=32usize {
             let l = leaves(new);
             let new_head = TreeHead {
+                beacon: None,
                 size: new,
                 root: root(&l),
                 at: UnixNanos(0),
             };
             for old in 0..=new {
                 let old_head = TreeHead {
+                    beacon: None,
                     size: old,
                     root: root(&l[..old]),
                     at: UnixNanos(0),
@@ -893,6 +1019,7 @@ mod tests {
         // handed a twelve entry log whose fourth entry is different, and there is no proof.
         let honest = leaves(9);
         let old_head = TreeHead {
+            beacon: None,
             size: 9,
             root: root(&honest),
             at: UnixNanos(0),
@@ -901,6 +1028,7 @@ mod tests {
         let mut rewritten = leaves(12);
         rewritten[3] = entry(99, 0, None).leaf_hash();
         let new_head = TreeHead {
+            beacon: None,
             size: 12,
             root: root(&rewritten),
             at: UnixNanos(1),
@@ -918,6 +1046,7 @@ mod tests {
     fn a_log_that_removed_an_entry_cannot_prove_consistency() {
         let honest = leaves(9);
         let old_head = TreeHead {
+            beacon: None,
             size: 9,
             root: root(&honest),
             at: UnixNanos(0),
@@ -926,6 +1055,7 @@ mod tests {
         let mut shortened = leaves(12);
         shortened.remove(3);
         let new_head = TreeHead {
+            beacon: None,
             size: shortened.len(),
             root: root(&shortened),
             at: UnixNanos(1),
@@ -939,6 +1069,7 @@ mod tests {
     fn a_log_that_reordered_two_entries_cannot_prove_consistency() {
         let honest = leaves(9);
         let old_head = TreeHead {
+            beacon: None,
             size: 9,
             root: root(&honest),
             at: UnixNanos(0),
@@ -947,6 +1078,7 @@ mod tests {
         let mut swapped = leaves(12);
         swapped.swap(2, 5);
         let new_head = TreeHead {
+            beacon: None,
             size: 12,
             root: root(&swapped),
             at: UnixNanos(1),
@@ -959,11 +1091,13 @@ mod tests {
     fn a_head_cannot_be_a_prefix_of_a_smaller_one() {
         let l = leaves(9);
         let big = TreeHead {
+            beacon: None,
             size: 9,
             root: root(&l),
             at: UnixNanos(0),
         };
         let small = TreeHead {
+            beacon: None,
             size: 4,
             root: root(&l[..4]),
             at: UnixNanos(0),
@@ -977,11 +1111,13 @@ mod tests {
     #[test]
     fn two_heads_of_one_size_with_different_roots_are_two_different_logs() {
         let a = TreeHead {
+            beacon: None,
             size: 4,
             root: root(&leaves(4)),
             at: UnixNanos(0),
         };
         let b = TreeHead {
+            beacon: None,
             size: 4,
             root: [7; 32],
             at: UnixNanos(0),
@@ -1056,11 +1192,13 @@ mod tests {
         .expect("the old proof still holds against the old head");
         check_consistency(
             &TreeHead {
+                beacon: None,
                 size: 1,
                 root: before,
                 at: UnixNanos(0),
             },
             &TreeHead {
+                beacon: None,
                 size: 2,
                 root: root(&after_leaves),
                 at: UnixNanos(1),
@@ -1076,12 +1214,14 @@ mod tests {
         // everything since against it.
         assert_eq!(root(&[]), hash(&[]));
         let empty = TreeHead {
+            beacon: None,
             size: 0,
             root: root(&[]),
             at: UnixNanos(0),
         };
         let l = leaves(5);
         let five = TreeHead {
+            beacon: None,
             size: 5,
             root: root(&l),
             at: UnixNanos(1),
@@ -1093,6 +1233,7 @@ mod tests {
     #[test]
     fn a_head_signs_over_all_three_of_its_fields() {
         let a = TreeHead {
+            beacon: None,
             size: 4,
             root: [1; 32],
             at: UnixNanos(5),
@@ -1117,5 +1258,170 @@ mod tests {
                 "a signature over a head must not move to a different one"
             );
         }
+    }
+
+    fn certificate(key: u8, from: i128, until: i128) -> KeyEntry {
+        KeyEntry {
+            public_key: [key; 32],
+            role: Role::Certificate,
+            deployment: "a build runner".to_string(),
+            valid_from: UnixNanos(from),
+            valid_until: Some(UnixNanos(until)),
+            issued: Some(Issued {
+                organisation: "0b4f3c1e-0000-4000-8000-000000000001".to_string(),
+                method: "machine-credential".to_string(),
+            }),
+        }
+    }
+
+    #[test]
+    fn a_certificate_and_a_cutoff_have_leaves_of_their_own_and_their_bytes_are_pinned() {
+        // The app writes these leaves in TypeScript and pins the same two hashes, so a change on
+        // either side fails one of the two suites. Every older role keeps the bytes it had, which
+        // the pinned agent leaf above already holds.
+        let cert = certificate(5, 100, 200);
+        let bytes = cert.canonical();
+        assert_eq!(bytes[1], 0x04);
+        assert!(bytes.ends_with(b"machine-credential"));
+        assert_eq!(
+            bytes.len(),
+            1 + 1 + 32 + 8 + 14 + 16 + 1 + 16 + 8 + 36 + 8 + 18
+        );
+        let got: String = cert
+            .leaf_hash()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            got, "91822adf1f1df59aadd223502370a572937bbbde88b4e201ba4448fa90f55e03",
+            "the leaf hash of a fixed certificate moved"
+        );
+
+        let cutoff = KeyEntry {
+            public_key: [6u8; 32],
+            role: Role::Cutoff,
+            deployment: "certification begins".to_string(),
+            valid_from: UnixNanos(1_800_000_000_000_000_000),
+            valid_until: None,
+            issued: None,
+        };
+        assert_eq!(cutoff.canonical()[1], 0x05);
+        let got: String = cutoff
+            .leaf_hash()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            got, "e88ab70cf3beea2c13b2d1143ac762a95d7a24e04d239008dd08e798b8a4c37c",
+            "the leaf hash of a fixed cutoff moved"
+        );
+    }
+
+    #[test]
+    fn a_certificate_differing_only_in_organisation_or_method_hashes_differently() {
+        let a = certificate(5, 100, 200);
+        let mut b = a.clone();
+        b.issued.as_mut().unwrap().organisation.push('x');
+        let mut c = a.clone();
+        c.issued.as_mut().unwrap().method = "github-oidc".to_string();
+        assert_ne!(a.leaf_hash(), b.leaf_hash());
+        assert_ne!(a.leaf_hash(), c.leaf_hash());
+        // And the boundary between the two cannot be moved: "ab" and "c" against "a" and "bc".
+        let mut d = a.clone();
+        d.issued = Some(Issued {
+            organisation: "ab".to_string(),
+            method: "c".to_string(),
+        });
+        let mut e = a.clone();
+        e.issued = Some(Issued {
+            organisation: "a".to_string(),
+            method: "bc".to_string(),
+        });
+        assert_ne!(d.canonical(), e.canonical());
+    }
+
+    #[test]
+    fn a_certificate_holds_a_span_only_where_one_window_holds_the_whole_of_it() {
+        let entries = vec![certificate(1, 100, 200), certificate(1, 300, 400)];
+        let key = [1u8; 32];
+        let at = |a: i128, b: i128| certified(&entries, &key, UnixNanos(a), UnixNanos(b));
+
+        assert_eq!(at(120, 180), Certified::Held(0));
+        assert_eq!(at(100, 200), Certified::Held(0), "the edges are inside");
+        assert_eq!(at(310, 390), Certified::Held(1));
+        assert_eq!(
+            at(90, 150),
+            Certified::OutsideItsWindow,
+            "straddles the start"
+        );
+        assert_eq!(
+            at(150, 210),
+            Certified::OutsideItsWindow,
+            "straddles the end"
+        );
+        assert_eq!(
+            at(150, 350),
+            Certified::OutsideItsWindow,
+            "one end in each of two windows is in neither"
+        );
+        assert_eq!(at(250, 260), Certified::OutsideItsWindow, "in the gap");
+        assert_eq!(
+            at(180, 120),
+            Certified::OutsideItsWindow,
+            "evidence that contradicts itself places nothing"
+        );
+        assert_eq!(
+            certified(&entries, &[2u8; 32], UnixNanos(120), UnixNanos(180)),
+            Certified::NotCertified
+        );
+    }
+
+    #[test]
+    fn a_retirement_ends_a_certificate_from_its_moment_and_an_agent_entry_certifies_nothing() {
+        let mut entries = vec![certificate(1, 100, 200), retired(1, 150)];
+        let key = [1u8; 32];
+        assert_eq!(
+            certified(&entries, &key, UnixNanos(110), UnixNanos(140)),
+            Certified::Held(0),
+            "signed and witnessed before the retirement"
+        );
+        assert_eq!(
+            certified(&entries, &key, UnixNanos(110), UnixNanos(150)),
+            Certified::Retired(UnixNanos(150)),
+            "witnessed at the moment of retirement"
+        );
+        assert_eq!(
+            certified(&entries, &key, UnixNanos(160), UnixNanos(170)),
+            Certified::Retired(UnixNanos(150))
+        );
+
+        entries = vec![entry(1, 0, None)];
+        assert_eq!(
+            certified(&entries, &key, UnixNanos(110), UnixNanos(140)),
+            Certified::NotCertified,
+            "a key we published is not a key the app certified"
+        );
+    }
+
+    #[test]
+    fn a_head_without_a_beacon_signs_over_the_bytes_it_always_did_and_one_with_signs_over_it() {
+        let plain = TreeHead {
+            size: 4,
+            root: [1; 32],
+            at: UnixNanos(5),
+            beacon: None,
+        };
+        assert_eq!(plain.canonical().len(), 8 + 32 + 16);
+        let with = TreeHead {
+            beacon: Some(vec![9u8; 40]),
+            ..plain.clone()
+        };
+        let other = TreeHead {
+            beacon: Some(vec![8u8; 40]),
+            ..plain.clone()
+        };
+        assert!(with.canonical().starts_with(&plain.canonical()));
+        assert_ne!(with.canonical(), plain.canonical());
+        assert_ne!(with.canonical(), other.canonical());
     }
 }

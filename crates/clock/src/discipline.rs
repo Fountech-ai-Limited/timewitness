@@ -225,7 +225,7 @@ mod tests {
         );
         assert!(
             speed_up > 0.0,
-            "a clock running four parts per million slow has to be asked to run faster, and it              was asked for {speed_up} ppm"
+            "a clock running four parts per million slow has to be asked to run faster, and it was asked for {speed_up} ppm"
         );
 
         let slow_down = requested(
@@ -234,7 +234,7 @@ mod tests {
         );
         assert!(
             slow_down < 0.0,
-            "a clock running four parts per million fast has to be asked to run slower, and it              was asked for {slow_down} ppm"
+            "a clock running four parts per million fast has to be asked to run slower, and it was asked for {slow_down} ppm"
         );
 
         // And by the amount measured, since the whole point of a rate correction is that it removes

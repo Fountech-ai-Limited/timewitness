@@ -27,7 +27,7 @@ This repository is early and it says so rather than describing a finished produc
 | A continuously running agent | built as a foreground process, `timewitness agent`. It holds one clock model, disciplines it on a schedule and answers a reading to `timewitness stamp --agent` with no network call in the reading. It installs no service and starts at no boot, so it runs only while somebody keeps it running, and the Action below does not use it |
 | Four to six independent sources | built, on the count this product defines and enforces. Independent is the operator: a source names who runs it, the selection counts operators rather than names, a majority resting on a minority of operators is refused, and the shipped floor is four, so a round short of it declines to sign rather than widening. Nine servers reach six operators, so two can go dark and the agent carries on. Two things the count cannot see, both on the limitation list: it is an upper bound, since a shared upstream, path, constellation or implementation is one fault however many companies it is; and three programs stand behind the nine names, so a defect in one of them is one fault across three at once. The fourth source kind, local hardware, has no client and needs a receiver this product cannot assume anybody has |
 | Clock model: selection, weighting, regression, holdover | built |
-| Receipt format v0 | built and frozen, `docs/receipt-format-v0.md` |
+| Receipt format | version 0 built and frozen, and it is what the `v0` and `v0.1` releases write, `docs/receipt-format-v0.md`. Version 1 is what the `v0.2` release writes: it states the three terms that set a receipt's width, the part of the holdover covering a rate the agent is not correcting for, and which path the reading came by, and it can carry a witness over the receipt's own signature. `v0.2` reads both versions and `v0.1` refuses version 1 by name, `docs/receipt-format-v1.md` |
 | Roughtime client, the authenticated corridor | built, proved against three public servers |
 | NTS client, an authenticated source that is never evidence | built, proved against three public servers. Its keys are symmetric, so it improves the clock and can never be shown to a stranger |
 | Freshness beacon client, not-earlier-than | built for drand, one beacon of the two the design asks for |
@@ -35,10 +35,10 @@ This repository is early and it says so rather than describing a finished produc
 | Public verifier | built, as a command line tool and as one HTML page that runs from a local disk with no network. `docs/verifier.md` |
 | GitHub Action | built. One line in a workflow, and the receipt goes into the SLSA provenance and the container image labels that already ship |
 | A bound resting on outside evidence | not built. Every receipt says its bound rests on the agent's own model. The outside signatures it carries are checked, and on both timestamp authorities that ship the token states no accuracy of its own, so it bounds nothing in UTC and the receipt is left with one edge rather than two. Nothing issues a receipt whose width rests on outside signatures. The format can say so, the verifier refuses the claim unless all three roles check out, and a reader who has read an authority's published practice can allow for that authority's clock in their own anchors, which gives the edge back as the reader's own figure and never as the authority's |
-| Order within a chain | not built. A receipt carries a sequence number and a link to the one before it, both signed, and nothing here compares two receipts |
+| Order within a chain | built two receipts at a time, from the `v0.2` release. `timewitness order` reads two receipts offline and keeps two answers apart: the intervals say which moment came first, and a hash link says which of two receipts of one chain was signed first. Nothing walks a whole chain |
 | A public log of agent keys | not built. A receipt proves whoever signed it held that key and nothing about who that was. A log of our two Roughtime server keys is served at `timewitness.dev/key-log.txt` and names no agent key, and the `v0` release cannot read it |
 
-`v0` is tagged and released as source, with no binary. Both halves are built from source in this
+`v0`, `v0.1` and `v0.2` are tagged and released as source, with no binary. Both halves are built from source in this
 repository, so today a stranger compiles the verifier rather than downloading it.
 
 ## The two numbers, which are not the same number
@@ -150,7 +150,7 @@ reasoning and with what each kind of evidence actually says, is
 [`docs/what-timewitness-cannot-prove.md`](docs/what-timewitness-cannot-prove.md). A reviewer who
 knows this field should find nothing there that we did not say first.
 
-The full list runs to 60 items. What follows groups them and leaves some out, so read the full list
+The full list runs to 61 items. What follows groups them and leaves some out, so read the full list
 before deciding whether this product does what you need. `scripts/three-surfaces.sh` holds that
 number to the list itself, which is how an item added there and not summarised here gets noticed.
 
@@ -202,7 +202,7 @@ shipped floor refuses such a round; a plain NTP server states a delay and a disp
 about fifteen microseconds and signs nothing at all. Measured against Roughtime alone on 2026-09-08, every one of them at the four rounds the Action
 shipped that day: a bound of 16.219 s from a GitHub runner, a bound of 16.424 s on an ordinary desktop's receipt committed at that path then and since replaced, and a bound of 16.439 s from that same desktop, stamped at 11:08. Measured against two kinds
 on 2026-09-09 at the sixteen rounds the Action ships now, on an ordinary desktop: 153.6 ms and 164.8 ms wide over the first two of three passes at 14:52, and a bound of 176.7 ms on that desktop's receipt committed at that path then and since replaced, taken at 15:05. At 12:09 UTC a GitHub runner reached a bound of 211.3 ms, and that desktop reached the same on the remaining one of its three. Every one of those is our own measurement on
-the machine it names, and none of them is a figure for anybody else's machine. Measured with all three kinds on 2026-09-09 at the sixteen rounds the Action ships: 154.1 ms, 159.2 ms and 154.7 ms wide over three passes on an ordinary desktop at 20:28, and a bound of 149.8 ms on the receipt committed at that path then and since replaced, taken at 20:32, nine servers answering and nine kept. Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms wide over three passes at 21:39, and a bound of 153.9 ms on the receipt committed in this repository at 21:41, nine servers behind six operators and nine kept. Enforcing independence narrowed nothing and was never going to, because the rule refuses rounds rather than narrowing them: the sources overlapping is 35.1 ms of half width on that receipt against 34.9 ms on the one before it. Measured through the resident agent on the same desktop on 2026-09-18, after the ageing of a source's interval over the local counter was bounded by the band, at thirty-six minutes of uptime and a thirty-two second polling cadence: 130.346 ms, 115.308 ms and 115.260 ms wide over three readings at 23:32, nine servers behind six operators and nine kept, with the sources overlapping at 37.991 ms of half width on the first and 36.830 ms on the other two. Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at the same uptime and the same cadence: 128.7 ms, 128.8 ms and 129.1 ms wide over three readings at 22:17, against 122.7 ms, 122.8 ms and 122.6 ms wide from the same agent at the same uptime and the same cadence before the rule at 21:04. The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did. The third kind narrowed nothing and the breakdown says so: the sources overlapping is 34.9 ms of half width on that nine-source receipt against 34.5 ms on the six-source one taken at 15:05, and what moved between the two receipts is the oscillator, 0.5 ms against 17.3 ms, which is how long after the last exchange each stamp was taken. Measured through the resident agent with all three kinds on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 122.7 ms, 122.8 ms and 122.6 ms wide over three readings at 21:04, against 133.5 ms, 136.8 ms and 128.9 ms wide from the same agent at the same uptime and the same cadence with two kinds at 16:27. The sources overlapping did not move there either, 37.6 ms of half width against 37.1 to 38.3 ms, so the ten milliseconds between the two sets is the fit and the oscillator rather than the sources. Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms wide over three readings at 16:27, against 161.1 ms, 159.4 ms and 162.2 ms wide from the one-shot command on the same machine twelve minutes earlier. What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit. Of the 153.875 ms of width on the receipt committed in this repository, the largest single part is the model's own regression residual doubled by the coverage factor, 38.011 ms of half width, with 35.081 ms of the sources overlapping and 3.586 ms of the oscillator beside it, all four read 2026-09-10 off the verify command run on that receipt, which prints half widths.
+the machine it names, and none of them is a figure for anybody else's machine. Measured with all three kinds on 2026-09-09 at the sixteen rounds the Action ships: 154.1 ms, 159.2 ms and 154.7 ms wide over three passes on an ordinary desktop at 20:28, and a bound of 149.8 ms on the receipt committed at that path then and since replaced, taken at 20:32, nine servers answering and nine kept. Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms wide over three passes at 21:39, and a bound of 153.9 ms on the receipt committed in this repository at 21:41, nine servers behind six operators and nine kept. Enforcing independence narrowed nothing and was never going to, because the rule refuses rounds rather than narrowing them: the sources overlapping is 35.1 ms of half width on that receipt against 34.9 ms on the one before it. Measured through the resident agent on the same desktop on 2026-09-18, after the ageing of a source's interval over the local counter was bounded by the band, at thirty-six minutes of uptime and a thirty-two second polling cadence: 130.346 ms, 115.308 ms and 115.260 ms wide over three readings at 23:32, nine servers behind six operators and nine kept, with the sources overlapping at 37.991 ms of half width on the first and 36.830 ms on the other two. Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at the same uptime and the same cadence: 128.7 ms, 128.8 ms and 129.1 ms wide over three readings at 22:17, against 122.7 ms, 122.8 ms and 122.6 ms wide from the same agent at the same uptime and the same cadence before the rule at 21:04. The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did. The third kind narrowed nothing and the breakdown says so: the sources overlapping is 34.9 ms of half width on that nine-source receipt against 34.5 ms on the six-source one taken at 15:05, and what moved between the two receipts is the oscillator, 0.5 ms against 17.3 ms, which is how long after the last exchange each stamp was taken. Measured through the resident agent with all three kinds on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 122.7 ms, 122.8 ms and 122.6 ms wide over three readings at 21:04, against 133.5 ms, 136.8 ms and 128.9 ms wide from the same agent at the same uptime and the same cadence with two kinds at 16:27. The sources overlapping did not move there either, 37.6 ms of half width against 37.1 to 38.3 ms, so the ten milliseconds between the two sets is the fit and the oscillator rather than the sources. Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms wide over three readings at 16:27, against 161.1 ms, 159.4 ms and 162.2 ms wide from the one-shot command on the same machine twelve minutes earlier. What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit. Of the 153.875 ms of width on the receipt committed in this repository, the largest single part is the model's own regression residual doubled by the coverage factor, 38.011 ms of half width, with 35.081 ms of the sources overlapping and 3.586 ms of the oscillator beside it, all four read 2026-09-10 off the verify command run on that receipt, which prints half widths. The ceiling that receipt was signed under was 30 s until 2026-09-15, so a reader reproducing the width today does so under a narrower one. The verify command prints the older ceiling off the receipt itself.
 Polling more times does help and it is the shipped default that was wrong about which way: below
 three rounds no line is fitted, so the scatter of the measurements is never measured and never
 enters the width, and the bound at one round is narrower because less was measured rather than
@@ -222,9 +222,10 @@ built and thrown away in the same job. A fresh agent refuses most readings for i
 receipt yet carries third-party signed evidence for its bound. The resident agent refuses any interval wider than 250 ms, and the one-shot command, which the GitHub Action runs, refuses one wider than 2 s. Two
 seconds is the narrowest interval a Roughtime corridor can state, and the widest receipt a build
 runner has given us is 287.147 ms wide, on 2026-09-14 at sixteen rounds.
-Nothing verifies order. Every receipt carries a sequence number and the hash of the receipt before it, both
-signed, and no code anywhere compares two receipts, so nothing that exists today can put two receipts
-in order. There is no refusal receipt. A refusal is a return value inside the agent. Nothing signed
+Order is checked two receipts at a time, and nothing walks a chain. `timewitness order` reads two
+receipts offline and keeps two answers apart: the intervals say which moment came first, undecided
+where they touch or overlap, and a hash link says which of two receipts of one chain was signed first.
+Two receipts signed by different agent keys are not a chain, so only their intervals are compared. A countersigned exchange shows that two claims are consistent with an order and nothing more: neither side's interval is evidence for the other, an overlap is undecided, and the command that reads one ships from `v0.2`. There is no refusal receipt. A refusal is a return value inside the agent. Nothing signed
 and nothing portable is produced, so there is no artefact a third party could be shown. There is no
 released binary, so a stranger compiles the verifier rather than downloading it. Nothing links an
 agent's key to anybody. A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and no agent key. The `v0` release cannot read it. There is no first-run figure from anybody outside.
@@ -250,24 +251,43 @@ No account, nothing of ours involved, and no network. `bash scripts/build-verifi
 same verifier as one HTML file that runs from your own disk. What it checks and what it deliberately
 does not is `docs/verifier.md`.
 
+Because a check here reaches nothing of ours, almost none of it can be counted, and none of it is
+guessed at. What may ever be counted, and how such a figure may be stated, is
+`docs/counting-verifications.md`, held by `scripts/a-verification-figure-names-the-checker.mjs`
+before there is anything to count.
+
 ## Stamping a build
 
 One line in a workflow file:
 
 ```yaml
-- uses: Fountech-ai-Limited/timewitness@v0.1
+- uses: Fountech-ai-Limited/timewitness@v0.2
   with:
     subject: dist/widget.tar.gz
 ```
 
 There is no configuration file and no secret to set. The receipt lands beside the artefact, goes into
 the SLSA provenance and container image labels where those are named, and the workflow summary carries
-what the receipt does and does not establish. `action.yml` has every input.
+what the receipt does and does not establish. The inputs are the ones in `action.yml` at the tag you
+pin, so read that file at `v0.2` rather than here: an input added on `main` reaches a workflow only
+with the release after it. `deadline` arrived in `v0.2`, so a workflow pinned to `@v0.1` that sets it
+gets a warning from GitHub and no deadline.
 
 On a host behind a firewall, `docs/destinations-and-ports.md` is every host, protocol and port the
 agent and `stamp` reach, what each one is for, and what a blocked one costs. Two of them are plain
 HTTP on port 80 rather than HTTPS on 443, which is the one people get wrong. Checking a receipt
 reaches nothing on that list.
+
+## Whether it still reaches the servers
+
+[![Live](https://github.com/Fountech-ai-Limited/timewitness/actions/workflows/live.yml/badge.svg)](https://github.com/Fountech-ai-Limited/timewitness/actions/workflows/live.yml)
+
+The badge reads the last run of `.github/workflows/live.yml`, once a day, which asks the published
+Roughtime, NTP, NTS, drand and timestamp servers and checks each answer the way the agent does. Its
+summary names every test and whether it answered, and the date of the run is the last time the live
+integrations were seen working. The ordinary build does not ask them, because somebody else's server
+being down is not a fault in a commit. Three tests that need a Roughtime server of ours are not run,
+because none is deployed.
 
 ## Layout
 

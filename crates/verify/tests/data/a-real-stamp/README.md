@@ -16,6 +16,11 @@ the coverage factor, 3.586 ms is the oscillator over the 461 ms since the newest
 0.250 ms is the fixed safety margin. It is a figure from this desktop on this connection and it is
 not a figure for anybody else's machine.
 
+It was signed under a ceiling of 30 s, the widest bound the one-shot command would sign for until
+2026-09-15, and `timewitness verify` prints that ceiling off the receipt in its floor step. The
+one-shot default is 2 s from that date and the agent holds itself to 250 ms, so this width sits
+inside both, and the ceiling it states is the older one.
+
 The nine servers stand behind six operators, and this file is the first receipt that says so. Every
 source in it carries who runs it, the policy block carries the floor of four operators the agent
 signed under, and `timewitness verify` prints both counts beside the count of sources, so a reader
