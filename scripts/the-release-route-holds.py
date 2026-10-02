@@ -129,7 +129,7 @@ SIGNING_ACTION_PIN = "c7ab2a863ab5f9a846ddb8265964877ef296ee82"
 
 # The environment: runs from `main` only, and no run from another branch reaches it while the policy stands.
 ENVIRONMENT = {
-    "updated_at": "2026-09-25T10:14:13Z",
+    "updated_at": "2026-10-02T18:55:54Z",
     "can_admins_bypass": False,
     "protection_rules": ["branch_policy"],
     "deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True},
@@ -175,7 +175,7 @@ RAN = {"in_progress", "success"}
 ADMIN = {"actor_id": 5, "actor_type": "RepositoryRole"}
 RULESETS = {
     "A release tag stays where it was put": {
-        "updated_at": "2026-09-25T10:15:52.526Z",
+        "updated_at": "2026-10-02T18:56:02.884Z",
         "target": "tag",
         "enforcement": "active",
         "conditions": {"ref_name": {"exclude": ["refs/tags/v*-*"], "include": ["refs/tags/v*"]}},
@@ -185,7 +185,7 @@ RULESETS = {
     # A pre-release tag included: it can be moved, so that a candidate can be cut again, but only an
     # administrator makes one.
     "Only an administrator makes a release tag": {
-        "updated_at": "2026-10-02T04:12:18.660Z",
+        "updated_at": "2026-10-02T18:56:03.853Z",
         "target": "tag",
         "enforcement": "active",
         "conditions": {"ref_name": {"exclude": [], "include": ["refs/tags/v*"]}},
@@ -195,7 +195,7 @@ RULESETS = {
     # Every other tag, by anybody. Git takes a bare name for a tag before a branch, so a tag called
     # `main` could answer wherever `main` is asked for by name.
     "Only a release tag can be made": {
-        "updated_at": "2026-10-02T04:12:17.950Z",
+        "updated_at": "2026-10-02T18:56:04.898Z",
         "target": "tag",
         "enforcement": "active",
         "conditions": {"ref_name": {"exclude": ["refs/tags/v*"], "include": ["~ALL"]}},
@@ -203,7 +203,7 @@ RULESETS = {
         "bypass_actors": [],
     },
     "Only an administrator moves main": {
-        "updated_at": "2026-09-29T11:03:22.678Z",
+        "updated_at": "2026-10-02T18:58:05.395Z",
         "target": "branch",
         "enforcement": "active",
         "conditions": {"ref_name": {"exclude": [], "include": ["refs/heads/main"]}},
@@ -213,7 +213,7 @@ RULESETS = {
     # Not part of the signing route: a branch whose name holds a slash cannot be made, by anybody. It
     # is written down so that it reads as ours, and so that it cannot be loosened or bypassed unseen.
     "A new branch has no slash in its name": {
-        "updated_at": "2026-10-01T11:20:15.545Z",
+        "updated_at": "2026-10-02T18:56:01.919Z",
         "target": "branch",
         "enforcement": "active",
         "conditions": {"ref_name": {"exclude": [], "include": ["refs/heads/*/**/*"]}},
