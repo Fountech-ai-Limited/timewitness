@@ -335,7 +335,12 @@ pub fn run(args: &Args) -> Outcome {
 
     let subject = match fs::read(subject_path) {
         Ok(bytes) => bytes,
-        Err(e) => return fail(&format!("{subject_path} could not be read: {e}")),
+        Err(e) => {
+            return fail(&timewitness_platform::files::unreadable(
+                std::path::Path::new(subject_path),
+                &e,
+            ))
+        }
     };
     let payload = sha256_payload(&subject);
     let subject_hash: [u8; 32] = match payload.hash.clone().try_into() {
@@ -364,7 +369,12 @@ pub fn run(args: &Args) -> Outcome {
         None => None,
         Some(path) => match fs::read(path) {
             Ok(bytes) => Some(chain_link(&bytes)),
-            Err(e) => return fail(&format!("{path} could not be read: {e}")),
+            Err(e) => {
+                return fail(&timewitness_platform::files::unreadable(
+                    std::path::Path::new(path),
+                    &e,
+                ))
+            }
         },
     };
 
@@ -409,7 +419,10 @@ pub fn run(args: &Args) -> Outcome {
         witnessed
     };
     if let Err(e) = fs::write(out_path, &signed) {
-        return fail(&format!("{out_path} could not be written: {e}"));
+        return fail(&timewitness_platform::files::unwritable(
+            std::path::Path::new(out_path),
+            &e,
+        ));
     }
 
     let mut text = render::stamped(
@@ -422,12 +435,16 @@ pub fn run(args: &Args) -> Outcome {
     for note in notes {
         text.push_str(&format!("  {note}\n"));
     }
-    text.push_str(&format!(
-        "  The agent's public key is {}. Nothing links it to anybody but a log that names it. A log\n  of our keys is served at timewitness.dev/key-log.txt and names our two Roughtime servers\n  and the one agent key we vouch for, which signs our own receipts from 2026-09-24. \n  `timewitness verify --key-log` says whether this key is that one.\n",
-        render::hex(&receipt.agent_public_key)
-    ));
+    text.push_str(&whose_key(&render::hex(&receipt.agent_public_key)));
 
     Outcome { text, code: 0 }
+}
+
+/// The lines a stamp ends with, about the key that signed it.
+fn whose_key(hex: &str) -> String {
+    format!(
+        "  The agent's public key is {hex}. Nothing links it to anybody but a log that names it. A log\n  of our keys is served at timewitness.dev/key-log.txt and names our two Roughtime servers\n  and the one agent key we vouch for, which signs our own receipts from 2026-09-24.\n  `timewitness verify --key-log` says whether this key is that one.\n"
+    )
 }
 
 /// Refuse the options that belong to the other path, rather than dropping them.
@@ -981,6 +998,15 @@ fn no_receipt_after_the_last_round(validity: &Validity, answered: usize, polls: 
 mod tests {
     use super::*;
     use timewitness_core::refusal::{insides_in, one_of_each};
+
+    /// Found at level 3 on 2026-09-25: "from 2026-09-24. " ended a line with a space, which a
+    /// reader never sees and a script comparing the output line by line trips on.
+    #[test]
+    fn no_line_about_the_key_ends_in_a_space() {
+        for line in whose_key("07de4306").lines() {
+            assert_eq!(line, line.trim_end(), "{line:?}");
+        }
+    }
 
     #[test]
     fn a_stamp_refused_on_its_last_round_says_why_in_plain_words() {

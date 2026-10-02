@@ -5,7 +5,7 @@
 //! with the word the field carries.
 //!
 //! The pair a reader most often has is the undecided one, because two stamps a program takes in the
-//! ordinary course of its work are closer together than the bound on either of them. So that case
+//! ordinary course of its work usually sit close enough for their intervals to overlap. So that case
 //! is here twice: once for the words it prints, and once for the fields, where `stands` is what a
 //! script reads to find out whether it may rely on an order.
 
@@ -334,4 +334,43 @@ fn one_receipt_given_twice_is_one_moment_and_is_never_told_one_came_first() {
     assert!(said.contains("one receipt"), "{said}");
     assert!(!said.contains("did come first"), "{said}");
     assert!(!said.contains("two moments"), "{said}");
+}
+
+/// The words with the line breaks the terminal layout put in taken out again.
+fn flat(said: &str) -> String {
+    said.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Two receipts of width W each can overlap for moments up to 2W apart and can sit clear for
+/// moments any distance apart. Until 2026-09-25 every `verify` said moments further apart than one
+/// width are ordered and closer ones are not, and `order --help` said an overlap means the stamps
+/// are closer than either bound. Neither half of either held; `docs/countersign-wire-v0.md` had it
+/// right, and so did the command, which decides by whether the intervals sit clear.
+#[test]
+fn the_order_sentences_add_the_two_widths_together() {
+    let receipt = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../verify/tests/data/a-real-stamp/receipt.cbor");
+    let said = flat(&text(&run(&["verify", &as_str(&receipt)]).stdout));
+    assert!(
+        said.contains(
+            "Two moments further apart than two such widths added together are always put in \
+             order by receipts of this width; closer ones are put in order only where the two \
+             intervals happen to sit clear of each other."
+        ),
+        "{said}"
+    );
+    assert!(!said.contains("two closer together cannot"), "{said}");
+
+    let usage = flat(&text(&run(&["--help"]).stdout));
+    assert!(
+        usage.contains(
+            "Moments further apart than the two widths added together always come out in order; \
+             closer ones do only where the two intervals happen to sit clear of each other."
+        ),
+        "{usage}"
+    );
+    assert!(
+        !usage.contains("closer together than the bound on either of them"),
+        "{usage}"
+    );
 }

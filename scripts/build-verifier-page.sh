@@ -75,7 +75,43 @@ page = page.replace(
 page = page.replace("<!-- WASM-BASE64 -->", encoded)
 page = page.replace("<!-- BUILT-FROM -->", built_from)
 
-for marker in ("<!-- BRAND-TOKENS -->", "<!-- BRAND-LOCKUP -->", "<!-- WASM-BASE64 -->", "<!-- BUILT-FROM -->"):
+# The list of what this cannot prove, written into the page rather than only drawn by its script, so
+# a browser with scripts off or WebAssembly refused still shows it. Read the way
+# `crates/verify/src/cannot_prove.rs` reads it: a section per heading, an item per paragraph opening
+# with a bold lead, a lead joined across lines until it closes. The script draws the checking code's
+# own copy over this once it runs, and the two come from the one file.
+import html
+sections = []
+section, lead = "", None
+for line in open("docs/what-timewitness-cannot-prove.md", encoding="utf-8").read().splitlines():
+    if line.startswith("## "):
+        section, lead = line[3:].strip(), None
+        continue
+    if not line.strip():
+        lead = None
+        continue
+    if lead is not None:
+        carrying = lead + " " + line
+        lead = None
+    elif line.startswith("**"):
+        carrying = line[2:]
+    else:
+        continue
+    end = carrying.find("**")
+    if end < 0:
+        lead = carrying
+        continue
+    if not sections or sections[-1][0] != section:
+        sections.append((section, []))
+    sections[-1][1].append(carrying[:end].strip())
+assert sections, "the list of what this cannot prove read as empty"
+limits = "".join(
+    "<h3>" + html.escape(name) + "</h3><ul>" + "".join("<li>" + html.escape(item) + "</li>" for item in items) + "</ul>"
+    for name, items in sections
+)
+page = page.replace("<!-- LIMITS -->", limits)
+
+for marker in ("<!-- BRAND-TOKENS -->", "<!-- BRAND-LOCKUP -->", "<!-- WASM-BASE64 -->", "<!-- BUILT-FROM -->", "<!-- LIMITS -->"):
     assert marker not in page, marker + " was not filled in"
 
 open(out_path, "w", encoding="utf-8", newline="\n").write(page)

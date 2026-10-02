@@ -68,10 +68,11 @@ What it refuses on principle, because the fact is the design and not a number in
 passes that day refused 7 of 24 and 5 of 29 fresh sentences: "Our clock is accurate to the
 millisecond", "TimeWitness prevents a backdated build from being published", "averages the readings
 from all its sources" and "receipts carry legal weight under eIDAS" all passed, because nothing here
-had a rule for them. Five claims are now refused wherever a clause asserts them and does not deny
+had a rule for them. Four claims are now refused wherever a clause asserts them and does not deny
 them: accuracy where the product has resolution, our own bound presented as outside evidence or NTS
-as evidence of any kind, enforcement of anything beyond declining to sign, readings averaged into a
-time, and legal weight or compliance. Each is written as the claim rather than as a wording of it: a
+as evidence of any kind, enforcement of anything beyond declining to sign, and readings averaged into
+a time. The fifth, legal weight or compliance, was held the same way until 2026-09-25 and is now a
+closed list, in the paragraph after next. Each is written as the claim rather than as a wording of it: a
 list of the words the claim turns on, the clause each word sits in, and one test of whether that
 clause asserts or denies it. The clause is what the denial is scoped to, so "No regulation we have
 checked, including A, B and C, requires clock accuracy" is one denial and "It refuses to sign, so it
@@ -101,7 +102,26 @@ claim word in the same clause with no comma, "a stranger who trusts none of us c
 servers' word that the bound is correct", is read as a denial. A pronoun standing for an outside
 party, "they certify how far from UTC it could have been", names nothing this reads. And each rule's
 honest register, the words that make a mention honest, is a list a writer could ride: "comes from
-accreditation" beside a claim passes the claim.
+accreditation" beside a claim passed the claim, until the legal weight rule stopped having one.
+
+The legal weight rule does not read a claim at all from 2026-09-25, because rule 6 of what this
+product may say is held by it alone on the README, the list, the Action and the app, and twice that
+day it was written to recognise the shapes a compliance claim takes and twice a test pass walked
+round it within the hour: a claim after a semicolon, in the sentence after the rule, in the object of
+the rule statement itself. So it fails closed. A paragraph that names any rule, regulation, standard,
+statute or regulator, or any term of legal standing, passes only when it is word for word an entry in
+`scripts/policy-sentences-legal-allowed.txt` for the surface it is on, spaces and quote marks aside.
+The unit is the paragraph, because the claim does not have to sit in the sentence that names the
+rule; every other rule still reads the sentence. Nothing else passes: not a denial, not a question,
+not a true sentence nobody has read. The words that put a paragraph in scope are deliberately wider
+than this product needs, because a paragraph wrongly in scope costs one entry and a claim let through
+breaks that rule. From the night of 2026-09-25 they are read off the text as a person sees it: in any
+case, through characters that draw nothing and letters of other alphabets that look Latin, spelled out
+a letter at a time, and inside a web address; and they are read wherever a reader is shown words,
+the list's version notes and every line the job summary writes included. Until then "Finra",
+"eidas", a Cyrillic I in FINRA and a link to finra.org each passed on every surface. What it still cannot see is a claim that names nothing in its scope at all:
+"your clocks sit where the rules want them" names no rule, and a bare "rule" is in forty paragraphs
+of the list about the agent's own rules, so it is not on the lists.
 
 The claims on the site's two content files that copy the approved wording are held the other way
 round from 2026-09-16, and not here. Every string those two files hand a reader has to cite an
@@ -367,13 +387,42 @@ def words_of(text):
     return ' '.join(text.replace('**', '').replace('`', '').split())
 
 
-def sentences(text):
-    # A blank line ends a sentence whatever punctuation came before it, so the job summary's
-    # paragraphs and a content file's strings are read one at a time rather than run together into
-    # one sentence that names nothing when it is refused.
+PIECE_BREAK = re.compile(r'(?<=[.!?:;])\s+(?=[A-Z0-9])')
+# A blank line is one holding nothing but spaces and tabs, which is what Markdown ends a paragraph on.
+# Until 2026-09-25 any white space counted, so a line holding only a no-break space cut in two a
+# paragraph the page shows as one, and a claim after it was read apart from the entry above it.
+PARAGRAPH_BREAK = re.compile(r'\n[ \t\r\f\v]*\n')
+
+
+def pieces(text):
+    """The sentences every rule but the legal weight rule reads, cut after a full stop, a question
+    mark, an exclamation mark, a colon or a semicolon wherever a capital or a digit follows."""
     out = []
-    for paragraph in re.split(r'\n\s*\n', text):
-        out += [s for s in re.split(r'(?<=[.!?:;])\s+(?=[A-Z0-9])', words_of(paragraph)) if s]
+    for paragraph in PARAGRAPH_BREAK.split(text):
+        out += [s for s in PIECE_BREAK.split(words_of(paragraph)) if s]
+    return out
+
+
+def sentences(text):
+    """What each rule is handed: the pieces above, except that a paragraph naming a rule, a
+    regulation or anything of legal standing is handed over whole.
+
+    A blank line ends a sentence whatever punctuation came before it, so the job summary's
+    paragraphs and a content file's strings are read one at a time rather than run together into
+    one sentence that names nothing when it is refused. The whole paragraph is the legal weight
+    rule's unit because the claim does not have to sit in the sentence that names the rule. Cut at
+    the semicolon, "FINRA 6820 requires business clocks synchronised to NIST time; TimeWitness keeps
+    yours there." was a rule statement and then a sentence naming nothing, and both passed on every
+    surface on 2026-09-25. Cut at the full stop, the same claim passes in two sentences. Every other
+    rule still reads the pieces: `judge` cuts a whole paragraph back into them, so nothing another
+    rule held to its own sentence is read across a paragraph instead.
+    """
+    out = []
+    for paragraph in PARAGRAPH_BREAK.split(text):
+        whole = words_of(paragraph)
+        if not whole:
+            continue
+        out += [whole] if legal_terms(whole) else [s for s in PIECE_BREAK.split(whole) if s]
     return out
 
 
@@ -386,23 +435,65 @@ def markdown_text(text, list_file):
     return text
 
 
+def list_notes(text):
+    """The version notes above the limitation list's first heading. Every rule but one leaves them
+    alone, since history may quote what used to be true; the legal weight rule reads them, because
+    no note is history about legal standing, and until 2026-09-25 a claim written under the title
+    reached the published list unread."""
+    at = text.find('\n## ')
+    return text[:at] if at >= 0 else ''
+
+
 def yaml_text(text):
     return '\n'.join(line.strip() for line in text.splitlines()
                      if not line.strip().startswith('#') and not line.strip().startswith('run:'))
+
+
+# One line the script writes out: echo or printf, with its words in either kind of quote, and a
+# redirect after them or none. Until 2026-09-25 only `echo "..."` alone on its line was read, so
+# `echo '...'` and `echo "..." >> "$summary"` put words in the job summary that nothing read.
+WRITTEN = re.compile(r'^\s*(echo|printf)(?:\s+-[neE]+)*(?:\s+(?:"((?:[^"\\]|\\.)*)"|\'([^\']*)\'))?'
+                     r'\s*(?:\d?>>?&?\s*\S+\s*)?$')
+HEREDOC = re.compile(r'<<-?\s*[\'"]?(\w+)[\'"]?')
 
 
 def summary_text(text):
     # The job summary is written one echo a line and a bare echo between paragraphs, so the lines of
     # a paragraph are one text and a sentence that runs over a line break is read whole. Until
     # 2026-09-16 each echo was its own paragraph, and "enforcement path in this design." was read as a
-    # sentence with its "there is no" on the line before.
+    # sentence with its "there is no" on the line before. A here-document is read as the lines it
+    # writes, and a printf as its format with the placeholders taken out.
     paragraphs, current = [], []
-    for m in re.finditer(r'^\s*echo(?: "([^"]*)")?\s*$', text, re.M):
-        if m.group(1) is None:
-            paragraphs.append(' '.join(current))
-            current = []
+    lines = text.splitlines()
+    n = 0
+    while n < len(lines):
+        line = lines[n]
+        n += 1
+        heredoc = HEREDOC.search(line)
+        if heredoc and re.match(r'\s*cat\b', line):
+            while n < len(lines) and lines[n].strip() != heredoc.group(1):
+                if lines[n].strip():
+                    current.append(lines[n].strip())
+                else:
+                    paragraphs.append(' '.join(current))
+                    current = []
+                n += 1
+            n += 1
+            continue
+        m = WRITTEN.match(line)
+        if not m:
+            continue
+        said = m.group(2) if m.group(2) is not None else m.group(3)
+        if m.group(1) == 'printf' and said is not None:
+            said = re.sub(r'%[-+ #0-9.]*[a-zA-Z%]|\\[nt]', ' ', said).strip()
+            if not re.search(r'[A-Za-z]{2}', said):
+                continue
+        if said is None:
+            if m.group(1) == 'echo':
+                paragraphs.append(' '.join(current))
+                current = []
         else:
-            current.append(m.group(1))
+            current.append(said)
     paragraphs.append(' '.join(current))
     return '\n\n'.join(p for p in paragraphs if p)
 
@@ -1030,28 +1121,6 @@ CLAIMS = [
     ], None, None,
      'says readings are averaged, and sources are combined by Marzullo intersection and never averaged: an average of clocks is '
      'not a measurement (rule 4 of what this product may say)'),
-    ('legal weight', [
-        r'\b(legal(?:ly)?)\b',
-        r'\b(evidenti(?:al|ary))\b',
-        r'\b((?:in|before|to) (?:a |the )?courts?|court-?(?:ready|grade|admissible|proof)|(?:hold|stand)s? up in court)\b',
-        r'\b(admissible (?:in|as))\b',
-        r'\b(non-?repudiation|notar\w*|barristers?|solicitors?|attorneys?|lawyers?|tribunals?|litigation|(?:the|a|your) hearing)\b',
-        r'\b((?:same|equal|equivalent|as much) (?:weight|standing|force|authority) (?:as|to)|carries (?:the )?(?:same |legal |full )?weight)\b',
-        r'\b(complian\w+(?: claim)?|compl(?:y|ies|ied|ying) with)\b',
-        r'\b((?:satisf|meet|fulfil|pass|tick|discharg)\w* (?:\w+ ){0,4}?(?:requirements?|regulations?|regulators?|rules?|standards?|'
-        r'obligations?|audits?|mandates?))\b',
-        r'\b((?:required|mandated|recognised|recognized|accepted|approved|endorsed) (?:by|under) (?:the |a )?(?:\w+ )?(?:regulat\w+|law|'
-        r'courts?|SEC|FINRA|eIDAS|EU|statute|auditors?))\b',
-        r'\b(regulators? (?:accept|recogni[sz]e|approve|require|treat)s?)\b',
-        r'\b((?:certified|qualified|legal|official) (?:electronic )?time.?stamps?)\b',
-        r'\b(eIDAS|AI Act|Article 12|17a-4|FINRA|MiFID|GDPR|Sarbanes|SOX|HIPAA|DORA|NIS ?2|21 CFR|Part 11|ISO ?27001|SOC ?2|ETSI|PCI.?DSS)\b',
-    # What makes the mention honest is saying where standing comes from, never the noun on its own:
-    # until 2026-09-16 "qualified trust service provider" was on this list, so "We are a qualified
-    # trust service provider for timestamping" passed on the entry written to let the denial through.
-    ], None, r'\bfrom (?:being )?(?:an? )?accredit\w*\b|\baccreditation\b[^.;,]{0,20}?\b(?:rather|not|confers?|is (?:the only|what))\b|'
-             r'\bstanding\b[^.;,]{0,25}?\bcomes from\b|\bcomes from (?:being )?(?:an? )?(?:accredit\w*|qualified|QTSP)\b',
-     'claims legal weight or compliance, and standing comes from accreditation rather than engineering: no regulation we have '
-     'checked requires a clock bound (rule 6 of what this product may say)'),
     ('accreditation', [
         r'\b(?:we|TimeWitness|the (?:agent|product|company)|our (?:company|product)) (?:is|are|am|remains?|became|become|were|was)\b'
         r'[^.;,]{0,25}?\b((?:an? )?(?:accredited|qualified trust service|QTSP|certified|licen[sc]ed|approved|recogni[sz]ed))\b',
@@ -1064,6 +1133,328 @@ CLAIMS = [
 ]
 CLAIMS = [(name, [re.compile(p, re.I) for p in patterns], re.compile(needs, re.I) if needs else None,
            re.compile(unless, re.I) if unless else None, message) for name, patterns, needs, unless, message in CLAIMS]
+
+# The legal weight rule, and it is a closed list rather than a rule about claims.
+#
+# Twice on 2026-09-25 this rule was written to recognise the shapes a compliance claim takes, and
+# twice a test pass walked round it inside the hour. The first attempt excused a clause whose subject
+# was a named rule, and forty claims put the claim in the next clause. The second admitted a whole
+# sentence of two shapes, and the claim moved after a semicolon, into the next sentence, and into the
+# object of the rule statement itself: "FINRA 6820 asks for nothing a Roughtime corridor lacks." A
+# list of wordings over a sentence splitter can always be walked round, and rule 6 of what this product
+# may say is held by this rule alone on the README, the limitation list, the Action and the app.
+#
+# So nothing here reads what a sentence claims. A paragraph is in scope when it names any rule,
+# regulation, standard, statute or regulator, or any term of legal standing, and the lists below are
+# deliberately wider than the product has any use for. A paragraph in scope passes only when it is,
+# word for word once spaces and quote marks are evened out, an entry in the register beside this
+# file for the surface it is on. Nothing else passes: not a denial, not a question, not a true
+# sentence nobody has read yet. A paragraph wrongly in scope costs one entry; a claim let through is
+# that rule broken, and those are not the same size of mistake.
+LEGAL_REGISTER = ROOT / 'scripts' / 'policy-sentences-legal-allowed.txt'
+# A surface an entry may name that is no surface: the wording was read and approved and is placed
+# nowhere. It passes a caller that names no surface, which is a test pass calling `judge` on a
+# sentence, and it is refused on every surface until an entry names that surface.
+NO_SURFACE = 'none'
+
+# What the scope is read from. A name hidden from a reader of the bytes is not hidden from a reader
+# of the page, so before anything is matched the text is folded to what a person sees: compatibility
+# forms made plain, every character that draws nothing taken out, accents dropped, and the letters
+# of other alphabets that look like Latin ones read as those Latin ones. Until 2026-09-25 the names
+# were matched on the bytes, and "FIN" + a soft hyphen + "RA", a Cyrillic I in FINRA and a Greek
+# omicron in "compliant" all passed on every surface.
+INVISIBLE = {0x034F, 0x061C, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x180B, 0x180C, 0x180D, 0x180E, 0x180F, 0x2800, 0x3164,
+             0xFFA0}
+CONFUSABLE = str.maketrans({
+    # Cyrillic
+    '\u0410': 'A', '\u0430': 'a', '\u0412': 'B', '\u0432': 'b', '\u0415': 'E', '\u0435': 'e', '\u041a': 'K', '\u043a': 'k',
+    '\u041c': 'M', '\u043c': 'm', '\u041d': 'H', '\u043d': 'h', '\u041e': 'O', '\u043e': 'o', '\u0420': 'P', '\u0440': 'p',
+    '\u0421': 'C', '\u0441': 'c', '\u0422': 'T', '\u0442': 't', '\u0425': 'X', '\u0445': 'x', '\u0423': 'Y', '\u0443': 'y',
+    '\u0406': 'I', '\u0456': 'i', '\u0408': 'J', '\u0458': 'j', '\u0405': 'S', '\u0455': 's', '\u0500': 'D', '\u0501': 'd',
+    '\u04c0': 'I', '\u04cf': 'l', '\u051a': 'Q', '\u051b': 'q', '\u051c': 'W', '\u051d': 'w', '\u0474': 'V', '\u0475': 'v',
+    '\u04ae': 'Y', '\u04af': 'y', '\u0417': '3', '\u0431': 'b', '\u0433': 'r', '\u0491': 'r', '\u0457': 'i', '\u0454': 'e',
+    '\u0404': 'E', '\u0407': 'I', '\u0461': 'w', '\u0460': 'W', '\u04bb': 'h', '\u04ba': 'H', '\u0501': 'd', '\u043f': 'n',
+    # Greek
+    '\u0391': 'A', '\u03b1': 'a', '\u0392': 'B', '\u03b2': 'b', '\u0395': 'E', '\u03b5': 'e', '\u0396': 'Z', '\u0397': 'H',
+    '\u03b7': 'n', '\u0399': 'I', '\u03b9': 'i', '\u039a': 'K', '\u03ba': 'k', '\u039c': 'M', '\u039d': 'N', '\u03bd': 'v',
+    '\u039f': 'O', '\u03bf': 'o', '\u03a1': 'P', '\u03c1': 'p', '\u03a4': 'T', '\u03c4': 't', '\u03a5': 'Y', '\u03c5': 'u',
+    '\u03a7': 'X', '\u03c7': 'x', '\u03f2': 'c', '\u03f9': 'C', '\u037f': 'J', '\u03f3': 'j', '\u03c9': 'w', '\u03a9': 'W', '\u03bc': 'u',
+    # Armenian, Cherokee, Latin extensions and the rest a name has been hidden in
+    '\u0585': 'o', '\u057d': 'u', '\u0578': 'n', '\u0570': 'h', '\u0566': 'q', '\u0581': 'g', '\u0575': 'j',
+    '\u13aa': 'A', '\u13a1': 'R', '\u13a2': 'T', '\u13a5': 'i', '\u13a9': 'Y', '\u13b3': 'W', '\u13b7': 'M', '\u13bb': 'H',
+    '\u13bc': 'G', '\u13c0': 'G', '\u13c2': 'h', '\u13c3': 'Z', '\u13cf': 'b', '\u13d2': 'R', '\u13da': 'S', '\u13de': 'L',
+    '\u13df': 'C', '\u13e2': 'P', '\u13e6': 'K', '\u13e7': 'd', '\u13ac': 'E', '\u13a0': 'D', '\u13ab': 'J', '\u13d9': 'V',
+    '\u0131': 'i', '\u0237': 'j', '\u017f': 's', '\u0251': 'a', '\u0261': 'g', '\u0269': 'i', '\u026a': 'I', '\u0274': 'N',
+    '\u0280': 'R', '\u028f': 'Y', '\u1d00': 'A', '\u1d04': 'C', '\u1d05': 'D', '\u1d07': 'E', '\u1d0a': 'J', '\u1d0b': 'K',
+    '\u1d0d': 'M', '\u1d0f': 'O', '\u1d18': 'P', '\u1d1b': 'T', '\u1d1c': 'U', '\u1d20': 'V', '\u1d21': 'W', '\u1d22': 'Z',
+    '\u0432': 'b', '\u2170': 'i', '\u2171': 'ii', '\u2160': 'I', '\u2161': 'II', '\u2162': 'III', '\u01c0': 'l', '\u05c0': 'l',
+    '\u2223': '|', '\u2010': '-', '\u2011': '-', '\u2012': '-', '\u2013': '-', '\u2014': '-', '\u2212': '-', '\u2043': '-',
+})
+# Letters written one at a time, "F.I.N.R.A." or "c o m p l i a n t", read again with the marks
+# between them taken out, so a name spelled out is still a name.
+SPELLED_OUT = re.compile(r'(?<![^\W\d_])(?:[^\W\d_][.\-_ |*/\u00b7]+){2,}[^\W\d_](?![^\W\d_])')
+
+
+def fold(text):
+    """The text as a person reads it, for the scope and nothing else."""
+    text = unicodedata.normalize('NFKC', text)
+    text = ''.join(ch for ch in text if unicodedata.category(ch) != 'Cf' and ord(ch) not in INVISIBLE)
+    text = ''.join(ch for ch in unicodedata.normalize('NFKD', text) if not unicodedata.combining(ch))
+    return words_of(unicodedata.normalize('NFC', text.translate(CONFUSABLE)))
+
+
+def spelled_out(text):
+    """The text with every run of letters written one at a time closed up into a word."""
+    return SPELLED_OUT.sub(lambda m: re.sub(r'[.\-_ |*/\u00b7]+', '', m.group()), text)
+
+
+def _names(words):
+    """One pattern for a list of names: not inside a longer word or a run of digits and letters such
+    as a hash, and free to be followed by a digit, so "MiFID2" and "finra6820" are read, unless the
+    name is a number itself."""
+    return r'(?<![a-z0-9])(?:' + '|'.join(words) + r')(?![a-z])(?<![0-9](?=[0-9]))'
+
+
+# Named rules, regulators, regimes and schemes. Read in any case, inside a URL or a domain, and with a
+# digit straight after, because "Finra", "eidas", "Mifid II", "MiFID2", "hipaa" and a link to
+# finra.org all passed a list matched by capitals on 2026-09-25. The list is wider than anything this
+# product has cause to name, from every market and every kind of regime, and it is a list, so a
+# regime it lacks is still one this cannot see: the generic words below are the second net for that.
+LEGAL_NAMES_ANY_CASE = re.compile(_names([
+    # Markets and their regulators
+    'finra', 'cftc', 'esma', 'eba', 'eiopa', 'fca', 'pra', 'cysec', 'bafin', 'amf', 'finma', 'fincen', 'occ', 'ffiec',
+    'fdic', 'nydfs', 'dfs', 'nfa', 'cme', 'iiroc', 'ciro', 'iosco', 'osfi', 'apra', 'hkma', 'sfc', 'sebi', 'sama', 'jfsa',
+    'fsa', 'cma', 'ftc', 'doj', 'hmrc', 'pcaob', 'aicpa', 'ofac', 'fatf', 'consob', 'cnmv', 'afm', 'dnb', 'fma', 'finansinspektionen',
+    'knf', 'cbi', 'mfsa', 'cssf', 'fsc', 'fss', 'csrc', 'cbirc', 'rbi', 'irdai', 'cbuae', 'dfsa', 'adgm', 'difc', 'cvm', 'cnbv',
+    'sca', 'fsca', 'cbn', 'cbe', 'ecb', 'srb', 'eiopa', 'nca', 'fsb', 'bcbs', 'nasdaq', 'nyse', 'lse', 'euronext', 'deutsche boerse',
+    'securities and exchange commission', 'financial conduct authority', 'prudential regulation authority',
+    'federal reserve', 'fed reserve', 'commodity futures trading commission', 'financial industry regulatory authority',
+    'reg ?sci', 'reg ?nms', 'reg ?sho', 'reg ?ats', 'reg ?bi', 'reg ?s-p', 'reg ?s-id', 'reg ?e', 'reg ?z', 'reg ?w',
+    'rule 613', 'consolidated audit trail', 'broker-?dealers?', 'broker dealers?', 'member[- ]?firms?',
+    # European and national instruments
+    'eidas2?', 'qtsp', 'qtsps', 'tsp', 'tsps', 'mifid ?(?:ii|2|i)?', 'mifir', 'emir', 'sftr', 'csdr', 'ucits', 'aifmd',
+    'crr', 'crd ?(?:iv|v|vi)?', 'brrd', 'solvency ?(?:ii|2)?', 'psd ?[23]?', 'dora', 'nis ?2?', 'gdpr', 'uk gdpr', 'eprivacy',
+    'ai act', 'eu ai act', 'data act', 'cyber resilience act', 'cra', 'dsa', 'dma', 'eudi', 'etsi', 'cen', 'cenelec', 'enisa',
+    'anssi', 'bsi', 'secnumcloud', 'c5', 'ens', 'agid', 'rgs', 'eucs', 'eucc', 'sog-is', 'rts ?\\d+',
+    # Privacy, health, security, energy, government and industry regimes
+    'hipaa', 'hitech', 'hitrust', 'ccpa', 'cpra', 'lgpd', 'pipeda', 'pdpa', 'popia', 'appi', 'pipl', 'dpdp', 'coppa', 'ferpa',
+    'glba', 'sox', 'sarbanes', 'oxley', 'dodd-?frank', 'dodd frank', 'basel', 'fedramp', 'stateramp', 'fisma', 'cmmc', 'cjis',
+    'itar', 'nerc', 'cip-?\\d+', 'nerc ?cip', 'ferc', 'faa', 'easa', 'fda', 'mhra', 'gxp', 'gmp', 'glp', 'gdp', 'alcoa\\+?',
+    'gamp ?\\d*', 'annex ?11', 'part ?11', '\\d+ ?cfr', 'cfr', 'nycrr', 'pci[- ]?dss', 'pci', 'soc ?[123]', 'soc ?type ?(?:i|ii|1|2)',
+    'ssae ?\\d*', 'isae ?\\d*', 'iso(?:/iec)? ?\\d+', 'iec ?\\d+', 'nist', 'sp ?800-?\\d+', 'fips(?: ?\\d+)?', 'au-\\d+', 'csf',
+    'common criteria', 'tisax', 'irap', 'ismap', 'cyber essentials', 'mtcs', 'k-isms', 'hds', 'dsp toolkit', 'nhs',
+    'esign', 'ueta', 'x9\\.95', 'ansi', 'astm', 'ieee ?1588 ?-?\\d*', 'wcag', 'section ?508', 'eaa',
+    '17a-\\d+', '17a\\d+', '4511', '6820', '3110', '15c3-\\d+', '10b-\\d+', '10b5',
+]))
+# The names that are ordinary words in lower case, "sec", "cat", "act" and the like, read by their
+# capitals, so a paragraph about a cat or a second is not asked for an entry.
+LEGAL_NAMES = re.compile(
+    r'\b(?:SEC|Sec|S\.E\.C\.|CAT|MAS|ASIC|EMA|ICE|BIS|EAR|SAR|BSA|FSMA|EU|European Union|European Commission|'
+    r'the Commission|Commissioner|Regulator|Parliament|Congress|Rules|Guidelines)\b'
+    r'|\b(?:Rule|Rules|Article|Articles|Section|Title|Part|Annex|Recital|Chapter|Schedule|Clause) \d'
+    r'|\b(?:Regulation|Regulations|Directive|Directives|Act|Acts|Statute|Statutes|Code of Federal Regulations)\b|\u00a7')
+# The words legal standing is claimed in, and the words of a court, a proceeding and a jurisdiction,
+# whatever their case. From 2026-09-25 this is the net for a regime no list names: "A judge will
+# accept a TimeWitness receipt", "Receipts hold up in arbitration" and "presumed correct in any EU
+# member state" name no regulator and are in scope by their words.
+LEGAL_WORDS = re.compile(_names([
+    'complian\\w*', 'compliant', 'non-?compliant', 'compl(?:y|ies|ied|ying)', 'admissib\\w*', 'inadmissib\\w*', 'legal\\w*',
+    'illegal\\w*', 'lawful\\w*', 'unlawful\\w*', 'laws?', 'lawsuits?', 'statut\\w*', 'regulat\\w*', 'deregulat\\w*',
+    'legislat\\w*', 'certif(?!icates?(?![a-z]))\\w*', 'uncertified', 'accredit\\w*', 'qualified', 'trust services?',
+    'trust service providers?', 'courts?', 'courtroom\\w*', 'judges?', 'judicial\\w*', 'judiciary', 'judgments?',
+    'judgements?', 'jur(?:y|ies|ors?|isdiction\\w*|idical|ist\\w*)', 'arbitrat\\w*', 'mediat(?:ion|or|ors)', 'subpoena\\w*',
+    'e-?discovery', 'legal discovery', 'presum\\w*', 'binding', 'legally binding', 'proceedings?', 'counsel\\w*',
+    'plaintiffs?', 'defendants?', 'claimants?', 'respondents?', 'litigants?', 'magistrat\\w*', 'ombuds\\w*', 'disput\\w*',
+    'member states?', 'examiners?', 'inspectors?', 'supervis\\w*', 'sue', 'sued', 'suing', 'prosecut\\w*', 'indict\\w*',
+    'evidentia\\w*', 'audit trails?', 'auditors?', 'audited', 'record.?keeping', 'mandat\\w*', 'obligat\\w*',
+    'non-?repudiat\\w*', 'notar\\w*', 'litigat\\w*', 'attorneys?', 'lawyers?', 'solicitors?', 'barristers?', 'tribunals?',
+    'liabilit\\w*', 'liable', 'indemn\\w*', 'enforceab\\w*', 'chain of custody', 'affidavits?', 'sworn', 'testimony',
+    'depositions?', 'witness statements?', 'fiduciar\\w*', 'penalt\\w*', 'sanction\\w*', 'rulebooks?', 'rulemaking',
+    'regimes?', 'conformity', 'notified bod(?:y|ies)', 'electronic signatures?', 'e-?signatures?', 'seal of',
+    'safe harbou?r', 'due diligence', 'regulator\\w*', 'hearsay', 'self-?authenticat\\w*', 'business records?',
+    'rules? of (?:evidence|procedure|court)', 'federal rules?', 'guidelines?', 'asic',
+    '(?:monetary|financial|securities|conduct|prudential|regulatory|supervisory|competition|data protection|information|'
+    'privacy|banking|insurance|markets?|exchange|trading|revenue|tax|customs|aviation|telecom\\w*|communications|gambling|'
+    'gaming|energy|health|medicines?|food|drugs?|elections?|electoral|payments?|consumer|cyber\\w*|standards) '
+    '(?:authorit\\w*|commission\\w*|agenc\\w*|board|bureau|office|ombudsman|regulator|council|service|inspectorate)',
+    'authorit(?:y|ies) (?:of|for) (?!the (?:clock|bound|receipt))\\w+',
+    # Doctrine, contract, insurance and records, and the plain words that say a thing has legal effect.
+    'prima facie', 'bona fide', 'de jure', 'res judicata', 'sub judice', 'stare decisis', 'ultra vires', 'amicus',
+    'habeas', 'mens rea', 'force majeure', 'estoppel', 'torts?', 'tortious', 'negligen\\w*', 'precedents?', 'case law',
+    'common law', 'ordinances?', 'decrees?', 'bylaws?', 'by-laws?', 'edicts?', 'treat(?:y|ies)', 'injunction\\w*',
+    'damages', 'warrant(?:y|ies|ed)', 'insur(?:ance|er|ers|ed|able)', 'underwrit\\w*', 'actuar\\w*', 'contractual\\w*',
+    'procurement', 'tender(?:s|ing)?', 'service level agreements?', 'slas?', 'legal hold', 'records management',
+    'retention schedules?', 'forensic\\w*', 'spoliation', 'officially', 'official record\\w*', 'authoris(?:ed|ation) by',
+    'authoriz(?:ed|ation) by', '(?:accepted|approved|endorsed|sanctioned|recogni[sz]ed|certified|validated|ratified) by '
+    '(?:the |an? |any |every |all )?(?:authorit\\w*|government\\w*|state|states|regulators?|courts?|insurers?|auditors?|'
+    'officials?|ministr\\w*|departments?|agenc\\w*)', 'stands? up (?:in|to|before|under)', 'holds? up (?:in|to|before|under)',
+    'counts? as (?:legal |formal |official )?proof', 'proof in law', 'in the eyes of the law', 'government\\w*', 'ministr(?:y|ies)',
+    'central banks?', 'reserve banks?', 'bank negara', 'aml', 'kyc', 'cft', 'vasps?', 'casps?', 'mica', 'bitlicen[cs]e',
+    'travel rule', 'amld\\w*', 'irs', 'vat', 'gobd', 'saf-t', 'e-?invoic\\w*', 'fiscal\\w*', 'customs', 'cbp', 'aeo',
+    'emv', 'nacha', 'sepa', 'payment services', 'icao', 'caa', 'orr', 'imo', 'solas', 'mdr', 'ivdr', '510\\(k\\)',
+    'ce[- ]mark\\w*', 'ukca', 'tga', 'pmda', 'anvisa', 'nmpa', 'cdsco', 'health canada', 'ukgc', 'mga', 'ecogra',
+    'gaming control', 'ofcom', 'fcc', 'berec', 'trai', 'acma', 'eac', 'vvsg', 'ojk', 'bsp', 'cmf', 'smv', 'bcra', 'cnv',
+    'vara', 'qfcra', 'qcb', 'cbb', 'moreq', 'dod', 'edrm', 'nara', 'licen[cs]ed', 'rules? \\d{3,}', 'articles? \\d+',
+    'parts? \\d+ of', 'reg\\.? [a-z]{1,4}(?:-[a-z]{1,3})?', 'cip',
+]))
+# A word that mixes alphabets is a name hidden from this list rather than a word, so it is in scope
+# whatever it spells, and so is a letter from another alphabet no fold reads as Latin.
+# A web address read by where it points: a government or intergovernmental host, or a host whose name
+# is a court, a law or a regulator. "[this link](https://www.supremecourt.gov)" and "the text at
+# eur-lex.europa.eu" named nothing else and passed a set written blind on 2026-09-25.
+ADDRESS = re.compile(r'(?<![a-z0-9@-])(?:https?://)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?![a-z0-9-])')
+OFFICIAL_HOST = re.compile(r'(?:^|\.)(?:gov|gouv|gob|govt|go|gc|mil|int|europa|judiciary|parliament|legislation)'
+                           r'(?:\.[a-z]{2})?$|court|justice|judic|legis|(?<![a-z])lex|(?<![a-z])law|regulat|parliament|'
+                           r'congress|senate|tribunal|ombudsman')
+
+
+def official_addresses(low):
+    """Every web address in the text that points at a government, a court, a law or a regulator."""
+    return [(m.start(), m.group(1)) for m in ADDRESS.finditer(low) if OFFICIAL_HOST.search(m.group(1))]
+
+
+MIXED = re.compile(r'[^\W\d_]*(?:[a-zA-Z][^\W\d_a-zA-Z]|[^\W\d_a-zA-Z][a-zA-Z])[^\W\d_]*')
+
+# The shapes the rule recognised before it was closed, kept as scope and no longer as a verdict: a
+# claim in the sentence after the rule turns on a demonstrative pointing back at it ("Every stamp
+# sits well inside that tolerance"), and a pair of negations can add up to one ("asks for nothing a
+# receipt does not carry").
+LEGAL_SHAPES = [re.compile(p, re.I) for p in (
+    r'\b(?:in|before|to) (?:a |the )?courts?\b|\bcourt-?(?:ready|grade|admissible|proof)\b|\b(?:hold|stand)s? up in court\b',
+    r'\b(?:the|a|your) hearing\b',
+    r'\b(?:same|equal|equivalent|as much) (?:weight|standing|force|authority) (?:as|to)\b|\bcarries (?:the )?(?:same |legal |full )?weight\b',
+    r'\b(?:satisf|meet|fulfil|pass|tick|discharg)\w* (?:\w+ ){0,4}?(?:requirements?|regulations?|regulators?|rules?|standards?|'
+    r'obligations?|audits?|mandates?)\b',
+    r'\b(?:required|mandated|recognised|recognized|accepted|approved|endorsed) (?:by|under) (?:the |a )?(?:\w+ )?(?:regulat\w+|law|'
+    r'courts?|SEC|FINRA|eIDAS|EU|statute|auditors?)\b',
+    r'\bregulators? (?:accept|recogni[sz]e|approve|require|treat)s?\b',
+    r'\b(?:certified|qualified|legal|official) (?:electronic )?time.?stamps?\b',
+    r'\b(?:that|this|the same|such a|each|every|its|the rule\'s) (?:\w+ )?(?:tolerance|obligation|mandate|audit trail|'
+    r'recordkeeping (?:rule|requirement|standard))\b',
+    r'\b(?:meet|satisf|fulfil|discharg|honou?r)\w* (?:both|either|all|each|every one|them|those|these)(?: of (?:them|those|these))?\b',
+    r'\b(?:does |do |did )?(?:not|never) (?:requires?|asks? for|sets?|names?|mandates?|demands?) '
+    r'(?:anything|something|more|a thing|one thing|that)\b[^.;]{0,40}?\b(?:does not|doesn\'t|do not|don\'t|cannot|can\'t|'
+    r'is not|isn\'t|are not|aren\'t|has not|hasn\'t|have not|haven\'t|won\'t|will not|without|lack\w*|miss\w*|already)\b',
+    r'\b(?:requires?|asks? for|sets?|names?|mandates?|demands?) (?:nothing|no \w+|anything less)\b[^.;]{0,40}?'
+    r'\b(?:does not|doesn\'t|do not|don\'t|cannot|can\'t|is not|isn\'t|are not|aren\'t|has not|hasn\'t|have not|haven\'t|'
+    r'won\'t|will not|without|lack\w*|miss\w*|already)\b',
+)]
+
+LEGAL_MESSAGE = ('names {named}, and a paragraph naming a rule, a regulator or anything of legal standing passes only '
+                 'word for word as an entry in {register} for the surface it is on. {why} Reword it so it names none of '
+                 'them, or add it there once it has been read against rule 6 of what this product may say: TimeWitness '
+                 'claims no legal weight and no part in meeting any rule')
+
+
+def plain(text):
+    """A paragraph as the register compares it: spaces evened out, quote marks made straight."""
+    text = unicodedata.normalize('NFKC', text)
+    text = re.sub('[\u2018\u2019\u201a\u201b\u2032]', "'", text)
+    text = re.sub('[\u201c\u201d\u201e\u201f\u2033]', '"', text)
+    return words_of(text)
+
+
+def legal_terms(text):
+    """Every word or phrase that puts the text in the legal weight rule's scope, read off the text as
+    a person sees it and again with any name spelled out a letter at a time closed up."""
+    seen = fold(text)
+    found = []
+    for variant in dict.fromkeys((seen, spelled_out(seen))):
+        low = variant.casefold()
+        found += [(m.start(), m.group()) for m in LEGAL_NAMES.finditer(variant)]
+        found += [(m.start(), m.group()) for m in LEGAL_NAMES_ANY_CASE.finditer(low)]
+        found += [(m.start(), m.group()) for m in LEGAL_WORDS.finditer(low)]
+        found += [(m.start(), m.group()) for shape in LEGAL_SHAPES for m in shape.finditer(low)]
+        found += [(m.start(), f'a word mixing alphabets, {m.group()}') for m in MIXED.finditer(variant)]
+        found += official_addresses(low)
+    return list(dict.fromkeys(term for _, term in sorted(found)))
+
+
+def read_legal_register(path=None):
+    """The register, as {paragraph: set of surfaces}.
+
+    An entry is a line opening with '@ ' that names the surfaces, then the paragraph on the lines
+    under it, up to a blank line. A line opening with '#' outside an entry is a note. An entry that
+    names no surface, has no paragraph, is written twice, or names nothing in scope is refused,
+    because each of those is an entry nobody could have meant."""
+    path = LEGAL_REGISTER if path is None else Path(path)
+    if not path.is_file():
+        raise Unreadable(f'{path.name} is not there, so no paragraph naming a rule could pass')
+    entries = {}
+    surfaces, lines = None, []
+
+    def close(at):
+        if surfaces is None:
+            if lines:
+                raise Unreadable(f'{path.name} line {at}: a paragraph with no "@ " line naming its surfaces')
+            return
+        text = plain(' '.join(lines))
+        if not text:
+            raise Unreadable(f'{path.name} line {at}: an entry for {", ".join(sorted(surfaces))} with no paragraph')
+        if not legal_terms(text):
+            raise Unreadable(f'{path.name} line {at}: an entry naming nothing in scope, so it has no business here: {text[:80]}')
+        if text in entries:
+            raise Unreadable(f'{path.name} line {at}: a paragraph written twice; name every surface on one entry: {text[:80]}')
+        entries[text] = frozenset(surfaces)
+
+    for at, line in enumerate(path.read_text(encoding='utf-8').splitlines() + [''], start=1):
+        stripped = line.strip()
+        if surfaces is None and stripped.startswith('#'):
+            continue
+        if stripped.startswith('@ '):
+            close(at)
+            named = {s.strip() for s in stripped[2:].split(',') if s.strip()}
+            if not named:
+                raise Unreadable(f'{path.name} line {at}: an entry naming no surface')
+            surfaces, lines = named, []
+        elif not stripped:
+            close(at)
+            surfaces, lines = None, []
+        elif surfaces is None:
+            raise Unreadable(f'{path.name} line {at}: a paragraph with no "@ " line naming its surfaces')
+        else:
+            lines.append(stripped)
+    if not entries:
+        raise Unreadable(f'{path.name} holds no entry, so it was not read')
+    return entries
+
+
+_LEGAL_ALLOWED = {}
+
+
+def legal_register():
+    """The register on disk, read once."""
+    if not _LEGAL_ALLOWED:
+        _LEGAL_ALLOWED.update(read_legal_register())
+    return _LEGAL_ALLOWED
+
+
+def legal_weight(paragraph, where=None, allowed=None):
+    """The legal weight rule's refusal of one paragraph, or nothing.
+
+    `where` is the surface the paragraph is on, as `contradictions` names it. A caller that names none
+    is asking about the words alone, and they pass on any entry, the ones placed nowhere included; a
+    caller that names one passes only on an entry for that surface."""
+    allowed = legal_register() if allowed is None else allowed
+    text = plain(paragraph)
+    named = legal_terms(text)
+    if not named:
+        return []
+    placed = allowed.get(text)
+    if placed is not None and (where is None or where in placed):
+        return []
+    if placed is None:
+        why = 'This one is not an entry, so it is refused whatever it says.'
+    else:
+        why = f'This one is an entry for {", ".join(sorted(placed))} and not for {where}.'
+    terms = ', '.join(f'"{t}"' for t in dict.fromkeys(named))
+    fault = LEGAL_MESSAGE.format(named=terms, register=LEGAL_REGISTER.name, why=why)
+    # The pieces that name one, whole, so the refusal of a long paragraph says which of its
+    # sentences put it in scope rather than only how the paragraph starts.
+    inside = [p for p in pieces(text) if legal_terms(p)]
+    if inside and inside != [text]:
+        fault += '. The sentences naming one: ' + ' '.join(f'"{p}"' for p in inside)
+    return [fault]
 
 
 def negated(sentence, match, group=0):
@@ -1105,14 +1496,38 @@ def claimed(sentence):
     return faults
 
 
-def judge(sentence, policy, landing=None, read=None):
+def judge(sentence, policy, landing=None, read=None, where=None):
     """What is wrong with one sentence against the policy, or nothing.
 
-    `read` is how this says which figures it actually looked at. Pass a list and every rule that
-    takes a number in appends the span it read, so `unclaimed` below can tell a figure that was
-    checked from one nothing here has a rule for. A caller that does not pass one gets the same
-    faults it always did.
+    A paragraph `sentences` handed over whole is cut back into its pieces for every rule but the
+    legal weight rule, which reads it whole; see `faults_in`. `where` is the surface it is on, which
+    only the legal weight rule asks. `read` is how this says which figures it actually looked at.
+    Pass a list and every rule that takes a number in appends the span it read, so `unclaimed` below
+    can tell a figure that was checked from one nothing here has a rule for. A caller that does not
+    pass one gets the same faults it always did.
     """
+    return [fault for fault, _ in faults_in(sentence, policy, landing, read, where)]
+
+
+def faults_in(text, policy, landing=None, read=None, where=None):
+    """Each fault in a sentence or a paragraph, with the words it is a fault of: the piece it was
+    found in for every rule but one, and the paragraph for the legal weight rule."""
+    found = []
+    at = 0
+    for piece in pieces(text) or [text]:
+        start = text.find(piece, at)
+        start = at if start < 0 else start
+        at = start + len(piece)
+        spans = [] if read is not None else None
+        found += [(fault, piece) for fault in piece_faults(piece, policy, landing, spans)]
+        if read is not None:
+            read += [(start + a, start + b) for a, b in spans]
+    found += [(fault, text) for fault in legal_weight(text, where)]
+    return found
+
+
+def piece_faults(sentence, policy, landing=None, read=None):
+    """What every rule but the legal weight rule finds wrong with one piece."""
     faults = []
     floor, rt = policy['floor'], policy['roughtime_operators']
 
@@ -1405,10 +1820,39 @@ def judge(sentence, policy, landing=None, read=None):
     return faults
 
 
+# Where a paragraph only the legal weight rule reads came from: the list's version notes.
+ABOVE_THE_LIST = ' above its first heading'
+
+
+def contradictions(read_from, policy, landing, name=None):
+    """A problem line for each fault in what was read, quoting the words it is a fault of.
+
+    `name` is how a place a paragraph was read from is named to the legal weight rule, the one rule
+    that asks which surface it is on: `surface_of`, unless a caller says otherwise. A paragraph read
+    from the list's version notes is held to that rule and to no other."""
+    name = surface_of if name is None else name
+    problems = []
+    for where, unit in read_from:
+        if where.endswith(ABOVE_THE_LIST):
+            found = [(fault, unit) for fault in legal_weight(unit, name(where))]
+        else:
+            found = faults_in(unit, policy, landing, where=name(where))
+        for fault, words in found:
+            problems.append(f'{where}: {fault}:\n    "{words[:220]}"')
+    return problems
+
+
+def not_above_the_list(read_from):
+    """What every rule but the legal weight rule reads: all of it but the list's version notes."""
+    return [(where, unit) for where, unit in read_from if not where.endswith(ABOVE_THE_LIST)]
+
+
 def enough(where, found, floor):
-    """A surface that yielded fewer sentences than the floor was not read."""
-    if len(found) < floor:
-        raise Unreadable(f'{where} yielded {len(found)} sentences, under the floor of {floor}, so it was not read')
+    """A surface that yielded fewer sentences than the floor was not read. Counted in pieces, so a
+    paragraph handed over whole counts the sentences in it and the floor means what it always did."""
+    count = sum(len(pieces(unit)) for unit in found)
+    if count < floor:
+        raise Unreadable(f'{where} yielded {count} sentences, under the floor of {floor}, so it was not read')
     return found
 
 
@@ -1423,7 +1867,9 @@ def surfaces(files, site, floor=SENTENCE_FLOOR):
             raise Unreadable(f'{path} is not there')
         text = full.read_text(encoding='utf-8')
         name = full.name
+        notes = ''
         if name.endswith('.md'):
+            notes = list_notes(text) if 'cannot-prove' in name else ''
             text = markdown_text(text, 'cannot-prove' in name)
         elif name.endswith('.yml'):
             text = yaml_text(text)
@@ -1432,6 +1878,7 @@ def surfaces(files, site, floor=SENTENCE_FLOOR):
         elif name.endswith('.json'):
             text = '\n\n'.join(s for _, s in site_strings(json.loads(text)))
         out += [(path, s) for s in enough(path, sentences(text), floor)]
+        out += [(f'{path}{ABOVE_THE_LIST}', s) for s in sentences(notes) if legal_terms(s)]
     landing = None
     if site and site.startswith('http'):
         for page in SITE_PAGES:
@@ -2832,7 +3279,7 @@ def unclaimed(read_from, policy, landing, excused, known=None):
         if not found:
             continue
         read = []
-        judge(sentence, policy, landing, read=read)
+        piece_faults(sentence, policy, landing, read)
         surface = surface_of(where)
         # The sentence after this one on the same surface, for a claim that points back at a figure
         # ("That receipt is the one in the tree today"), which the figure's own sentence cannot see.
@@ -3054,6 +3501,273 @@ SEEDS = [
     ('legal weight', 'Using TimeWitness satisfies SEC 17a-4 recordkeeping requirements out of the box.'),
     ('legal weight', 'Our receipts are admissible in court as certified legal timestamps.'),
     ('legal weight', 'These receipts will hold up in court.'),
+    # What a statement of what a rule asks for must not excuse, from 2026-09-25.
+    ('legal weight', 'FINRA Rule 6820 sets a clock synchronisation tolerance and TimeWitness satisfies that requirement for you.'),
+    ('legal weight', 'SEC 17a-4 asks for records that cannot be rewritten, and our receipts meet that requirement.'),
+    ('legal weight', 'Any compliance claim built on these receipts would be fine with FINRA.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation, which our agent meets.'),
+    # The forty that passed on the afternoon of 2026-09-25, when the entry excused a clause: the
+    # rule in one clause and the claim in the next, joined by ", and", ", which", ";" or ":".
+    ('legal weight', 'FINRA Rule 6820 requires clock synchronisation with NIST time, which TimeWitness provides.'),
+    ('legal weight', 'FINRA 6820 requires business clocks within 50 ms of NIST time, and the agent keeps them there.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail, and we give you one.'),
+    ('legal weight', 'FINRA 6820 requires clocks within 50 ms of NIST time; the agent holds yours well inside it.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail: a TimeWitness receipt is that audit trail.'),
+    ('legal weight', 'FINRA 6820 requires a 50 ms clock tolerance, met by every stamp.'),
+    ('legal weight', 'FINRA Rule 6820 does require what the Action delivers.'),
+    ('legal weight', 'SEC Rule 17a-4 names the GitHub Action as an acceptable time-stamped audit trail.'),
+    ('legal weight', 'TimeWitness meets FINRA 6820 and a compliance claim to the contrary would be wrong.'),
+    ('legal weight', 'A compliance claim that TimeWitness meets FINRA 6820 would be false modesty.'),
+    # Shapes of the same day that neither read tried. Pronouns standing for us or ours.
+    ('legal weight', 'FINRA 6820 requires business clocks synchronised to NIST, and ours are.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail, and yours is in every receipt.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation, and it is done for you.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail, and here it is.'),
+    ('legal weight', 'FINRA 6820 sets a clock tolerance, and you are inside it from the first stamp.'),
+    ('legal weight', 'FINRA 6820 requires business clocks synchronised to NIST, and they are, with the agent installed.'),
+    ('legal weight', 'SEC 17a-4 asks for records that cannot be rewritten, and receipts cannot be.'),
+    # The passive, with and without a product noun.
+    ('legal weight', 'FINRA 6820 sets a clock tolerance, and they are held inside it by the agent.'),
+    ('legal weight', 'SEC 17a-4 asks for records that cannot be rewritten; that is what is written by every stamp.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation, which is provided out of the box.'),
+    ('legal weight', 'FINRA 6820 sets a tolerance that is kept by everyone who installs the agent.'),
+    ('legal weight', 'FINRA 6820 sets a tolerance that is always kept.'),
+    ('legal weight', 'SEC 17a-4 asks for records kept where they cannot be rewritten, which is exactly what a receipt is.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation to NIST, provided here.'),
+    ('legal weight', 'FINRA 6820 requires what is shipped.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail like this one.'),
+    # Helping to meet, supporting compliance, aligned with, in line with.
+    ('legal weight', 'TimeWitness helps you meet FINRA 6820.'),
+    ('legal weight', 'The Action helps a firm meet SEC 17a-4 recordkeeping.'),
+    ('legal weight', 'Our receipts support compliance with SEC 17a-4.'),
+    ('legal weight', 'TimeWitness supports compliance with FINRA Rules 4511 and 6820.'),
+    ('legal weight', 'Receipts are aligned with SEC 17a-4.'),
+    ('legal weight', 'The clock discipline is aligned with FINRA 6820\'s tolerance.'),
+    ('legal weight', 'Every stamp is in line with FINRA 6820.'),
+    ('legal weight', 'Our bound keeps you in line with what FINRA 6820 asks for.'),
+    ('legal weight', 'With the agent installed, a firm is in line with FINRA 6820.'),
+    ('legal weight', 'Compliance with SEC 17a-4 comes with every receipt.'),
+    ('legal weight', 'Installing the Action puts a firm inside FINRA 6820\'s tolerance.'),
+    # The rule in one sentence and the claim in the next: run on as one, and the second on its own.
+    ('legal weight', 'FINRA 6820 requires clocks within 50 ms of NIST time. Every stamp sits well inside that tolerance.'),
+    ('legal weight', 'Every stamp sits well inside that tolerance.'),
+    ('legal weight', 'The receipt is that audit trail.'),
+    ('legal weight', 'TimeWitness claims no part in meeting either, but every receipt meets both.'),
+    # List items.
+    ('legal weight', '- Meets FINRA 6820 out of the box.'),
+    ('legal weight', '- FINRA 6820: covered.'),
+    ('legal weight', '- SEC 17a-4 asks for a time-stamped audit trail, and the receipt is one.'),
+    ('legal weight', '* In line with SEC 17a-4.'),
+    # The two admitted shapes with a claim inside them.
+    ('legal weight', 'FINRA Rule 6820 does set a clock synchronisation tolerance, and TimeWitness claims no part in meeting it or any other rule, though every stamp is inside it.'),
+    ('legal weight', 'TimeWitness claims no part in meeting either, so a compliance claim built on any of these rules would be false modesty.'),
+    ('legal weight', 'Two of them ask for more than a log, and every receipt gives it: FINRA Rule 6820 sets a tolerance to which business clocks must be synchronised with NIST time.'),
+    ('legal weight', 'Two of them ask for more than a log: FINRA Rule 6820 sets a tolerance that every stamp respects, and SEC 17a-4 asks for records kept where they cannot be rewritten.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation and we do that.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail and a receipt is one.'),
+    ('legal weight', 'FINRA 6820 requires clocks within 50 ms of NIST time, ours included.'),
+    ('legal weight', 'Two of them ask for more than a log, which every receipt gives: FINRA Rule 6820 sets a tolerance for business clocks.'),
+    # Two negations that add up to a claim.
+    ('legal weight', 'FINRA 6820 does not require anything TimeWitness does not already provide.'),
+    ('legal weight', 'SEC 17a-4 asks for nothing a receipt does not carry.'),
+    # The claims the grade of 2026-09-25 put to the rule before this one, and the second read of the
+    # same day, every one of which the closed list refuses because none of them is an entry.
+    ('legal weight', "The agent keeps clocks within FINRA 6820's 50 ms."),
+    ('legal weight', 'Receipts satisfy 17a-4.'),
+    ('legal weight', 'This meets FINRA 6820.'),
+    ('legal weight', 'It meets FINRA 6820.'),
+    ('legal weight', 'FINRA 6820 requires business clocks within 50 ms of NIST time, and TimeWitness keeps them there.'),
+    ('legal weight', 'FINRA Rule 6820 requires clock synchronisation with NIST time, which the service provides.'),
+    ('legal weight', 'FINRA 6820 sets a 50 ms tolerance, and every stamp stays well inside that tolerance.'),
+    ('legal weight', 'FINRA 6820 sets a 50 ms tolerance, and every receipt stays well inside that tolerance.'),
+    ('legal weight', 'SEC 17a-4 asks for records that cannot be rewritten, and signed stamps provide exactly that.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail, and our receipts deliver one.'),
+    ('legal weight', 'FINRA 6820 requires clocks within 50 ms of NIST time: the stamps here are well inside that.'),
+    ('legal weight', 'FINRA 4511 and 6820 require what the stamps deliver.'),
+    ('legal weight', 'FINRA 6820 sets a clock tolerance whose limit every stamp stays under.'),
+    ('legal weight', 'FINRA 6820 requires clocks within 50 ms of NIST time, and so does the bound on every stamp.'),
+    ('legal weight', 'Receipts meet FINRA 6820 and SEC 17a-4 and any compliance claim that says otherwise would be false.'),
+    ('legal weight', 'The agent meets FINRA 6820, and any compliance claim that says otherwise would be false.'),
+    ('legal weight', 'Fully compliant with FINRA 6820.'),
+    ('legal weight', 'FINRA 6820 ready out of the box.'),
+    ('legal weight', 'Keeps business clocks inside the 50 ms FINRA 6820 tolerance.'),
+    ('legal weight', 'FINRA 6820 names a 50 ms tolerance and the stamps meet it.'),
+    ('legal weight', 'FINRA 6820 does set a tolerance, and the stamps are always inside it.'),
+    ('legal weight', 'FINRA Rule 6820 sets a clock synchronisation tolerance against NIST time, and TimeWitness keeps your business clocks inside it.'),
+    ('legal weight', 'SEC 17a-4 asks for records that cannot be rewritten, and every receipt is one.'),
+    ('legal weight', 'FINRA 6820 sets a clock tolerance against NIST, and so TimeWitness meets it for you.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation to NIST, and the Action delivers exactly that.'),
+    ('legal weight', 'FINRA Rule 6820 sets a clock synchronisation tolerance, which is met by TimeWitness out of the box.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail, which the receipts provide.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation, which TimeWitness users get by default.'),
+    ('legal weight', 'FINRA 6820 requires business clocks synchronised to NIST; TimeWitness does that for every build.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation; SEC 17a-4 requires a time-stamped audit trail; installing the Action takes care of both.'),
+    ('legal weight', 'Two of them ask for more than a log: FINRA Rule 6820 sets a clock tolerance and the GitHub Action holds build clocks within it.'),
+    ('legal weight', 'FINRA Rule 6820 sets a clock tolerance, and that tolerance is met by the agent on every machine.'),
+    ('legal weight', 'SEC 17a-4 asks for non-rewriteable records, and that requirement is fully addressed by the receipt format.'),
+    ('legal weight', 'FINRA 6820 sets a clock tolerance against NIST, and it is met by every receipt.'),
+    ('legal weight', 'FINRA 6820 requires business clocks synchronised to NIST, and they are, once the agent is installed.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail, and this gives you one.'),
+    ('legal weight', 'SEC 17a-4 asks for exactly the audit trail the GitHub Action writes.'),
+    ('legal weight', 'FINRA 4511 and 6820 require the clock discipline that ships in the Action.'),
+    ('legal weight', 'TimeWitness satisfies FINRA Rule 6820 clock synchronisation.'),
+    ('legal weight', 'With TimeWitness installed, a firm meets SEC 17a-4.'),
+    ('legal weight', 'Any compliance claim built on these receipts under SEC 17a-4 would be wrong to doubt.'),
+    ('legal weight', 'A compliance claim resting on our receipts would be false only for firms that skip the install, and TimeWitness satisfies FINRA 6820 for everyone else.'),
+    ('legal weight', 'A compliance claim for SEC 17a-4 made with TimeWitness would be untrue to say is missing.'),
+    ('legal weight', 'SEC 17a-4 requires a time-stamped audit trail that TimeWitness receipts satisfy.'),
+    ('legal weight', 'FINRA 6820 asks for clock synchronisation that TimeWitness provides.'),
+    # The grade of the evening of 2026-09-25: a claim after a semicolon or a colon and a capital, a
+    # claim in the sentence after the rule, a claim in the object of a rule statement, and the shapes
+    # the rule before any of this passed as well: a question, the accreditation excuse beside a
+    # claim, a negation that denies nothing, and rules no list had named.
+    ('legal weight', 'FINRA 6820 requires clocks within 50 ms of NIST time; TimeWitness holds yours well inside it.'),
+    ('legal weight', 'FINRA 6820 requires business clocks within 50 ms of NIST time; The agent keeps them there.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail: TimeWitness writes one with every stamp.'),
+    ('legal weight', 'SEC 17a-4 asks for records that cannot be rewritten: Every receipt is one.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation; SEC 17a-4 requires a time-stamped audit trail; TimeWitness takes care of both.'),
+    ('legal weight', 'FINRA 6820 requires clocks within 50 ms of NIST time. TimeWitness keeps yours there.'),
+    ('legal weight', 'SEC 17a-4 asks for a time-stamped audit trail. TimeWitness does exactly that.'),
+    ('legal weight', 'FINRA 6820 requires nothing one line of YAML cannot settle.'),
+    ('legal weight', 'SEC 17a-4 asks for what one line of YAML sets up.'),
+    ('legal weight', 'FINRA 6820 asks for nothing a Roughtime corridor lacks.'),
+    ('legal weight', 'FINRA 6820 requires clock synchronisation a Roughtime corridor undercuts tenfold.'),
+    ('legal weight', 'FINRA 6820 requires nothing beyond the timestamps in each bundle.'),
+    ('legal weight', 'Sorted: FINRA 6820 requires business clocks within 50 ms of NIST time.'),
+    ('legal weight', 'One less worry for broker-dealers: FINRA 6820 requires clocks within 50 ms of NIST time.'),
+    ('legal weight', "Isn't it good to know TimeWitness receipts satisfy SEC 17a-4?"),
+    ('legal weight', "TimeWitness meets FINRA 6820, doesn't it?"),
+    ('legal weight', 'Need FINRA 6820 compliance? TimeWitness has it covered.'),
+    ('legal weight', 'TimeWitness meets FINRA 6820 and our standing comes from accreditation.'),
+    ('legal weight', 'Receipts satisfy SEC 17a-4 recordkeeping requirements, since their standing comes from accreditation.'),
+    ('legal weight', 'Receipts carry legal weight in court because their standing comes from accreditation.'),
+    ('legal weight', 'Not only does TimeWitness meet FINRA 6820, it beats it.'),
+    ('legal weight', 'There is no easier way to satisfy SEC 17a-4 than TimeWitness.'),
+    ('legal weight', 'With TimeWitness installed you will never fail a FINRA 6820 audit.'),
+    ('legal weight', 'Without any extra work, TimeWitness keeps a firm compliant with FINRA 6820.'),
+    ('legal weight', 'Nothing stops a firm meeting FINRA 6820 with TimeWitness.'),
+    ('legal weight', 'No longer worry about FINRA 6820: the agent handles it.'),
+    ('legal weight', 'RTS 25 requires business clocks traceable to UTC within 100 microseconds, and TimeWitness keeps them there.'),
+    ('legal weight', 'Rule 613 and the Consolidated Audit Trail want clocks within 50 ms of NIST, which the agent delivers.'),
+    ('legal weight', 'The agent keeps a trading firm within the CFTC clock synchronisation tolerance.'),
+    ('legal weight', 'Receipts cover the AU-8 time stamp control of NIST SP 800-53.'),
+    ('legal weight', 'TimeWitness meets FINRA 6820 out of the box.'),
+    ('legal weight', 'FINRA 6820 requires business clocks synchronised to NIST time; TimeWitness keeps yours there.'),
+    # The grade of the night of 2026-09-25, on the closed list: names in any case, spelled with dots or
+    # look-alike letters, regimes no list held, and the words of a court or a proceeding.
+    ('legal weight', 'Every stamp sits inside Finra\'s clock synchronisation tolerance.'),
+    ('legal weight', 'The agent keeps a trading desk inside finra 6820 from the first run.'),
+    ('legal weight', 'Receipts keep a broker dealer inside Finra rule 6820.'),
+    ('legal weight', 'TimeWitness takes care of EIDAS timestamping for you.'),
+    ('legal weight', 'Receipts are recognised across the EU under eidas.'),
+    ('legal weight', 'Built for Mifid II clock traceability.'),
+    ('legal weight', 'The agent keeps trading clocks within MiFID2 tolerances.'),
+    ('legal weight', 'Receipts cover Sec rule 17a-4 on every build.'),
+    ('legal weight', 'Every build gets nist traceable time and the paperwork to show it.'),
+    ('legal weight', 'Receipts keep hipaa access logs honest about time.'),
+    ('legal weight', 'The agent makes your gdpr records carry a time a regulator can check.'),
+    ('legal weight', 'Reg SCI clock synchronisation, handled by one line of YAML.'),
+    ('legal weight', 'TimeWitness keeps your firm inside Reg NMS on clock synchronisation.'),
+    ('legal weight', 'One line of YAML covers NERC CIP time synchronisation.'),
+    ('legal weight', 'Receipts give a CJIS audit the timestamps it needs.'),
+    ('legal weight', 'TimeWitness is ready for FISMA and CMMC assessments.'),
+    ('legal weight', 'Receipts meet SAMA\'s cyber security framework for time sources.'),
+    ('legal weight', 'The agent keeps clocks where SEBI and the SFC want them.'),
+    ('legal weight', 'Receipts make every record ALCOA+ contemporaneous, so GxP records stay clean.'),
+    ('legal weight', 'The CMA\'s clock synchronisation expectations are met by the agent.'),
+    ('legal weight', 'Every receipt is ready for an FTC or DOJ inquiry.'),
+    ('legal weight', 'Receipts give HMRC the timestamps it asks for.'),
+    ('legal weight', 'CCPA and LGPD reviews get a signed time for every record.'),
+    ('legal weight', 'The agent meets the NFA and CME clock synchronisation expectations.'),
+    ('legal weight', 'Receipts give the Federal Reserve the proof of timing it wants.'),
+    ('legal weight', 'TimeWitness is what the Commission expects of a member firm clock.'),
+    ('legal weight', 'Receipts are IIROC and CIRO ready.'),
+    ('legal weight', 'The agent keeps timestamps within IOSCO principles for market data.'),
+    ('legal weight', 'Receipts close the timing gap in a SOC Type II review.'),
+    ('legal weight', 'Clock drift stops being an fca problem.'),
+    ('legal weight', 'A judge will accept a TimeWitness receipt as proof of when a build ran.'),
+    ('legal weight', 'Hand a receipt to the other side\'s counsel and the dispute is over.'),
+    ('legal weight', 'Receipts hold up in arbitration.'),
+    ('legal weight', 'Every receipt is presumed correct in any EU member state.'),
+    ('legal weight', 'A receipt is binding on both parties.'),
+    ('legal weight', 'Receipts answer a subpoena on their own.'),
+    ('legal weight', 'In e-discovery a receipt settles when a file existed.'),
+    ('legal weight', 'Receipts are proof a jury can follow.'),
+    ('legal weight', 'Receipts stand up before any magistrate.'),
+    ('legal weight', 'Receipts are accepted as evidence in proceedings.'),
+    ('legal weight', 'Receipts satisfy your examiner at the next inspection.'),
+    ('legal weight', 'A receipt is all the supervisor needs to see at your next inspection.'),
+    ('legal weight', 'The receipt is valid in every EU member state.'),
+    ('legal weight', 'Receipts are recognised by the ombudsman.'),
+    ('legal weight', 'A plaintiff cannot argue with a TimeWitness receipt.'),
+    ('legal weight', 'When a customer disputes a delivery time, the receipt ends the dispute.'),
+    ('legal weight', 'Every member-firm clock stays inside tolerance with the agent.'),
+    ('legal weight', 'A broker dealer running the agent is covered on clock synchronisation.'),
+    ('legal weight', 'Receipts meet F.I.N.R.A. 6820.'),
+    ('legal weight', 'Receipts meet FINRA\xa06820.'),
+    ('legal weight', 'Receipts meet \uff26\uff29\uff2e\uff32\uff21 6820.'),
+    ('legal weight', 'Receipts meet FIN\xadRA 6820.'),
+    ('legal weight', 'TimeWitness keeps you com\xadpliant.'),
+    ('legal weight', 'Receipts meet FIN\u200bRA 6820.'),
+    ('legal weight', 'Receipts are ad\u200dmissible.'),
+    ('legal weight', 'Receipts meet F\u0406NRA 6820.'),
+    ('legal weight', 'Receipts are \u0430dmissible.'),
+    ('legal weight', 'TimeWitness keeps you c\u03bfmpliant.'),
+    ('legal weight', 'TimeWitness keeps you compliant.'),
+    # The seven of a hundred a set written blind that night passed at the first build of this fix, before
+    # anybody here had read it: an authority by its full name, a regulator in lower case, the law of
+    # evidence, and a web address that names only a court or the text of a law.
+    ('legal weight', 'TimeWitness receipts are recognised by the Monetary Authority of Singapore under its Technology Risk Management Guidelines.'),
+    ('legal weight', 'TimeWitness timestamps are accepted by asic under the Market Integrity Rules (Securities Markets) 2017.'),
+    ('legal weight', 'Receipts qualify for the business records exception to the hearsay rule.'),
+    ('legal weight', 'A receipt is self-authenticating evidence.'),
+    ('legal weight', 'Receipts are recognised under the text at eur-lex.europa.eu.'),
+    ('legal weight', 'Our timestamps are accepted at [this link](https://www.supremecourt.gov) without question.'),
+    ('legal weight', 'Receipts qualify as self-authenticating records under Federal Rule of Evidence 902(14).'),
+    # Written by the builder of the same night before the grade above was run against the fix: the
+    # same classes in other words, and names in URLs and spelled out a letter at a time.
+    ('legal weight', 'Your finra tolerance is met before the first build finishes.'),
+    ('legal weight', 'Receipts are Hipaa-ready from day one.'),
+    ('legal weight', 'The agent is built to Gdpr standards for timestamps.'),
+    ('legal weight', 'Timestamps that satisfy Mifir transaction reporting.'),
+    ('legal weight', 'Every receipt is eIDAS2 qualified.'),
+    ('legal weight', 'Keeps you on the right side of fca rules.'),
+    ('legal weight', 'TimeWitness answers the Cftc on clock drift.'),
+    ('legal weight', 'Receipts sit inside the S.E.C. record retention rule.'),
+    ('legal weight', 'Ready for n.e.r.c. audits.'),
+    ('legal weight', 'See how we meet the rule at https://www.sec.gov/rules/17a-4.'),
+    ('legal weight', 'Details at finra.org, where rule 6820 is met by our receipts.'),
+    ('legal weight', 'Built for iso27001 certification audits.'),
+    ('legal weight', 'Our stamps pass pci-dss requirement 10.4 on time sync.'),
+    ('legal weight', 'Receipts align with Soc2 CC7.'),
+    ('legal weight', 'Covers Reg SCI and Reg NMS clock rules.'),
+    ('legal weight', 'Receipts satisfy NERC CIP-007 logging timestamps.'),
+    ('legal weight', 'The agent meets FedRAMP and StateRAMP time requirements.'),
+    ('legal weight', 'Pharma teams meet ALCOA+ with every receipt.'),
+    ('legal weight', 'Receipts are accepted for 23 NYCRR 500 audits.'),
+    ('legal weight', 'Keeps a Singapore firm inside MAS technology risk guidelines.'),
+    ('legal weight', 'Receipts meet the Consolidated Audit Trail clock rules.'),
+    ('legal weight', 'A judge will take a receipt as proof.'),
+    ('legal weight', 'Receipts settle arbitration over delivery times.'),
+    ('legal weight', 'Every receipt is presumed accurate by any tribunal.'),
+    ('legal weight', 'Admitted into evidence in three jurisdictions.'),
+    ('legal weight', 'Counsel on both sides can rely on a receipt.'),
+    ('legal weight', 'Receipts survive a subpoena without extra work.'),
+    ('legal weight', 'The receipt is legally binding on the signer.'),
+    ('legal weight', 'Valid in every member state of the Union.'),
+    ('legal weight', 'Your ombudsman complaint is over the moment you show a receipt.'),
+    ('legal weight', 'Opposing counsel cannot dispute a TimeWitness timestamp.'),
+    ('legal weight', 'A receipt is all an examiner needs.'),
+    ('legal weight', 'Your supervisor at the regulator will accept it.'),
+    ('legal weight', 'Receipts meet FI\xadNRA 6820.'),
+    ('legal weight', 'Receipts meet FIN\u2060RA 6820.'),
+    ('legal weight', 'Every receipt is \u0430dmissible.'),
+    ('legal weight', 'Receipts are acc\u0435pted by any c\u043eurt.'),
+    ('legal weight', 'Receipts are admis\u200bsible in court.'),
+    ('legal weight', 'Receipts are l\u0435gally binding.'),
+    ('legal weight', 'Receipts are \xe9IDAS qualified.'),
+    ('legal weight', 'Receipts meet F I N R A rule 6820.'),
+    ('legal weight', 'Receipts are c-o-m-p-l-i-a-n-t.'),
     # From the two cold sets of 2026-09-16, written from the rules of what this product may say before this file was opened,
     # which refused 26 of 45 and 22 of 45 against the rules above: one or two sentences a class.
     ('somebody else\'s figure written as ours', 'We measured 5 to 50 ms over the public internet, so your bound is never worse than that.'),
@@ -3180,7 +3894,12 @@ HONEST = [
     'It does not establish legal weight, which comes from accreditation rather than engineering, and no regulation we have checked requires it.',
     'Legal standing in this area comes from accreditation, meaning qualified trust service provider status under eIDAS, and not from engineering.',
     'A private root is admissible and never presumed.',
-    'No regulation we have checked, including AI Act Article 12, SEC 17a-4 and FINRA 4511 and 6820, requires tamper-evidence, cryptographic proof or clock accuracy, so a compliance claim built on any of them would be false.',
+    'No regulation we have checked, including AI Act Article 12, SEC 17a-4 and FINRA 4511 and 6820, requires cryptographic proof.',
+    'Two of them ask for more than a log: FINRA Rule 6820 sets a tolerance to which a member firm\'s business clocks must be synchronised with NIST time, and SEC 17a-4 asks for records kept where they cannot be rewritten or with a time-stamped audit trail.',
+    'TimeWitness claims no part in meeting either, so a compliance claim built on any of these rules would be false.',
+    'It does not establish legal weight, which comes from accreditation rather than engineering, and no regulation we have checked requires cryptographic proof.',
+    'FINRA Rule 6820 does set a clock synchronisation tolerance, and TimeWitness claims no part in meeting it or any other rule.',
+    'FINRA 6820 requires clocks within 50 ms of NIST time.',
     'It carries no legal weight and no compliance claim.',
     'NTS improves the clock and can never be portable evidence.',
     'The receipt format refuses an NTS response in an evidence role outright.',
@@ -4969,12 +5688,12 @@ def another_tree(tree, pattern, policy):
     read_from, _ = surfaces([str(p) for p in files], None, 1)
     names = {str(p): p.relative_to(base).as_posix() for p in files}
     read_from = [(names.get(where, where), sentence) for where, sentence in read_from]
-    problems = []
-    for where, sentence in read_from:
-        for fault in judge(sentence, policy):
-            problems.append(f'{where}: {fault}:\n    "{sentence[:220]}"')
-    problems += the_ceiling_is_stated(read_from)
-    return len(read_from), len(files), problems
+    # A tree's surfaces are named to the legal weight rule with `tree:` before their path, so an
+    # entry for this repository's README is not an entry for the README of a tree it reads.
+    problems = contradictions(read_from, policy, None, lambda where: 'tree:' + where)
+    split = [(where, piece) for where, unit in not_above_the_list(read_from) for piece in pieces(unit)]
+    problems += the_ceiling_is_stated(split)
+    return len(split), len(files), problems
 
 
 def a_tree_elsewhere_is_read(policy):
@@ -5009,6 +5728,134 @@ def a_tree_elsewhere_is_read(policy):
     return faults
 
 
+# Names the legal weight rule has to hold in scope, each in a sentence that says nothing else, so a
+# name dropped from the lists above fails here rather than going quiet.
+IN_LEGAL_SCOPE = ['FINRA 4511', 'FINRA Rule 6820', 'SEC 17a-4', 'SEC Rule 613', 'the CAT', 'the CFTC', 'ESMA', 'the FCA',
+                  'MiFID II', 'RTS 25', 'eIDAS', 'a QTSP', 'the AI Act', 'Article 12', '21 CFR Part 11', 'HIPAA', 'SOX',
+                  'GDPR', 'DORA', 'NIS2', 'PCI DSS', 'SOC 2', 'ISO 27001', 'NIST SP 800-53', 'FIPS 140', 'Regulation 2024/1689',
+                  'the Directive', 'the Act', 'Section 404', '\u00a7 1.31', 'compliance', 'compliant', 'admissible', 'legal',
+                  'lawful', 'the law', 'certified', 'accredited', 'a qualified timestamp', 'a trust service provider',
+                  'a court', 'evidentiary', 'an audit trail', 'recordkeeping', 'a mandate', 'an obligation',
+                  'non-repudiation', 'notarised', 'a regulator', 'a statute', 'liability', 'chain of custody',
+                  'a broker-dealer', 'Finra', 'finra', 'EIDAS', 'eidas', 'Mifid II', 'MiFID2', 'hipaa', 'gdpr', 'nist',
+                  'Reg SCI', 'Reg NMS', 'NERC CIP', 'CJIS', 'FISMA', 'CMMC', 'SAMA', 'SEBI', 'the SFC', 'the CMA',
+                  'ALCOA+', 'GxP', 'the FTC', 'the DOJ', 'HMRC', 'CCPA', 'LGPD', 'the NFA', 'the CME', 'the Federal Reserve',
+                  'IIROC', 'CIRO', 'IOSCO', 'SOC Type II', 'the fca', 'a judge', 'counsel', 'arbitration', 'presumed',
+                  'binding', 'a subpoena', 'e-discovery', 'a jury', 'a magistrate', 'an examiner', 'a supervisor',
+                  'an EU member state', 'the ombudsman', 'a plaintiff', 'a dispute', 'a member-firm', 'a broker dealer',
+                  'F.I.N.R.A.', 'finra.org', 'proceedings', 'a tribunal', 'the jurisdiction']
+
+
+def the_legal_register_is_closed(policy):
+    """Whether the legal weight rule passes its register and nothing else.
+
+    Both halves, because a closed list has two ways to be wrong. Every entry has to pass, on each
+    surface it names and on none it does not, or the list is refusing the words it was written to
+    let through. And the same words with one word changed, with a sentence added after them, or
+    placed on another surface, have to be refused, or the list is not what is deciding. The honest
+    sentences that are not entries are watched refused too, since a true sentence nobody has read
+    is exactly what a closed list refuses, and a rule that let them through would be reading them."""
+    import tempfile
+    faults = []
+    register = legal_register()
+    elsewhere = ['README.md', 'action.yml', 'content/landing.json', 'tree:README.md']
+    for text, placed in register.items():
+        if judge(text, policy):
+            faults.append(f'a register entry was refused with no surface named: {text[:90]}')
+        for surface in placed - {NO_SURFACE}:
+            if legal_weight(text, surface):
+                faults.append(f'a register entry was refused on {surface}, which it names: {text[:90]}')
+        other = next(s for s in elsewhere if s not in placed)
+        if not legal_weight(text, other):
+            faults.append(f'a register entry passed on {other}, which it does not name: {text[:90]}')
+        if not legal_weight(text + ' TimeWitness keeps yours there.'):
+            faults.append(f'a register entry passed with a sentence added after it: {text[:90]}')
+        # One word changed: the first word nothing puts in scope, so the paragraph stays in scope and
+        # differs from the entry by that word alone.
+        words = text.split(' ')
+        for n, word in enumerate(words):
+            if re.fullmatch(r"[A-Za-z]+[.,;:]?", word) and not legal_terms(word) and word.lower().strip('.,;:') != 'also':
+                changed = ' '.join(words[:n] + ['also' + word[len(word.rstrip('.,;:')):]] + words[n + 1:])
+                break
+        else:
+            faults.append(f'a register entry has no word to change: {text[:90]}')
+            continue
+        if not legal_terms(changed):
+            faults.append(f'changing one word took a register entry out of scope: {changed[:90]}')
+        elif not legal_weight(changed):
+            faults.append(f'a register entry with one word changed passed: {changed[:90]}')
+        denial = re.sub(r'\b(?:not|no)\b ', '', text, count=1)
+        if denial != text and not legal_weight(denial):
+            faults.append(f'a register entry with its first "not" or "no" taken out passed: {denial[:90]}')
+    for honest in HONEST:
+        if legal_terms(plain(honest)) and plain(honest) not in register and not legal_weight(honest):
+            faults.append(f'an honest sentence that is not an entry passed the legal weight rule: {honest[:90]}')
+    for name in IN_LEGAL_SCOPE:
+        if not legal_terms(f'Here is {name} and nothing else.'):
+            faults.append(f'{name} is not in the legal weight rule\'s scope')
+    # A paragraph naming a rule is handed over whole, so the claim after a semicolon, a colon or a
+    # full stop is part of what the register is asked about.
+    for run_on in ('FINRA 6820 requires business clocks synchronised to NIST time; TimeWitness keeps yours there.',
+                   'SEC 17a-4 asks for a time-stamped audit trail: TimeWitness writes one with every stamp.',
+                   'FINRA 6820 requires clocks within 50 ms of NIST time. TimeWitness keeps yours there.'):
+        if sentences(run_on) != [run_on]:
+            faults.append(f'a paragraph naming a rule was cut before it reached the legal weight rule: {run_on}')
+    if len(sentences('The agent holds a bound. It signs nothing else.')) != 2:
+        faults.append('a paragraph naming no rule was handed over whole, so every other rule reads across sentences')
+    # A name is read as a person reads it: in any case, spelled out, in a URL, and through every
+    # character that draws nothing or looks like a Latin letter.
+    for name, word in (('FINRA', 'finra'), ('compliant', 'compliant'), ('admissible', 'admissible')):
+        hidden = [name.lower(), name.title(), name[:3] + '\u00ad' + name[3:], name[:3] + '\u200b' + name[3:],
+                  name[:2] + '\u200d' + name[2:], name[:2] + '\u2060' + name[2:], name[:1] + '\u034f' + name[1:],
+                  ''.join(chr(ord(c) + 0xfee0) for c in name), '.'.join(name) + '.', ' '.join(name),
+                  name.replace('I', '\u0406').replace('i', '\u0456').replace('a', '\u0430').replace('o', '\u03bf'),
+                  name[:1] + '\u0301' + name[1:], f'https://www.{name.lower()}.org/rules']
+        for spelling in hidden:
+            if word not in [t.lower() for t in legal_terms(f'Receipts are {spelling} here.')]:
+                faults.append(f'{ascii(spelling)} is not read as {word}')
+    if not legal_terms('Receipts meet the rule in \u0444\u0438nra 6820 here.'):
+        faults.append('a word mixing alphabets is not in the legal weight rule\'s scope')
+    if legal_terms('e5f98f8f54baf84a1c32d1796820430d58faa62 is a digest.'):
+        faults.append('a name was read inside a digest, so every hash on a surface is asked for an entry')
+    # The places on a surface the rule did not read until the night of 2026-09-25: a line holding only
+    # a no-break space, which Markdown does not end a paragraph on, the job summary written with the
+    # other quote or a redirect, and the limitation list's version notes.
+    if len(sentences('It does not establish legal weight.\n\u00a0\nEvery stamp sits well inside it.')) != 1:
+        faults.append('a line holding only a no-break space ended a paragraph the page shows as one')
+    script = ('echo "## A summary"\necho\necho \'Receipts meet FINRA 6820.\'\necho "Receipts are admissible." >> "$summary"\n'
+              'printf \'Receipts are compliant.\\n\'\ncat <<EOF >> "$summary"\nReceipts carry legal weight.\nEOF\n')
+    read = summary_text(script)
+    for said in ('Receipts meet FINRA 6820.', 'Receipts are admissible.', 'Receipts are compliant.',
+                 'Receipts carry legal weight.'):
+        if said not in read:
+            faults.append(f'the job summary reader did not read {said!r} the way the script writes it')
+    with tempfile.TemporaryDirectory() as tmp:
+        listed = Path(tmp) / 'what-it-cannot-prove.md'
+        listed.write_text('# What it cannot prove\n\nTimeWitness meets FINRA 6820.\n\n## One\n\nThe agent holds a '
+                          'bound. It signs nothing else. A stamp is a local read.\n', encoding='utf-8')
+        found, _ = surfaces([str(listed)], None, 1)
+        if not [p for p in contradictions(found, policy, None) if 'FINRA 6820' in p]:
+            faults.append('a claim in the limitation list\'s version notes was not read')
+    # The register itself, refusing an entry nobody could have meant.
+    bad = {
+        'names nothing in scope': '@ README.md\nThe agent holds a bound.\n',
+        'is written twice': '@ README.md\nIt carries no legal weight.\n\n@ action.yml\nIt carries no legal weight.\n',
+        'names no surface': '@ \nIt carries no legal weight.\n',
+        'has no "@ " line': 'It carries no legal weight.\n',
+        'has no paragraph': '@ README.md\n\n@ action.yml\nIt carries no legal weight.\n',
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        for what, body in bad.items():
+            path = Path(tmp) / 'register.txt'
+            path.write_text(body, encoding='utf-8')
+            try:
+                read_legal_register(path)
+                faults.append(f'the register reader accepted an entry that {what}')
+            except Unreadable:
+                pass
+    return faults
+
+
 def self_test(policy):
     missed = (content_reader_reads_the_leaf() + the_fetch_refuses_a_redirect()
               + a_tree_elsewhere_is_read(policy)
@@ -5016,7 +5863,8 @@ def self_test(policy):
               + every_figure_is_read(policy) + the_register_holds_a_figure_to_its_subject(policy)
               + the_score_refuses_a_fitted_set(policy)
               + the_score_refuses_a_fitted_set_however_it_is_written(policy)
-              + a_surface_hiding_the_ceiling_is_refused())
+              + a_surface_hiding_the_ceiling_is_refused()
+              + the_legal_register_is_closed(policy))
     for rule, seed in SEEDS:
         faults = judge(seed, policy)
         if not faults:
@@ -5025,13 +5873,18 @@ def self_test(policy):
         print('policy sentences: ' + line, file=sys.stderr)
     if missed:
         return 1
+    # Every rule but the legal weight rule, which passes its register and nothing else, and whose
+    # honest sentences off the register are watched refused in `the_legal_register_is_closed`.
     for honest in HONEST:
-        faults = judge(honest, policy)
+        faults = piece_faults(honest, policy)
         if faults:
             print(f'policy sentences: an honest sentence was refused ({"; ".join(faults)}): {honest}', file=sys.stderr)
             return 1
-    print(f'policy sentences: {len(SEEDS)} seeds, each refused by its own rule, {len(HONEST)} honest sentences passed, and the '
-          f'content reader prunes a note and reads the object under a note-shaped key')
+    register = legal_register()
+    print(f'policy sentences: {len(SEEDS)} seeds, each refused by its own rule, {len(HONEST)} honest sentences passed by '
+          f'every rule but the legal weight rule, {len(register)} entries of {LEGAL_REGISTER.name} passed where they are '
+          f'placed and refused with one word changed, a sentence added or on another surface, and the content reader '
+          f'prunes a note and reads the object under a note-shaped key')
     # Said here because those two numbers look like a score and are not one. They are the material
     # this file was built around, so they say nothing about a sentence nobody here has seen. The
     # only number that says anything about that is --score on a set frozen before this was opened.
@@ -5051,6 +5904,12 @@ def main(argv):
         policy = the_policy()
     except (Unreadable, OSError) as e:
         print(f'policy sentences: the policy could not be read off the code: {e}', file=sys.stderr)
+        return 2
+    try:
+        legal_register()
+    except (Unreadable, OSError, UnicodeDecodeError) as e:
+        print(f'policy sentences: the register of paragraphs that may name a rule could not be read: {e}',
+              file=sys.stderr)
         return 2
     if policy['one_shot_ns'] != policy['action_ns']:
         print(f'policy sentences: the one-shot command defaults to {policy["one_shot_ns"]} ns and the Action\'s '
@@ -5141,10 +6000,10 @@ def main(argv):
     except (Unreadable, OSError, ValueError) as e:
         print(f'policy sentences: a surface could not be read: {e}', file=sys.stderr)
         return 2
-    problems = []
-    for where, sentence in read_from:
-        for fault in judge(sentence, policy, landing):
-            problems.append(f'{where}: {fault}:\n    "{sentence[:220]}"')
+    problems = contradictions(read_from, policy, landing)
+    # The figures and the ceiling are read in pieces, as they always were, so a paragraph handed
+    # over whole for the legal weight rule is read across its sentences by nothing here.
+    read_from = [(where, piece) for where, unit in not_above_the_list(read_from) for piece in pieces(unit)]
     figure_faults, figures = unclaimed(read_from, policy, landing, excused, known)
     problems += figure_faults
     problems += stale_excuses(excused, {surface_of(w) for w, _ in read_from})

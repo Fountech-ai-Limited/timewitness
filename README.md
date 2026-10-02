@@ -31,7 +31,7 @@ This repository is early and it says so rather than describing a finished produc
 | A continuously running agent | built, `timewitness agent`, as a foreground process or as a service. It holds one clock model, disciplines it on a schedule and answers a reading to `timewitness stamp --agent` with no network call in the reading. `timewitness agent install` hands it to the platform's own service manager so that it starts at boot, and a restart has been checked on Linux only. The Action below does not use it. A fresh agent warms up: `timewitness status` says how wrong the clock could be within a minute of it starting, and most stamps are refused while it settles. Each refusal says why in a sentence. How long the settling took over measured starts, with the machine, the network and the date, is on the limitation list below |
 | Four to six independent sources | built, on the count this product defines and enforces. Independent is the operator: a source names who runs it, the selection counts operators rather than names, a majority resting on a minority of operators is refused, and the shipped floor is four, so a round short of it declines to sign rather than widening. Nine servers reach six operators, so two can go dark and the agent carries on. Two things the count cannot see, both on the limitation list: it is an upper bound, since a shared upstream, path, constellation or implementation is one fault however many companies it is; and three programs stand behind the nine names, so a defect in one of them is one fault across three at once. The fourth source kind, local hardware, has no client and needs a receiver this product cannot assume anybody has |
 | Clock model: selection, weighting, regression, holdover | built |
-| Receipt format | version 0 built and frozen, and it is what the `v0` and `v0.1` releases write, `docs/receipt-format-v0.md`. Version 1 is what the `v0.2`, `v0.3` and `v0.4` releases write: it states the three terms that set a receipt's width, the part of the holdover covering a rate the agent is not correcting for, and which path the reading came by, and it can carry a witness over the receipt's own signature. `v0.2` and `v0.3` read both versions and `v0.1` refuses version 1 by name, `docs/receipt-format-v1.md` |
+| Receipt format | version 0 built and frozen, and it is what the `v0` and `v0.1` releases write, `docs/receipt-format-v0.md`. Version 1 is what the `v0.2`, `v0.3`, `v0.4` and `v0.5` releases write: it states the three terms that set a receipt's width, the part of the holdover covering a rate the agent is not correcting for, and which path the reading came by, and it can carry a witness over the receipt's own signature. `v0.2` and `v0.3` read both versions and `v0.1` refuses version 1 by name, `docs/receipt-format-v1.md` |
 | Roughtime client, the authenticated corridor | built, proved against three public servers |
 | NTS client, an authenticated source that is never evidence | built, proved against three public servers. Its keys are symmetric, so it improves the clock and can never be shown to a stranger |
 | Freshness beacon client, not-earlier-than | built for drand, one beacon of the two the design asks for |
@@ -40,9 +40,9 @@ This repository is early and it says so rather than describing a finished produc
 | GitHub Action | built. One line in a workflow, and the receipt goes into the SLSA provenance and the container image labels that already ship. From `v0.3` the provenance names the format the receipt is written in, read off the receipt; the `v0.2` Action labelled every receipt `timewitness-receipt-v0`, which is wrong for the version 1 receipts it writes |
 | A bound resting on outside evidence | not built. Every receipt says its bound rests on the agent's own model. The outside signatures it carries are checked, and on both timestamp authorities that ship the token states no accuracy of its own, so it bounds nothing in UTC and the receipt is left with one edge rather than two. Nothing issues a receipt whose width rests on outside signatures. The format can say so, the verifier refuses the claim unless all three roles check out, and a reader who has read an authority's published practice can allow for that authority's clock in their own anchors, which gives the edge back as the reader's own figure and never as the authority's |
 | Order within a chain | built two receipts at a time, from the `v0.2` release. `timewitness order` reads two receipts offline and keeps two answers apart: the intervals say which moment came first, and a hash link says which of two receipts of one chain was signed first. Nothing walks a whole chain |
-| A public log of agent keys | built for our own key. A receipt proves whoever signed it held that key and nothing about who that was. `timewitness.dev/key-log.txt` names our two Roughtime server keys and the one agent key we vouch for, with its window, and a verifier built from `main` names the entry and the window or refuses a key outside it. It is our own word and not third-party evidence. The key of the receipt committed here is not in it and nobody else's is either, and the `v0` release cannot read it |
+| A public log of agent keys | built for our own key. A receipt proves whoever signed it held that key and nothing about who that was. `timewitness.dev/key-log.txt` names our two Roughtime server keys and the one agent key we vouch for, with its window, and the verifier from `v0.4` on names the entry and the window or refuses a key outside it. It is our own word and not third-party evidence. The key of the receipt committed here is not in it and nobody else's is either, and the `v0` release cannot read it |
 
-`v0`, `v0.1`, `v0.2`, `v0.3` and `v0.4` are tagged and released as source, with no binary. Both halves are built from source in this
+`v0`, `v0.1`, `v0.2`, `v0.3`, `v0.4` and `v0.5` are tagged and released as source, with no binary. Both halves are built from source in this
 repository, so today a stranger compiles the verifier rather than downloading it.
 
 ## The two numbers, which are not the same number
@@ -59,10 +59,16 @@ good LAN against a stratum-1 source, and to a cloud instance with a hypervisor c
 microseconds need hardware. Nanosecond accuracy is a datacentre thing and is not something this
 product sells.
 
+The first two figures are read from David Mills' Executive Summary: Computer Network Time
+Synchronization, which puts an internet path at a few milliseconds to several tens of milliseconds
+and a clock updated each minute from a primary reference at about a millisecond. The third is from
+Amazon's post of November 2023 on microsecond clocks for EC2 instances, which gives it as the clock
+error bound a supported instance typically sees over NTP.
+
 **About a sixth of a second is what this code reaches today**, and it was seconds until 2026-09-09.
 Measured on an ordinary desktop at the sixteen rounds the Action ships, with all three source kinds
 in the round: 149.3 ms, 161.2 ms and 163.2 ms wide over three passes at 21:39, and a bound of 153.9 ms on the receipt
-committed in this repository at 21:41. A machine whose only sources are the three public Roughtime
+committed in this repository at 21:41 on that desktop's clock, 18:41 UTC. A machine whose only sources are the three public Roughtime
 servers gets no receipt at all: three operators is under the shipped floor of four, so it is refused.
 Before that floor went in on 2026-09-09 such a machine reached seconds, 12.0 s wide at those same sixteen
 rounds on 2026-09-08, because a Roughtime server states its uncertainty as a radius in whole seconds.
@@ -128,8 +134,8 @@ sources reach alone.
 A receipt is worth something only if a stranger can check it, and that takes three different kinds of
 evidence.
 
-- **An authenticated UTC corridor** puts a signed interval round the moment that a stranger can
-  check. A Roughtime response,
+- **An authenticated UTC corridor** puts a signed interval round the moment its server answered,
+  which a stranger can check and which the reading has to overlap. A Roughtime response,
   where we generate the nonce and the server signs ours. It does not make the bound tighter: a
   Roughtime radius is a whole number of seconds, and the three public servers reachable on
   2026-09-07 were stating one, three and five.
@@ -186,9 +192,10 @@ one thing exactly: while fewer than half of them are wrong, the interval holds t
 that disagrees with the others can narrow it, widen it or move it. Half of them wrong is not covered,
 a source is not taken at its word about how certain it is, and a source in the minority can still
 move the reading inside the interval a majority allows. A source that agrees with everything is a
-different case and one the protection does not cover: a server stating a radius of an hour
-contradicts nobody, and where two servers disagree and no majority exists without it, its arrival is
-what turns a refusal into an interval wider than either of them supports.
+different case, and the published algorithm does not cover it: a server stating a radius of an hour
+contradicts nobody, and where two servers disagree and no majority exists without it, the textbook
+would let its arrival turn a refusal into an interval wider than either of them supports. The agent
+refuses that round instead, by the stricter rule described above.
 
 **About what is stamped.** It cannot prove a photograph, a document or a recording is real; it binds
 a hash to a bounded time. It cannot prove the software describing an event described it truthfully.
@@ -198,7 +205,8 @@ something did not happen.
 **About what it does when something is wrong.** It does not prevent anything: a refusal records that
 TimeWitness declined to sign, not that an action was stopped. It does not establish legal weight,
 which comes from accreditation rather than engineering, and no regulation we have checked requires
-tamper-evidence, cryptographic proof or clock accuracy.
+cryptographic proof. FINRA Rule 6820 does set a clock synchronisation tolerance, and TimeWitness
+claims no part in meeting it or any other rule.
 
 **About what is built today.** Three time source clients exist in this repository, Roughtime, plain NTP and NTS, and only Roughtime signs anything a stranger can check, so the one that can be shown to a stranger is the one that cannot narrow the bound. A Roughtime server states its own uncertainty as a radius in whole seconds,
 so a bound resting on Roughtime alone would be seconds wide whatever else is done to it, and the
@@ -237,8 +245,9 @@ there is no OpenTimestamps anchor. Roughtime is an Internet-Draft and not an RFC
 A sleep is detected and has never been watched happening: the agent reads the two counters an
 operating system keeps, one that stops while the machine sleeps and one that does not, and refuses
 until it has synchronised again, but nothing has put a real machine to sleep to watch it, and a sleep
-shorter than a quarter of a second is not seen at all. The Windows path is run by hand on one machine
-and not in continuous integration, which runs on Linux only. An agent that starts inside a leap smear
+shorter than a quarter of a second is not seen at all. On Windows, continuous integration installs and
+removes the agent as a service and nothing more; the rest of the Windows path is run by hand on one
+machine. An agent that starts inside a leap smear
 may not know it, because the announcement it would have latched was cleared before it started.
 Nothing here stops any of it: a machine suspends, a second time service sets the clock, and a leap
 second arrives, and all the agent controls is whether it signs afterwards.
@@ -264,7 +273,7 @@ before there is anything to count.
 One line in a workflow file:
 
 ```yaml
-- uses: Fountech-ai-Limited/timewitness@v0.4
+- uses: Fountech-ai-Limited/timewitness@v0.5
   with:
     subject: dist/widget.tar.gz
 ```
@@ -272,7 +281,7 @@ One line in a workflow file:
 There is no configuration file and no secret to set. The receipt lands beside the artefact, goes into
 the SLSA provenance and container image labels where those are named, and the workflow summary carries
 what the receipt does and does not establish. The inputs are the ones in `action.yml` at the tag you
-pin, so read that file at `v0.4` rather than here: an input added on `main` reaches a workflow only
+pin, so read that file at `v0.5` rather than here: an input added on `main` reaches a workflow only
 with the release after it. `deadline` arrived in `v0.2`, so a workflow pinned to `@v0.1` that sets it
 gets a warning from GitHub and no deadline.
 
@@ -292,8 +301,13 @@ asks our own two Roughtime servers as well, `timewitness-roughtime-lhr.fly.dev:2
 timewitness.dev/key-log.txt names for them, with the three tests in
 `crates/cli/tests/against_a_running_server.rs`. The run reads the servers out of that log each
 morning, so a server added to it is asked from then on. A pass there means the server answered under
-the key we published and stated the narrowest corridor the Roughtime format allows. It is ours, so
-it is never an independent source for anybody's bound. The summary names every test and whether it
+the key we published, and that the corridor it signed is one a server of ours can justify: a radius
+of whole seconds and at least one, a midpoint less than a second from where its bound could have
+been centred, a radius no wider than cutting that midpoint to a whole second calls for on the widest
+bound its model will answer from, and a corridor that meets the moment this machine, held to the
+published NTP servers, says the server answered. So a pass covers the narrowest corridor the
+Roughtime format allows, and a wider one only where that cut calls for it. It is ours, so it is
+never an independent source for anybody's bound. The summary names every test and whether it
 answered, with the tests against our servers named by address, and the date of the run is the last
 time the live integrations were seen working. The ordinary build asks none of them, because a server
 being down is not a fault in a commit.

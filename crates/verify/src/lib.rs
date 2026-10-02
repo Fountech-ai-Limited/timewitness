@@ -1228,9 +1228,10 @@ fn check_floor(receipt: &Receipt, floor: &Floor) -> Step {
     Step::held(
         question,
         format!(
-            "{} wide, on {} sources run by {} operators{own}. Two moments further apart than that \
-             can be put in order by receipts of this width and two closer together cannot, and the \
-             agent that issued it signed for nothing wider than {}",
+            "{} wide, on {} sources run by {} operators{own}. Two moments further apart than two \
+             such widths added together are always put in order by receipts of this width; closer \
+             ones are put in order only where the two intervals happen to sit clear of each other. \
+             The agent that issued it signed for nothing wider than {}",
             human_width(width),
             // The sources that were kept, because the operator count beside it is over the same
             // set. Printing what answered next to the operators behind what was kept invites the

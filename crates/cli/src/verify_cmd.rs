@@ -30,7 +30,12 @@ pub fn run(args: &Args) -> Outcome {
 
     let receipt_bytes = match fs::read(path) {
         Ok(bytes) => bytes,
-        Err(e) => return refuse(&format!("{path} could not be read: {e}")),
+        Err(e) => {
+            return refuse(&timewitness_platform::files::unreadable(
+                std::path::Path::new(path),
+                &e,
+            ))
+        }
     };
 
     // The subject is hashed here, on this machine, out of the file where it already sits. Sending it
@@ -40,12 +45,25 @@ pub fn run(args: &Args) -> Outcome {
         None => None,
         Some(subject_path) => match fs::read(Path::new(subject_path)) {
             Ok(bytes) => Some(bytes),
-            Err(e) => return refuse(&format!("{subject_path} could not be read: {e}")),
+            Err(e) => {
+                return refuse(&timewitness_platform::files::unreadable(
+                    std::path::Path::new(subject_path),
+                    &e,
+                ))
+            }
         },
     };
     let digest = match args.value("--digest") {
         None => None,
         Some(text) => match unhex(text) {
+            // A value too short or too long to be a sha-256 digest names nothing a receipt could
+            // stamp, and comparing it would call the receipt one for a different thing.
+            Ok(bytes) if bytes.len() != 32 => {
+                return refuse(&format!(
+                    "--digest is {} bytes, and a sha-256 digest is 32, so it is not the digest of anything; take the sha-256 of the file and give all 64 hex characters",
+                    bytes.len()
+                ))
+            }
             Ok(bytes) => Some(bytes),
             Err(e) => return refuse(&format!("--digest is not hexadecimal: {e}")),
         },
@@ -129,8 +147,12 @@ fn key_log_from(args: &Args, option: &str) -> Result<Option<KeyLog>, String> {
     let Some(path) = args.value(option) else {
         return Ok(None);
     };
-    let text = fs::read_to_string(path)
-        .map_err(|e| format!("the key log at {path} could not be read: {e}"))?;
+    let text = fs::read_to_string(path).map_err(|e| {
+        format!(
+            "the key log: {}",
+            timewitness_platform::files::unreadable(std::path::Path::new(path), &e)
+        )
+    })?;
     parse_key_log(&text)
         .map(Some)
         .map_err(|e| format!("the key log at {path} is not readable: {e}"))
@@ -166,8 +188,12 @@ pub(crate) fn anchors_from(args: &Args) -> Result<TrustAnchors, String> {
     match args.value("--anchors") {
         None => Ok(anchor_file::published()),
         Some(path) => {
-            let text = fs::read_to_string(path)
-                .map_err(|e| format!("the trust material at {path} could not be read: {e}"))?;
+            let text = fs::read_to_string(path).map_err(|e| {
+                format!(
+                    "the trust material: {}",
+                    timewitness_platform::files::unreadable(std::path::Path::new(path), &e)
+                )
+            })?;
             anchor_file::parse(&text)
                 .map_err(|e| format!("the trust material at {path} is not readable: {e}"))
         }

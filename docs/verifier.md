@@ -54,9 +54,9 @@ page is open.
    recognises the key can compare it and a reader who does not learns that one key signed this.
 
    A reader handed a key log can pass it with `--key-log <file>`. The log we serve is at
-   `https://timewitness.dev/key-log.txt`, a `timewitness-key-log v1` file, and the `v0` release
-   refuses that format by name, so until a later release a reader checks it with a verifier built
-   from `main`. The head of the log is checked
+   `https://timewitness.dev/key-log.txt`, a `timewitness-key-log v1` file. The `v0` release refuses
+   that format by name, and `v0.4` reads it, so a reader checks it with `v0.4` or anything later.
+   The head of the log is checked
    first, under the key this reader holds for us: one ships in the trust material below and
    `--anchors` or `--key-log-signer` replaces it. A head signed by any other key answers nothing,
    and the step says whose it was not, because whatever that list says, it is not us saying it. A
@@ -93,9 +93,14 @@ page is open.
    the width adding to the width and to no more than it, a majority of the sources that answered
    kept, the agent keeping to the policy it states, every evidence entry in a role its scheme can
    support, and each entry's own instant consistent with the interval it is offered as support for.
-5. **Does the bound clear this reader's own floor.** See below.
-6. **Is the thing you have the thing this receipt stamps.** Hashed where the file sits.
-7. **Does this receipt sit where it says in a chain.** Never answered on one receipt, and said so:
+5. **What did each source say it was speaking.** The timescale each source answered on, whether it
+   says it spreads a leap second out rather than stepping, and any leap second it announced. The
+   format already refuses a kept source that answered on anything but UTC, so this step never
+   fails; it names each source that said something beyond plain UTC, or says that none did and so
+   nothing was converted on the way into the receipt.
+6. **Does the bound clear this reader's own floor.** See below.
+7. **Is the thing you have the thing this receipt stamps.** Hashed where the file sits.
+8. **Does this receipt sit where it says in a chain.** Never answered on one receipt, and said so:
    placing two receipts in order needs both of them.
 
 Then every evidence entry is checked against the trust material the reader holds, and the report says
@@ -177,7 +182,7 @@ So the reader holds numbers of their own. The shipped ones:
 
 | | | Why |
 |---|---|---|
-| narrowest interval | a ceiling of 1 us | Two orders of magnitude under the tightest condition the product quotes, which is about 100 us to UTC on a cloud instance with a hypervisor clock. That figure is quoted from public research and has not been measured by this product or by us. Deliberately not set at the 200 us today's agent policy cannot beat, because a future agent on better hardware honestly will, and refusing those would look identical to catching a lie. |
+| narrowest interval | a ceiling of 1 us | Two orders of magnitude under the tightest condition the product quotes, which is about 100 us to UTC on a cloud instance with a hypervisor clock. That figure is quoted from public research and has not been measured by this product or by us. Deliberately not set at the least today's agent policy can sign, which is well over 200 us once its own widening and the floor on each source's interval are counted, because a future agent on better hardware honestly will, and refusing those would look identical to catching a lie. |
 | widest interval | 1 hour | Past an hour an interval says nothing a calendar would not. |
 | fewest sources answering | 3 | With three, a majority beats one bad clock. Two is two clocks agreeing. |
 | fewest operators behind the sources kept | 3 | The row above counts names and names are free: nine addresses at one company clear it with six to spare and are one chance to be wrong. A fault happens to whoever runs a server, so this is the count Marzullo's guarantee rests on. Three and not the four the shipped agent requires, because four is chosen against the server lists this product ships against today and a verifier is read years later by somebody pointing an agent at their own. Counted by the reader from the `operator` labels and never read out of the receipt. A receipt naming no operator anywhere does not clear it: the receipt crate accepts such a receipt, because its question is whether the agent kept its own word, and this question is whether there is any reason to believe the sources failed separately. |

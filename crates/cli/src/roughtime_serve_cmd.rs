@@ -285,8 +285,12 @@ fn reading_for(bound: &Bound) -> Option<Reading> {
 /// The long-term key, from a file or from the environment.
 fn read_key(args: &Args) -> Result<LongTermKey, String> {
     if let Some(path) = args.value("--key") {
-        return LongTermKey::read(std::path::Path::new(path))
-            .map_err(|e| format!("the long-term key at {path} could not be read: {e}"));
+        return LongTermKey::read(std::path::Path::new(path)).map_err(|e| {
+            format!(
+                "the long-term key: {}",
+                timewitness_platform::files::unreadable(std::path::Path::new(path), &e)
+            )
+        });
     }
 
     let Ok(hex) = std::env::var(KEY_IN_ENVIRONMENT) else {

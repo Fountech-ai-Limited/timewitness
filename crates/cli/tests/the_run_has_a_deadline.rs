@@ -77,9 +77,13 @@ fn the_help_says_what_the_deadline_is_and_why() {
         help.contains("300 by default"),
         "the help does not say what the default is: {help}"
     );
+    // Read with the layout's line breaks taken out. Until 2026-09-25 the help said the shipped
+    // settings poll for twelve minutes, which was the cost before this flag existed, and a reader
+    // took it as the cost now; it now says what the bound saves.
+    let flat = help.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        help.contains("twelve\n                          minutes"),
-        "the help does not say what it costs without one: {help}"
+        flat.contains("would poll for twelve minutes; this answers by refusing at five"),
+        "the help does not say what it costs without one and what it answers with: {help}"
     );
 }
 

@@ -31,6 +31,7 @@
 //! crate's boundary test fails if a second crate in this workspace ever stops forbidding it.
 
 pub mod continuous;
+pub mod files;
 pub mod watch;
 
 pub use continuous::{ContinuousClock, Elapsed, SystemContinuous};

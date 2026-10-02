@@ -104,14 +104,12 @@ pub fn usage() -> String {
     out.push_str(
         "                          refusing, 300 by default and at most 3600. Every call\n",
     );
+    out.push_str("                          it makes has its own timeout, and on a network that\n");
+    out.push_str("                          drops packets rather than refusing them the shipped\n");
     out.push_str(
-        "                          it makes has its own timeout and nothing bounded the\n",
+        "                          settings would poll for twelve minutes; this answers\n",
     );
-    out.push_str(
-        "                          command: on a network that drops packets rather than\n",
-    );
-    out.push_str("                          refusing them the shipped settings poll for twelve\n");
-    out.push_str("                          minutes before answering\n");
+    out.push_str("                          by refusing at five\n");
     out.push_str("      --sequence <n>      where this receipt sits in a chain\n");
     out.push_str("      --previous <file>   the receipt before it in that chain\n");
     out.push_str(
@@ -173,9 +171,11 @@ pub fn usage() -> String {
         "      Answer Roughtime requests, off a clock model disciplined the same way the\n",
     );
     out.push_str("      agent's is. A Roughtime radius is a whole number of seconds with zero\n");
-    out.push_str("      forbidden, so the corridor this states is two seconds wide however good\n");
-    out.push_str("      its clock is: running one narrows nobody's bound. What it buys is a\n");
-    out.push_str("      signed corridor that is there when somebody else's server is not.\n\n");
+    out.push_str("      forbidden, so the corridor this states is at least two seconds wide\n");
+    out.push_str("      however good its clock is, and wider where cutting its midpoint to a\n");
+    out.push_str("      whole second calls for it: running one narrows nobody's bound. What it\n");
+    out.push_str("      buys is a signed corridor that is there when somebody else's server is\n");
+    out.push_str("      not.\n\n");
     out.push_str("      --bind <addr>       address and port to read, 0.0.0.0:2002 by default\n");
     out.push_str("      --key <file>        the long-term key, 32 bytes. Without it the key is\n");
     out.push_str("                          read from TIMEWITNESS_ROUGHTIME_KEY as 64 hex\n");
@@ -245,9 +245,10 @@ pub fn usage() -> String {
     out.push_str("      Read two receipts and say which moment came first. Both are checked the\n");
     out.push_str("      way verify checks one, and then the two bounds are compared. No network\n");
     out.push_str("      and no account. Where the two bounds overlap the answer is that nobody\n");
-    out.push_str("      can say, which is an answer: it means the two stamps are closer\n");
-    out.push_str("      together than the bound on either of them. Where the two receipts are\n");
-    out.push_str("      of one chain it also says which was signed first, which is a different\n");
+    out.push_str("      can say, which is an answer. Moments further apart than the two widths\n");
+    out.push_str("      added together always come out in order; closer ones do only where the\n");
+    out.push_str("      two intervals happen to sit clear of each other. Where the two receipts\n");
+    out.push_str("      are of one chain it also says which was signed first, a different\n");
     out.push_str("      statement, resting on a hash rather than on a clock, and it never\n");
     out.push_str("      settles the question the bounds left open.\n\n");
     out.push_str("      --anchors <file>    your own trust material, as verify takes it\n");
@@ -264,7 +265,9 @@ pub fn usage() -> String {
     out.push_str("      TIMEWITNESS_MACHINE_CREDENTIAL and never from the command line. What\n");
     out.push_str("      travels is the receipt and the figures it states; the thing it stamps\n");
     out.push_str("      never does. Sending is separate from stamping, so a send that fails\n");
-    out.push_str("      leaves the receipt where it was and changes nothing about it.\n\n");
+    out.push_str("      leaves the receipt where it was and changes nothing about it. The app\n");
+    out.push_str("      is not open yet, and until it is a send to it is refused by name\n");
+    out.push_str("      before anything leaves this machine.\n\n");
     out.push_str("      --event <word>      what happened, such as build or test, to search by\n");
     out.push_str("      --repository <name> the repository it happened in, owner/name\n");
     out.push_str("      --to <address>      another address of the app, such as a test one\n\n");
@@ -273,13 +276,17 @@ pub fn usage() -> String {
     out.push_str("      is in TIMEWITNESS_MACHINE_CREDENTIAL, making the key where the file is\n");
     out.push_str("      absent. The app asks the key to sign a challenge, so only a machine\n");
     out.push_str("      holding the secret half can enrol it, and what is signed is built here\n");
-    out.push_str("      rather than taken from the app as text.\n\n");
+    out.push_str("      rather than taken from the app as text. The app is not open yet, and\n");
+    out.push_str("      until it is an enrolment asked of it is refused by name.\n\n");
     out.push_str("      --label <name>      what the organisation's people see the machine as\n");
     out.push_str("      --to <address>      another address of the app, such as a test one\n\n");
     out.push_str("  timewitness certificate --key <file> [options]\n");
     out.push_str("      Fetch a certificate for an enrolled key and keep it beside the key, for\n");
     out.push_str("      `stamp` to read. It is the one thing a machine asks the app for before\n");
-    out.push_str("      it stamps, and it is asked here, never during a stamp.\n\n");
+    out.push_str("      it stamps, and it is asked here, never during a stamp. The app is not\n");
+    out.push_str(
+        "      open yet, and until it is a certificate asked of it is refused by name.\n\n",
+    );
     out.push_str("      --kind <kind>       agent, for a week, or action, for a day; agent by\n");
     out.push_str("                          default\n");
     out.push_str("      --out <file>        where to keep it, beside the key by default\n");
@@ -483,7 +490,8 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
         out.push_str("\nThe evidence, one role at a time\n");
         out.push_str(
             "  Three roles and none of them does another's job. A corridor puts a signed interval\n\
-             \x20 round the moment that a stranger can check, and does not tighten the bound. A\n\
+             \x20 round the moment its server answered, which a stranger can check and the\n\
+             \x20 reading has to overlap, and does not tighten the bound. A\n\
              \x20 beacon says not earlier. A witness says not later. The agent's own bound is a\n\
              \x20 claim and is not on this list.\n",
         );
@@ -1066,7 +1074,8 @@ pub fn roughtime_serving(at: RoughtimeStart<'_>) -> String {
          this\n",
     );
     out.push_str(
-        "states is two seconds wide however good its clock is. Running it narrows nobody's bound.\n",
+        "states is at least two seconds wide however good its clock is, and wider where cutting its\n\
+         midpoint to a whole second calls for it. Running it narrows nobody's bound.\n",
     );
     out
 }

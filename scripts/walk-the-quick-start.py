@@ -58,7 +58,7 @@ FENCE = re.compile(r'^```sh[ \t]*\n(.*?)^```[ \t]*$', re.MULTILINE | re.DOTALL)
 # that shows the verify itself is what decides. That the verdict is read from what the verify printed,
 # and not only from its exit code, is held by the self-test.
 SEEDS = {
-    'the-release': ('--tag v0.3', '--tag v0.3-never-released',
+    'the-release': ('--tag v0.4', '--tag v0.4-never-released',
                     'a release that does not exist cannot be installed'),
     'the-cargo-path': ('. "$HOME/.cargo/env"\n', '\n',
                        'without it the shell that installed Rust cannot find cargo'),

@@ -12,10 +12,11 @@
 //! every machine the suite runs on and names the byte and bit that got through.
 //!
 //! A receipt of your own can be swept the same way. Set `TW_EVERY_BIT_RECEIPT` to its path and
-//! `TW_EVERY_BIT_SUBJECT` to what it stamps, and run this test on its own:
+//! `TW_EVERY_BIT_SUBJECT` to what it stamps, and run this test on its own. It is ignored unless asked
+//! for, so a run without the two set says it was skipped rather than counting as a pass:
 //!
 //! ```text
-//! cargo test -p timewitness-verify --test every_bit_of_a_receipt a_receipt_named_in_the_environment
+//! cargo test -p timewitness-verify --test every_bit_of_a_receipt -- --ignored a_receipt_named_in_the_environment
 //! ```
 
 use std::thread;
@@ -153,10 +154,10 @@ fn every_bit_of_a_digicert_witness_as_the_stamp_now_stores_it() {
 }
 
 #[test]
+#[ignore = "sweeps the receipt TW_EVERY_BIT_RECEIPT names, stamping TW_EVERY_BIT_SUBJECT; run it with --ignored"]
 fn a_receipt_named_in_the_environment() {
-    let Ok(path) = std::env::var("TW_EVERY_BIT_RECEIPT") else {
-        return;
-    };
+    let path = std::env::var("TW_EVERY_BIT_RECEIPT")
+        .expect("TW_EVERY_BIT_RECEIPT names the receipt to sweep");
     let receipt = std::fs::read(&path).expect("TW_EVERY_BIT_RECEIPT names a file");
     let subject = std::env::var("TW_EVERY_BIT_SUBJECT")
         .map(|p| std::fs::read(p).expect("TW_EVERY_BIT_SUBJECT names a file"))

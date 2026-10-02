@@ -27,6 +27,22 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, Stream};
 /// Where the app answers, unless a caller names another address of it.
 pub const APP: &str = "https://app.timewitness.dev";
 
+/// Whether the app at [`APP`] takes machines yet. It does not: until it opens, that address answers
+/// every path with a redirect to the holding page, and a send, an enrolment or a certificate asked
+/// of it came back as a sentence about a 308. Each is refused by name here instead, before anything
+/// leaves the machine. An address given with `--to` is asked as always.
+pub const APP_IS_OPEN: bool = false;
+
+/// The refusal for an act asked of the app before it opens, or nothing where it may go ahead.
+pub fn not_open(address: &str) -> Option<String> {
+    (!APP_IS_OPEN && address.trim_end_matches('/') == APP).then(|| {
+        format!(
+            "{APP} is not open yet, and until it is every send, enrolment and certificate asked of \
+             it is refused here rather than sent"
+        )
+    })
+}
+
 /// Where a machine files a receipt it signed.
 ///
 /// With the slash on the end, because the app serves every path that way and answers the bare one

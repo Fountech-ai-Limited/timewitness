@@ -441,6 +441,11 @@ def in_a_guest(binary, minutes, every, seed, cache):
 # A runner to throw away, where nothing can be restarted
 # ---------------------------------------------------------------------------------------------------
 
+def system_temp():
+    """Windows' own temporary folder, where the install makes a folder only administrators can write."""
+    return pathlib.Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'Temp'
+
+
 def on_this_runner(binary):
     # Both, because a runner somebody hosts on their own machine sets the first one too.
     if (os.environ.get('GITHUB_ACTIONS') != 'true'
@@ -455,11 +460,25 @@ def on_this_runner(binary):
         got = subprocess.run(args, capture_output=True, text=True, timeout=120)
         return got.returncode, got.stdout + got.stderr
 
+    if windows:
+        # Where the task definition used to be written, a fixed name in the installing account's own
+        # temporary folder, which anything running unelevated as that account could take first. It
+        # is taken here, and the install has to be unaffected.
+        taken = pathlib.Path(tempfile.gettempdir()) / 'timewitness-agent-task.xml'
+        taken.mkdir(exist_ok=True)
+        before = set(system_temp().glob('timewitness-install-*'))
+
     code, text = run(admin + [binary, 'agent', 'install'])
     print(text, flush=True)
     if code != 0:
         say(f'FAIL: agent install exited {code}')
         return 1
+    if windows:
+        left = set(system_temp().glob('timewitness-install-*')) - before
+        if left:
+            say(f'FAIL: the install left its folder behind: {sorted(map(str, left))}')
+            return 1
+        say('the install wrote its task definition somewhere of its own, and took it away after')
     endpoint = endpoint_from_install(text)
     if endpoint is None:
         say('FAIL: agent install did not say where the endpoint is')
