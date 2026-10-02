@@ -727,11 +727,55 @@ GUARD_ON_MAIN = """          commit="$(gh api "repos/$REPO/commits/refs/tags/$TA
 """
 
 
+# What the guard is given and how it refuses, exactly. The compare above is only as good as the
+# repository it asks about and the refusal it ends in: `REPO` pointed at another repository asks
+# about somebody else's commits, and a `refuse` that returns rather than exits prints its sentence
+# and lets the run carry on. `ACTOR` is who ran it this time, not who first started the run: a
+# second administrator running a run again is `triggering_actor`, and would be checked as the first
+# under `actor`.
+GUARD_HEAD = """      - id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          ACTOR: ${{ github.triggering_actor }}
+          TAG: ${{ inputs.tag }}
+          REHEARSAL: ${{ inputs.rehearsal }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          refuse() {
+            echo "::error::$1"
+            echo "### Refused: $1" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+"""
+
+# Where a command starts in a line of shell, near enough for the guard's own lines.
+COMMAND_START = r"(?:^|[;&|({`]|\$\(|\bdo\b|\bthen\b|\belse\b)[ \t]*"
+
+
 def judge_guard(release):
     """The guard asks this file who may start a release, from main, and refuses anybody else; and
     everybody written down as starting releases administers the repository as well."""
     problems = []
     guard = release.split("\n  tag:\n", 1)[0]
+    # The guard step alone, from its id to the next step of the job, without its comments.
+    step = guard[guard.find("      - id: guard\n"):] if "      - id: guard\n" in guard else ""
+    step = step.split("\n      - ", 1)[0]
+    code = "\n".join(line for line in step.splitlines() if not line.lstrip().startswith("#"))
+    if guard.count(GUARD_HEAD) != 1:
+        problems.append("the guard's environment and its refusal are not as written here")
+    # A function of the guard's own answers in place of a command of the same name, `gh` among them,
+    # so the guard defines `refuse` once and nothing else. An alias does the same, and `command`,
+    # `builtin` and `enable` reach past a function to whatever it stood in for.
+    defined = re.findall(COMMAND_START + r"(?:function[ \t]+)?([A-Za-z_][\w:.-]*)[ \t]*\([ \t]*\)", code, re.M)
+    defined += re.findall(r"\bfunction[ \t]+([A-Za-z_][\w:.-]*)[ \t]*(?:\{|$)", code, re.M)
+    if sorted(defined) != ["refuse"]:
+        problems.append("the guard defines %s, where it defines refuse once and nothing else" % sorted(defined))
+    reach = sorted(set(re.findall(COMMAND_START + r"(command|builtin|enable|alias|unalias)\b", code, re.M)))
+    if reach:
+        problems.append("the guard runs %s, which changes what a name in it answers to" % ", ".join(reach))
     if "            scripts/the-release-route-holds.py\n" not in guard:
         problems.append("the guard does not check out scripts/the-release-route-holds.py from main")
     if not re.search(r'actor_id="\$\(gh api "users/\$ACTOR" --jq \.id\)"', guard):
@@ -750,10 +794,6 @@ def judge_guard(release):
     if re.search(r"(?:^|[;&|({]|\bdo|\bthen|\belse)[ \t]*(?:read|mapfile|readarray)\b[^\n]*\b(?:commit|main_commit|on_main)\b",
                  "\n".join(line for line in guard.splitlines() if not line.lstrip().startswith("#")), re.M):
         problems.append("the guard reads into commit, main_commit or on_main as well as setting them")
-    # Who ran it this time, not who first started the run: a second administrator running a run
-    # again is `triggering_actor`, and would be checked as the first under `actor`.
-    if "          ACTOR: ${{ github.triggering_actor }}\n" not in guard:
-        problems.append("the guard does not ask about the account that started this run of it")
     for name, number in RELEASE_STARTERS.items():
         if ADMINISTRATORS.get(name) != number:
             problems.append("%s starts releases and is not written down as administering the repository" % name)
@@ -1970,6 +2010,29 @@ runs:
     expect("the guard not reading the account's number", judge_guard(release.replace('actor_id="$(gh api "users/$ACTOR" --jq .id)"', 'actor_id=0', 1)), True)
     expect("the guard not checking out this file", judge_guard(release.replace("            scripts/the-release-route-holds.py\n", "", 1)), True)
     expect("the guard letting any role start", judge_guard(release.replace('[ "$role" = admin ] || refuse ', 'true || refuse ', 1)), True)
+    # What acts on the compare's answer: the refusal, the commands it runs, and the repository it asks.
+    first_line = '          [ "$EVENT" = workflow_dispatch ] || refuse '
+    for label, old, new in (
+            ("refusing and carrying on", '            exit 1\n          }\n', '            return 0\n          }\n'),
+            ("asking another repository", "          REPO: ${{ github.repository }}\n", "          REPO: someone-else/timewitness\n"),
+            ("given one more variable", "          REPO: ${{ github.repository }}\n",
+             "          REPO: ${{ github.repository }}\n          BASH_ENV: ./answers.sh\n"),
+            ("defining gh, which answers every compare", first_line,
+             '          gh() { echo identical; }\n' + first_line),
+            ("defining gh with the function keyword", first_line,
+             '          function gh { echo identical; }\n' + first_line),
+            ("defining gh on a line of its own after another command", first_line,
+             '          true; gh () { echo identical; }\n' + first_line),
+            ("defining refuse a second time", first_line,
+             '          refuse() { echo "$1"; }\n' + first_line),
+            ("aliasing gh", first_line, "          alias gh='echo identical'\n" + first_line),
+            ("running refuse past itself with command", '            *) refuse "$TAG is on',
+             '            *) command refuse "$TAG is on'),
+            ("reaching a builtin past a function", first_line, '          builtin echo ready\n' + first_line),
+            ("switching a builtin off", first_line, '          enable -n exit\n' + first_line)):
+        if release.count(old) < 1:
+            wrong.append("the guard %s: the text it changes is not in release.yml" % label)
+        expect("the guard %s" % label, judge_guard(release.replace(old, new, 1)), True)
     # Main asked for by name, which a tag called `main` answers before the branch does.
     for label, old, new in (
             ("comparing the tag with main by name", "compare/$commit...$main_commit", "compare/$commit...main"),
