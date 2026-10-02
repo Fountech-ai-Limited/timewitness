@@ -39,8 +39,9 @@
 //! # Whose statement it is
 //!
 //! A certificate is a statement of the TimeWitness app, in a log we sign. It is not third-party
-//! evidence and never becomes part of it. The weight of the receipt still rests on the outside
-//! signatures, and the verifier says so beside the grade.
+//! evidence and never becomes part of it. It adds nothing to the bound either, which is the
+//! signer's own claim, and each outside signature shows one thing about the time and none vouches
+//! for the bound. The verifier says so beside the grade.
 
 use timewitness_core::evidence::{drand, rfc3161};
 use timewitness_core::keylog::file::{KeyLog, SignedHead};
@@ -217,8 +218,9 @@ impl Grade {
                     "The key was certified to organisation {organisation} by {method} for {} ns to \
                      {} ns, and the signing sits between a beacon at {} ns and {about} at {} ns{}, \
                      both inside that window. The certificate is a statement of {ISSUER} in a log \
-                     it signs. It is not third-party evidence, and the weight of this receipt still \
-                     rests on the outside signatures below.",
+                     it signs, and it is not third-party evidence. The bound in this receipt is the \
+                     signer's own claim, and each outside signature below shows one thing about the \
+                     time and none vouches for the bound.",
                     from.as_nanos(),
                     until.as_nanos(),
                     not_earlier.as_nanos(),

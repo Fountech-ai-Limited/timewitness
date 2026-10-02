@@ -212,7 +212,8 @@ impl Verified {
         match &self.signature_witness {
             None => out.push(
                 "The signature itself carries no witness, so nothing outside this receipt says \
-                 when it was signed, only when its subject existed."
+                 when it was signed. A token over its subject says at most that the subject \
+                 existed no later than its authority's own clock says."
                     .to_string(),
             ),
             Some(EntryReport {

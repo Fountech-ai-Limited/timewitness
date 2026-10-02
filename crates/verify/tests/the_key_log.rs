@@ -7,8 +7,8 @@
 //!
 //! **What none of this makes true.** The log is ours and we sign it, so a reader seeing one for the
 //! first time is trusting us about our own keys. Our own word is still not third-party evidence in
-//! any test here: the weight of a receipt rests on the third-party signatures in it, and the step
-//! says so in the words it answers with.
+//! any test here. The bound is the signer's own claim, each outside signature shows one thing about
+//! the time and none vouches for the bound, and the step says so in the words it answers with.
 //!
 //! **Whose log it is.** Every log here that is meant to be ours is signed by a key the reader's
 //! anchors hold for us, and the tests that turned red on 2026-09-15 are the ones where it is not:
@@ -173,10 +173,18 @@ fn a_log_naming_the_key_over_the_reading_answers_it_and_says_what_the_answer_is_
     let detail = state.detail();
     assert!(detail.contains("a list we signed"), "{detail}");
     assert!(detail.contains("not third-party evidence"), "{detail}");
+    // Whose the bound is, in the words the page and the help use. Until 2026-09-28 this answer said
+    // the receipt's weight rested on its outside signatures, after every other surface had stopped
+    // saying it, and nothing saw it because only a log naming the key reaches this branch.
     assert!(
-        detail.contains("the third-party signatures in it"),
+        detail.contains(
+            "The bound in this receipt is the signer's own claim, and each outside signature in it \
+             shows one thing about the time and none vouches for the bound."
+        ),
         "{detail}"
     );
+    assert!(!detail.contains("weight"), "{detail}");
+    assert!(!detail.contains("rests on"), "{detail}");
     assert!(
         detail.contains("a key this reader holds for us"),
         "{detail}"

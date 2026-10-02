@@ -41,6 +41,11 @@ name: Surfaces
 # The three hour interval does not widen on the deploy being fast. The thing that went wrong on
 # 2026-09-11 was not a slow deploy, it was the trigger itself disappearing, silently, for three
 # hours, and this guard is what found it.
+#
+# The second job is on the same clock for the same reason: what it reads can change with no commit.
+# It holds the settings that keep the signing identities to code an administrator landed, the
+# `release` environment, the rulesets, branch protection on `main` and the token subject Azure
+# trusts, to what `scripts/the-release-route-holds.py` has written down, and fails on any change.
 
 on:
   schedule:
@@ -96,3 +101,18 @@ jobs:
       # commit, and the one a reader fetches is the one this reads.
       - name: No surface says our servers are not there, against the served key log
         run: python3 scripts/our-servers.py --key-log https://timewitness.dev/key-log.txt --site https://timewitness.dev/
+
+  release-route:
+    name: the release route's settings against what is written down
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: The settings that keep the signing identities to reviewed code
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/the-release-route-holds.py --self-test
+          python3 scripts/the-release-route-holds.py

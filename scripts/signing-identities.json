@@ -1,0 +1,14 @@
+{
+  "about": "Who our binaries are signed by, which scripts/the-binaries-are-signed.py holds every macOS and Windows signature to. A value left null is a check that is not pinned, and the check refuses every release until it is set, because an unpinned check passes a binary signed by anybody. The Apple Team ID is read with codesign -dv off a binary we signed. The Windows publisher is the subject Azure Trusted Signing writes from our identity validation, and the identity usage is the 1.3.6.1.4.1.311.97 number on our certificate profile. The three issuer values describe the service rather than us, and are held to the first binary it signs for us.",
+  "apple": {
+    "team_id": null
+  },
+  "windows": {
+    "subject_common_name": null,
+    "subject_organisation": null,
+    "identity_usage": null,
+    "issuer_organisation": "Microsoft Corporation",
+    "issuer_common_name_starts": "Microsoft ID Verified CS ",
+    "root": "Microsoft Identity Verification Root Certificate Authority 2020"
+  }
+}

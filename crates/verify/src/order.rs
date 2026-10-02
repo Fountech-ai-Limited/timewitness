@@ -372,10 +372,12 @@ fn link_between(
         return Link::TwoAgents;
     }
 
-    // A link is a statement about bytes, so it is checked against the hash of the bytes the reader
-    // handed over and not against anything reconstructed from the parsed receipt. A holder can
-    // restate a receipt as different bytes carrying the same claim, and such a restatement is not
-    // the thing the other receipt named.
+    // A link is a statement about bytes, so it is checked against each receipt's chain link, which
+    // is taken over the bytes the reader handed over and not over anything reconstructed from the
+    // parsed receipt. A holder can restate a receipt as different bytes carrying the same claim, and
+    // such a restatement is not the thing the other receipt named. The one part set aside is a
+    // witness over the signature, which sits outside what the agent signed and which anybody holding
+    // the file can drop or replace; see `timewitness_receipt::chain_link`.
     let names_first = second_previous == Some(first_bytes_hash);
     let names_second = first_previous == Some(second_bytes_hash);
     if names_first || names_second {

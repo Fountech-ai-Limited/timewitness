@@ -43,11 +43,19 @@ statement.setdefault("predicate", {})["boundedTime"] = {
     "readingIsDisplayOnly": True,
     # Beside the numbers rather than in a document somewhere, because a consumer who reads one field
     # of this object should read a true sentence rather than a tight-looking number.
+    #
+    # Until 2026-09-29 it said UTC was in the interval "when this event happened". The clock is read
+    # in the Stamp step, once the file it stamps exists, so the interval bounds that moment and says
+    # nothing about when the build or test itself ran. The event is a word the workflow passes in,
+    # and nothing here can check what it names or when it ended. A timestamp shows a record existed
+    # by a time. It does not show the event happened then.
     "claim": (
-        "UTC was somewhere in [earliestNs, latestNs] when this event happened. That interval is the "
-        "claim. readingNs is a point inside it, at nanosecond resolution because it is a local "
-        "counter read, and it is not an accuracy. Check the receipt rather than these fields: "
-        "timewitness verify"
+        "UTC was somewhere in [earliestNs, latestNs] at the moment the stamp read the clock, once "
+        "the stamped file existed. The interval dates the stamp and not the event: it is the "
+        "signer's claim that the stamped file existed by latestNs, and nothing here says when the "
+        "event began or ended. readingNs is a point inside it, at nanosecond resolution because it is a "
+        "local counter read, and it is not an accuracy. Check the receipt rather than these "
+        "fields: timewitness verify"
     ),
     "receiptBase64": os.environ["TW_R"],
 }

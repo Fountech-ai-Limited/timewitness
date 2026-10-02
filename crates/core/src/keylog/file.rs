@@ -22,8 +22,9 @@
 //! earlier head.
 //!
 //! So the rule that our own word is never third-party evidence is untouched by any of this. The
-//! weight of a receipt rests on the third-party signatures in it. A key log of ours is our own
-//! party twice over, and the verifier says so in the step it answers.
+//! bound in a receipt is the signer's own claim, and each outside signature in it shows one thing
+//! about the time and none vouches for the bound. A key log of ours is our own party twice over,
+//! and the verifier says so in the step it answers.
 //!
 //! # The format
 //!

@@ -199,7 +199,7 @@ fn account_is_plain(name: &str) -> bool {
 /// A number `id` gives for an account: `-u` for its user and `-g` for its group.
 #[cfg(unix)]
 fn id_number(flag: &str, account: &str) -> Result<u32, String> {
-    let out = Command::new("id")
+    let out = Command::new(program("id")?)
         .args([flag, account])
         .output()
         .map_err(|e| format!("`id` could not be run: {e}"))?;
@@ -490,9 +490,12 @@ fn default_account() -> Result<String, String> {
             return Ok(name);
         }
     }
-    let out = Command::new("id").arg("-un").output().map_err(|e| {
-        format!("this cannot tell which account is running it ({e}); name one with --user")
-    })?;
+    let out = Command::new(program("id")?)
+        .arg("-un")
+        .output()
+        .map_err(|e| {
+            format!("this cannot tell which account is running it ({e}); name one with --user")
+        })?;
     let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if name == "root" {
         return Err(
@@ -504,12 +507,29 @@ fn default_account() -> Result<String, String> {
     Ok(name)
 }
 
+/// Where a platform tool is run from.
+///
+/// On Windows, from the folder Windows keeps its own programs in and never by name. Asked for by
+/// name, Windows looks first in the folder the running executable was loaded from, and the install
+/// runs elevated, so a `schtasks.exe` saved beside a downloaded `timewitness.exe` would have run as
+/// an administrator in its place. Elsewhere the install runs under sudo, whose own path is the one
+/// searched.
+fn program(name: &str) -> Result<PathBuf, String> {
+    if cfg!(windows) {
+        let folder = timewitness_platform::system::system_folder().ok_or(
+            "Windows would not say where its own programs are, so none of them is run from here",
+        )?;
+        return Ok(folder.join(format!("{name}.exe")));
+    }
+    Ok(PathBuf::from(name))
+}
+
 /// Runs a platform tool, and on failure says what it said.
-fn tool(program: &str, arguments: &[&str]) -> Result<(), String> {
-    let out = Command::new(program)
+fn tool(name: &str, arguments: &[&str]) -> Result<(), String> {
+    let out = Command::new(program(name)?)
         .args(arguments)
         .output()
-        .map_err(|e| format!("`{program}` could not be run: {e}"))?;
+        .map_err(|e| format!("`{name}` could not be run: {e}"))?;
     if out.status.success() {
         return Ok(());
     }
@@ -519,10 +539,7 @@ fn tool(program: &str, arguments: &[&str]) -> Result<(), String> {
     } else {
         said
     };
-    Err(format!(
-        "`{program} {}` failed: {said}",
-        arguments.join(" ")
-    ))
+    Err(format!("`{name} {}` failed: {said}", arguments.join(" ")))
 }
 
 /// A write that says plainly when the refusal was a permission.
@@ -649,15 +666,64 @@ fn put_in_place(service: &Service) -> Result<String, String> {
     ))
 }
 
+/// Opens the service's state folder to give it to the service's account, refusing one that is not a
+/// real folder owned by one of `owners`.
+///
+/// On macOS the folder sits under `/Library/Application Support`, which the admin group can write,
+/// so what is found there may have been put there. Until 2026-09-29 it was taken as found and
+/// `chown` followed a link planted in its place, so root gave the target of the link to the
+/// service's account. The folder is now read without following a link, opened, and held to be the
+/// same folder that was read, and the change of owner and mode is made through the open handle, so
+/// nothing swapped in between the read and the change is changed.
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn a_folder_of_its_own(folder: &Path, owners: &[u32]) -> Result<std::fs::File, String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let shown = folder.display();
+    let seen =
+        std::fs::symlink_metadata(folder).map_err(|e| format!("{shown} could not be read: {e}"))?;
+    if seen.file_type().is_symlink() {
+        return Err(format!(
+            "{shown} is a link, and the service's folder is never followed through one. Remove it \
+             and install again"
+        ));
+    }
+    if !seen.is_dir() {
+        return Err(format!(
+            "{shown} is not a folder. Remove it and install again"
+        ));
+    }
+    let file =
+        std::fs::File::open(folder).map_err(|e| format!("{shown} could not be opened: {e}"))?;
+    let opened = file
+        .metadata()
+        .map_err(|e| format!("{shown} could not be read once open: {e}"))?;
+    if (opened.dev(), opened.ino()) != (seen.dev(), seen.ino()) {
+        return Err(format!(
+            "{shown} changed between being read and being opened, so it is not given to anybody"
+        ));
+    }
+    if !owners.contains(&opened.uid()) {
+        return Err(format!(
+            "{shown} is owned by account {}, which is neither root nor the service's own, so \
+             somebody else made it. Remove it and install again",
+            opened.uid()
+        ));
+    }
+    Ok(file)
+}
+
 /// Gives a folder to an account, private to it.
 #[cfg(target_os = "macos")]
 fn give_to(folder: &Path, account: &str) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let (uid, gid) = (id_number("-u", account)?, id_number("-g", account)?);
-    std::os::unix::fs::chown(folder, Some(uid), Some(gid))
+    let open = a_folder_of_its_own(folder, &[0, uid])?;
+    std::os::unix::fs::fchown(&open, Some(uid), Some(gid))
         .map_err(|e| format!("{} could not be given to {account}: {e}", folder.display()))?;
-    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700))
+    open.set_permissions(std::fs::Permissions::from_mode(0o700))
         .map_err(|e| format!("{} could not be made private: {e}", folder.display()))
 }
 
@@ -736,7 +802,10 @@ fn put_in_place(service: &Service) -> Result<String, String> {
 /// System (16384) is an administrator's; `whoami` prints the level's number whatever the language.
 #[cfg(windows)]
 fn elevated() -> bool {
-    Command::new("whoami")
+    let Ok(whoami) = program("whoami") else {
+        return false;
+    };
+    Command::new(whoami)
         .arg("/groups")
         .output()
         .map(|out| {
@@ -947,6 +1016,68 @@ mod tests {
         assert_eq!(windows_word(r"C:\a b\"), r#""C:\a b\\""#);
         assert_eq!(windows_word(r#"say "hi""#), r#""say \"hi\"""#);
         assert_eq!(windows_word(""), r#""""#);
+    }
+
+    #[test]
+    fn no_platform_tool_is_run_by_a_bare_name() {
+        // Every tool goes through `program`, so the rule below is the whole of where one is found.
+        let source = include_str!("service_cmd.rs");
+        let bare = concat!("Command::new", "(\"");
+        assert!(
+            !source.contains(bare),
+            "a tool is run by name, past `program`"
+        );
+    }
+
+    /// Windows looks for a program by name in the folder the running executable was loaded from
+    /// before it looks in its own, and the install runs elevated, so a `schtasks.exe` saved beside a
+    /// downloaded `timewitness.exe` would run as an administrator.
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_tool_is_run_from_the_system_folder() {
+        let system = PathBuf::from(std::env::var_os("SystemRoot").expect("SystemRoot"))
+            .join("System32")
+            .display()
+            .to_string()
+            .to_lowercase();
+        for name in ["schtasks", "icacls", "whoami"] {
+            let path = program(name).unwrap();
+            assert!(
+                path.is_absolute(),
+                "{name} is run by name, as {}",
+                path.display()
+            );
+            let folder = path.parent().unwrap().display().to_string().to_lowercase();
+            assert_eq!(folder, system, "{name} is run from {}", path.display());
+            assert!(path.is_file(), "{} is not there", path.display());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_state_folder_that_is_a_link_or_somebody_elses_is_refused() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = std::env::temp_dir().join(format!("timewitness-state-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let real = root.join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        let file = root.join("file");
+        std::fs::write(&file, b"").unwrap();
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let me = std::fs::metadata(&real).unwrap().uid();
+
+        let fine = a_folder_of_its_own(&real, &[0, me]).map(|_| ());
+        let through_a_link = a_folder_of_its_own(&link, &[0, me]).map(|_| ());
+        let not_a_folder = a_folder_of_its_own(&file, &[0, me]).map(|_| ());
+        let someone_elses = a_folder_of_its_own(&real, &[me + 1]).map(|_| ());
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(fine, Ok(()));
+        assert!(through_a_link.unwrap_err().contains("is a link"));
+        assert!(not_a_folder.unwrap_err().contains("is not a folder"));
+        assert!(someone_elses.unwrap_err().contains("is owned by"));
     }
 
     #[cfg(unix)]

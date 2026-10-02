@@ -24,14 +24,17 @@
 //! ## Why this crate is allowed unsafe code and no other is
 //!
 //! Every other crate in this workspace forbids it. The counters here have no safe interface in the
-//! standard library, and the alternative to two calls into the operating system is a dependency that
-//! makes the same two calls with more code around them. Both call sites are in `continuous.rs`, both
-//! read a counter into a local and return it, neither takes a pointer from a caller or holds one
-//! past the call, and both carry the argument for why they are sound beside them. The architecture
-//! crate's boundary test fails if a second crate in this workspace ever stops forbidding it.
+//! standard library, and the alternative to a few calls into the operating system is a dependency
+//! that makes the same calls with more code around them. The counter reads are in `continuous.rs`,
+//! and each reads a counter into a local and returns it. The one other call is in `system.rs`, where
+//! Windows writes the folder it keeps its own programs in into a buffer that function owns. None of
+//! them takes a pointer from a caller or holds one past the call, and each carries the argument for
+//! why it is sound beside it. The architecture crate's boundary test fails if a second crate in this
+//! workspace ever stops forbidding it.
 
 pub mod continuous;
 pub mod files;
+pub mod system;
 pub mod watch;
 
 pub use continuous::{ContinuousClock, Elapsed, SystemContinuous};

@@ -34,8 +34,19 @@ pub const APP: &str = "https://app.timewitness.dev";
 pub const APP_IS_OPEN: bool = false;
 
 /// The refusal for an act asked of the app before it opens, or nothing where it may go ahead.
+///
+/// The address is compared as it will be connected to, not as it was typed. Until 2026-09-29 the
+/// comparison was on the string, so `https://APP.timewitness.dev` or the same with `:443` went past
+/// this and the credential was sent to the closed app all the same.
 pub fn not_open(address: &str) -> Option<String> {
-    (!APP_IS_OPEN && address.trim_end_matches('/') == APP).then(|| {
+    let is_the_app = |address: &str| match (target(address), target(APP)) {
+        (Ok(asked), Ok(app)) => {
+            let host = |t: &Target| t.host.trim_end_matches('.').to_ascii_lowercase();
+            asked.tls == app.tls && asked.port == app.port && host(&asked) == host(&app)
+        }
+        _ => false,
+    };
+    (!APP_IS_OPEN && is_the_app(address)).then(|| {
         format!(
             "{APP} is not open yet, and until it is every send, enrolment and certificate asked of \
              it is refused here rather than sent"
@@ -268,6 +279,35 @@ mod tests {
             "https://",
         ] {
             assert!(target(refused).is_err(), "taken: {refused}");
+        }
+    }
+
+    #[test]
+    fn the_closed_app_is_refused_however_its_address_is_spelled() {
+        for spelled in [
+            APP,
+            "https://app.timewitness.dev/",
+            "https://APP.timewitness.dev",
+            "https://App.TimeWitness.Dev/",
+            "https://app.timewitness.dev:443",
+            "https://app.timewitness.dev.",
+            "https://app.timewitness.dev.:443/",
+        ] {
+            assert!(
+                not_open(spelled).is_some(),
+                "sent to the closed app: {spelled}"
+            );
+        }
+        for elsewhere in [
+            "https://dev.timewitness.dev",
+            "https://app.timewitness.dev:8443",
+            "http://127.0.0.1:4000",
+            "https://app.timewitness.dev.example.com",
+        ] {
+            assert!(
+                not_open(elsewhere).is_none(),
+                "refused though not the app: {elsewhere}"
+            );
         }
     }
 

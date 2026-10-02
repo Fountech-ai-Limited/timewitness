@@ -8,6 +8,11 @@ consumer choosing a reader by the provenance label would have chosen one that re
 Both labels are now read off something: the page off the checking code, the provenance off the
 version the verifier read from the receipt's own bytes. This holds them to that.
 
+It holds the sentence beside the label as well, from 2026-09-29. The provenance said UTC was in the
+interval "when this event happened", and the clock is read in the Stamp step, after the event. So
+the claim the writer puts there has to say the interval dates the stamp and not the event, and it
+may not say the interval is when the event happened.
+
     python scripts/the-format-labels-are-the-receipts.py
 
 reads this tree. The page may name no format as a constant and has to ask the checking code for the
@@ -161,6 +166,31 @@ def judge_statement(statement, where):
     return True, lines
 
 
+# What the claim beside the numbers may not say, and what it has to. The interval is read when the
+# stamp runs, after the event, so it dates the stamp. A sentence placing the event inside it is the
+# one thing a consumer reading the field would quote, and it is not what the receipt shows.
+CLAIM_REFUSED = re.compile(
+    r"(when|at the moment|at the time) (this|the) (event|build|test) "
+    r"(happened|ran|occurred|took place)|after the event it names", re.I)
+CLAIM_NEEDED = ("the stamp read the clock", "dates the stamp and not the event")
+
+
+def judge_claim(statement, where):
+    try:
+        claim = statement["predicate"]["boundedTime"]["claim"]
+    except (KeyError, TypeError):
+        return False, ["refused: %s carries no claim beside its numbers" % where]
+    if not isinstance(claim, str):
+        return False, ["refused: the claim in %s is not a sentence" % where]
+    if CLAIM_REFUSED.search(claim):
+        return False, ["refused: %s says the interval is when the event happened, and it is when "
+                       "the stamp read the clock: %s" % (where, CLAIM_REFUSED.search(claim).group(0))]
+    missing = [words for words in CLAIM_NEEDED if words not in claim]
+    if missing:
+        return False, ["refused: the claim in %s does not say %s" % (where, "; ".join(missing))]
+    return True, ["%s says the interval dates the stamp and not the event" % where]
+
+
 def fixture(name):
     folder = os.path.join(DATA, name)
     if os.path.isfile(os.path.join(folder, "receipt.cbor")):
@@ -203,6 +233,9 @@ def check_writer():
             status, statement = drive_writer(receipt, str(version_in(receipt)), work)
             ok, said = judge_statement(statement, "the provenance written over %s" % name)
             lines.extend(said)
+            claim_ok, said = judge_claim(statement, "the provenance written over %s" % name)
+            lines.extend(said)
+            ok = ok and claim_ok
             if status != 0 or not ok:
                 lines.append("refused: the writer exited %d over %s" % (status, name))
                 passed = False
@@ -240,7 +273,8 @@ def check_release(tag, at, provenance):
             raise CouldNotRun("no provenance could be read from %s: %s" % (url, e))
         where = "the install check's provenance for %s" % tag
     statement_ok, more = judge_statement(statement, where)
-    return page_ok and statement_ok, lines + more
+    claim_ok, said = judge_claim(statement, where)
+    return page_ok and statement_ok and claim_ok, lines + more + said
 
 
 def run_git(args):
@@ -296,9 +330,27 @@ def self_test():
     expect("a receipt cut short", False,
            judge_statement(statement(v1[:40], "timewitness-receipt-v1"), "s")[0])
 
+    def claimed(sentence):
+        return {"predicate": {"boundedTime": {"claim": sentence}}}
+
+    as_on_v05 = ("UTC was somewhere in [earliestNs, latestNs] when this event happened. That "
+                 "interval is the claim.")
+    expect("the claim as v0.5 wrote it, dating the event", False, judge_claim(claimed(as_on_v05), "s")[0])
+    expect("a claim with no sentence at all", False, judge_claim({"predicate": {"boundedTime": {}}}, "s")[0])
+    expect("a claim that says the stamp came after the event, which nothing checks", False,
+           judge_claim(claimed("UTC was in it when the stamp read the clock, which was after the "
+                               "event it names. The interval dates the stamp and not the event."), "s")[0])
+    expect("a claim that dates the stamp and never says so of the event", False,
+           judge_claim(claimed("UTC was in the interval when the stamp read the clock."), "s")[0])
+    expect("a claim that dates the stamp and says it and still says the event happened then", False,
+           judge_claim(claimed("UTC was in it when the stamp read the clock, which dates the stamp "
+                               "and not the event, and when the event happened."), "s")[0])
+
     work = tempfile.mkdtemp(prefix="tw-labels-")
     try:
         status, written = drive_writer(v1, "1", work)
+        expect("the writer's claim dates the stamp and not the event", True,
+               judge_claim(written, "s")[0])
         expect("the writer labels a version 1 receipt v1", (0, True),
                (status, judge_statement(written, "s")[0]))
         status, written = drive_writer(v1, "", work)

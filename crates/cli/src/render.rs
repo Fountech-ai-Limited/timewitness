@@ -29,8 +29,10 @@ pub const TOOL_NAME: &str = "timewitness";
 #[must_use]
 pub fn usage() -> String {
     let mut out = String::new();
-    out.push_str("timewitness: proves when something happened, inside a bound, with evidence a\n");
-    out.push_str("stranger can check.\n\n");
+    out.push_str("timewitness: stamps a file's hash with a clock reading and a bound on how far\n");
+    out.push_str("that reading could be from UTC. The bound is the signer's own claim. The\n");
+    out.push_str("receipt also carries outside signatures a stranger can check. Each shows one\n");
+    out.push_str("thing about the time, and none vouches for the bound.\n\n");
     out.push_str("  timewitness verify <receipt> [options]\n");
     out.push_str(
         "      Check a receipt. Needs nothing of ours and no account, and works with no\n",
@@ -491,9 +493,10 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
         out.push_str(
             "  Three roles and none of them does another's job. A corridor puts a signed interval\n\
              \x20 round the moment its server answered, which a stranger can check and the\n\
-             \x20 reading has to overlap, and does not tighten the bound. A\n\
-             \x20 beacon says not earlier. A witness says not later. The agent's own bound is a\n\
-             \x20 claim and is not on this list.\n",
+             \x20 receipt's interval has to overlap, and does not tighten the bound. A beacon\n\
+             \x20 round shows the receipt was made no earlier than that round. A witness says\n\
+             \x20 its subject existed no later than its authority's own clock says. The agent's\n\
+             \x20 own bound is a claim and is not on this list.\n",
         );
         for reported in evidence.lines() {
             out.push_str(&format!("  {reported}\n"));

@@ -1,9 +1,10 @@
 # The version 1 receipt, witnessed again by each authority
 
 Both files are the receipt in `../a-version-1-stamp/`, with the witness over its signature replaced by
-a new one fetched on 2026-09-24 at about 14:30 local time: `sectigo.hex` from Sectigo's timestamp
-authority and `digicert.hex` from DigiCert's. Nothing signed by the agent changed, so both hash to the
-same receipt as the original, and `../a-version-1-stamp/subject.bin` is what all three stamp.
+a new one fetched on 2026-09-24: `sectigo.hex` from Sectigo's timestamp authority, which says 11:22 UTC
+on its own clock, and `digicert.hex` from DigiCert's, which says 11:52 UTC. Nothing signed by the agent
+changed, so both hash to the same receipt as the original, and `../a-version-1-stamp/subject.bin` is
+what all three stamp.
 
 Replacing the witness with a later genuine one is something any holder can do, and the format says
 so. What they are here for is the spelling. Each witness is stored the way `timewitness stamp` stores

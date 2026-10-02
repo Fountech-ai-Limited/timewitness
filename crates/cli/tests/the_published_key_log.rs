@@ -285,6 +285,50 @@ fn our_key_is_ours_inside_its_window_and_refused_as_not_ours_before_it() {
 }
 
 #[test]
+fn a_receipt_held_as_ours_is_printed_with_whose_the_bound_is() {
+    // What a person reads, rather than the fields a script reads. This is the only branch that
+    // prints the held answer, and it said the receipt's weight rested on its outside signatures
+    // until 2026-09-28, two days after every other surface stopped saying it. No walk of the
+    // surfaces saw it, because none of them handed the verifier a log naming the key.
+    let dir = work("printed");
+    let log = a_fresh_copy(&dir);
+    let data = repository().join("crates/verify/tests/data/our-agent-key");
+    let run = Command::new(env!("CARGO_BIN_EXE_timewitness"))
+        .arg("verify")
+        .arg(our_receipt("inside-its-window", &log))
+        .arg("--subject")
+        .arg(data.join("subject.txt"))
+        .arg("--key-log")
+        .arg(&log)
+        .arg("--key-log-signer")
+        .arg(signer())
+        .output()
+        .expect("the binary runs");
+    let mut text = String::from_utf8_lossy(&run.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&run.stderr));
+    assert_eq!(run.status.code(), Some(0), "{text}");
+
+    // The printed report wraps long lines, so the words are read with the wrapping taken out.
+    let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        words.contains("This is a list we signed and not third-party evidence."),
+        "{text}"
+    );
+    assert!(
+        words.contains(
+            "The bound in this receipt is the signer's own claim, and each outside signature in it \
+             shows one thing about the time and none vouches for the bound."
+        ),
+        "{text}"
+    );
+    assert!(!words.contains("weight of this receipt"), "{text}");
+    assert!(
+        !words.contains("rests on the third-party signatures"),
+        "{text}"
+    );
+}
+
+#[test]
 fn a_fresh_copy_read_by_a_reader_holding_the_published_key_is_not_ours() {
     // The published default holds the real head key, and this copy is signed by a test key. That
     // reader is told the head is somebody's, and the step answers nothing.

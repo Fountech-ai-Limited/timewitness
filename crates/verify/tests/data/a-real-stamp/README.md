@@ -1,14 +1,14 @@
 # One receipt, taken from the real servers
 
-`receipt.cbor` was produced on 2026-09-09 at 21:41 by `timewitness stamp` on an ordinary machine on
-an ordinary internet connection, at the sixteen rounds the agent defaults to. `subject.bin` is the
-fifty-eight bytes it stamps, unchanged since 2026-09-08.
+`receipt.cbor` was produced on 2026-09-09 at 21:41 on that machine's clock, 18:41 UTC, by
+`timewitness stamp` on an ordinary machine on an ordinary internet connection, at the sixteen rounds
+the agent defaults to. `subject.bin` is the fifty-eight bytes it stamps, unchanged since 2026-09-08.
 
 Everything in it is real. Nine public servers disciplined the clock, three of each of the three
 kinds this product speaks: Roughtime, plain NTP and NTS. One of the Roughtime servers signed over a
-nonce derived from the hash of `subject.bin`, a drand quicknet round pins it no earlier, and
-DigiCert's timestamp authority signed for the payload hash to pin it no later. None of those has
-heard of this product.
+nonce derived from the hash of `subject.bin`, a drand quicknet round shows the receipt was made no
+earlier than that round, and DigiCert's timestamp authority signed for the payload hash on its own
+clock, which states no accuracy and so bounds nothing in UTC. None of those has heard of this product.
 
 The bound is 153.875 ms wide. Read off `timewitness verify` on this file, which prints half widths:
 35.081 ms is the sources overlapping, 38.011 ms is the model's own regression residual doubled by
@@ -39,7 +39,7 @@ at 34.947 ms then and 35.081 ms now: enforcing independence refuses rounds, it d
 and a reader comparing the two files should expect exactly that.
 
 **Read the two receipts side by side before concluding a third kind of source narrowed anything.**
-The one this replaces was 176.741 ms with six servers of two kinds at 15:05 the same day, and the
+The one this replaces was 176.741 ms with six servers of two kinds at 12:05 UTC the same day, and the
 term a new kind of source would have moved is the sources overlapping: 34.463 ms then against
 34.947 ms here. It did not move. What moved is the oscillator, 17.287 ms against 0.501 ms, and that
 is how long after the newest exchange each stamp happened to be taken rather than anything about the
@@ -48,10 +48,10 @@ file is the evidence for both halves of that sentence.
 
 ## Why it was re-taken twice on one day, having said it never would be
 
-The second re-take, at 20:32, is the one above and its reason is smaller than the first: a third
+The second re-take, at 17:32 UTC, is the one above and its reason is smaller than the first: a third
 kind of source joined the round, and a fixture standing for what this product produces should be
 what this product produces. The receipt it replaced still verified. The paragraphs below are about
-the first re-take, at 15:05, where the old file no longer verified at all.
+the first re-take, at 12:05 UTC, where the old file no longer verified at all.
 
 
 The version of this file written on 2026-09-08 said the receipt stays as it was, because it is the

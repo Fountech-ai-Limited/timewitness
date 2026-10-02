@@ -1,0 +1,25 @@
+
+Verifying: ours.exe
+
+Signature Index: 0 (Primary Signature)
+Hash of file (sha256): 3656BA011BEA3CCB9D5DCC47AFE2912D0D5C294BCB97EDD1008FBAD5219AC97B
+
+Signing Certificate Chain:
+    Issued to: Synthetic ID Verified CS EOC CA 01
+    Issued by: Synthetic Identity Verification Root 2026
+    Expires:   Mon Sep 24 13:42:02 2046
+    SHA1 hash: E4BC365DF2A14F0144EE22524643885BFF09DC0A
+
+        Issued to: Ours Test Publisher
+        Issued by: Synthetic ID Verified CS EOC CA 01
+        Expires:   Mon Sep 24 13:42:03 2046
+        SHA1 hash: 194C31236918CFB4D71B0FFEB49CFC8AA180CD6E
+
+File is not timestamped.
+
+
+Number of files successfully Verified: 0
+Number of warnings: 0
+Number of errors: 1
+SignTool Error: WinVerifyTrust returned error: 0x800B010A
+	A certificate chain could not be built to a trusted root authority.

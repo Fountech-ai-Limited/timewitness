@@ -103,8 +103,10 @@
 <header><!-- BRAND-LOCKUP --></header>
 
 <h1>Check a receipt</h1>
-<p class="lede">A TimeWitness receipt says UTC was somewhere in an interval when something happened,
-and carries signed evidence from parties who have never heard of us. This page checks one.</p>
+<p class="lede">A TimeWitness receipt says UTC was somewhere in an interval at the moment its clock was
+read, and that interval is the signer's own claim. It also carries signed evidence from parties who
+have never heard of us, each piece showing one thing about the time and none vouching for the
+interval. This page checks a receipt.</p>
 
 <div class="offline">
   <p><strong>Nothing leaves this page.</strong> The receipt and the file it stamps are read from your
@@ -150,11 +152,11 @@ code: <code>timewitness verify &lt;receipt&gt;</code>.</p></noscript>
   <div id="claim"></div>
 
   <h2>The evidence, one role at a time</h2>
-  <p class="detail">Three roles and none of them does another's job. An authenticated corridor puts a
-  signed interval round the moment its server answered, which a stranger can check and the reading
-  has to overlap, and does not tighten the bound. A
-  freshness beacon says not earlier. A final witness says not later. The agent's own bound is a claim
-  and is not on this list.</p>
+  <p class="detail">Three roles and none of them does another's job. A corridor puts a signed interval
+  round the moment its server answered, which a stranger can check and the receipt's interval has to
+  overlap, and does not tighten the bound. A beacon round shows the receipt was made no earlier than
+  that round. A witness says its subject existed no later than its authority's own clock says. The
+  agent's own bound is a claim and is not on this list.</p>
   <ul id="evidence"></ul>
   <p class="detail" id="basis"></p>
 </section>
@@ -372,11 +374,13 @@ function renderResult(result) {
     evidence.append(element("li", null,
       result.signature_witness === "checked"
         ? "The signature itself is witnessed by a timestamp token checked on this page, so the " +
-          "receipt was signed no later than the moment that token supports."
+          "receipt was signed no later than a moment on the issuing authority's own clock. Where " +
+          "that authority states no accuracy, this bounds nothing in UTC."
         : result.signature_witness === "not-checked"
           ? "The signature itself carries a timestamp token this page holds no key to check."
           : "The signature itself carries no witness, so nothing outside this receipt says when " +
-            "it was signed, only when its subject existed."));
+            "it was signed. A token over its subject says at most that the subject existed no " +
+            "later than its authority's own clock says."));
   }
   document.getElementById("basis").textContent =
     result.basis_reason === undefined ? "" :

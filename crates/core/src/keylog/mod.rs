@@ -35,8 +35,9 @@
 //!
 //! So the honest sentence, and it belongs on every surface that mentions this log: **it makes a key
 //! we published something we cannot quietly unpublish. It does not make us trustworthy to a
-//! stranger, and our own word is still never third-party evidence: the weight of a receipt rests on
-//! the third-party signatures in it, never on ours.**
+//! stranger, and our own word is still never third-party evidence. The bound in a receipt is the
+//! signer's own claim, and each outside signature in it shows one thing about the time and none
+//! vouches for the bound.**
 //!
 //! # The tree
 //!

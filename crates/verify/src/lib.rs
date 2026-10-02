@@ -644,8 +644,13 @@ fn assess(
 /// the first time is trusting us about our own keys. What the log does buy is that a key we
 /// published is one we cannot quietly unpublish, because anybody who kept an earlier head can prove
 /// the log was rewritten. That is worth having and it is not third-party evidence, so the detail
-/// says which it is. Our own word is never third-party evidence: the weight of a receipt rests on
-/// the third-party signatures in it.
+/// says which it is. Our own word is never third-party evidence, and a log that names the key adds
+/// nothing to the bound: that is the signer's own claim, and each outside signature in the receipt
+/// shows one thing about the time and none vouches for it.
+///
+/// Until 2026-09-28 the held answer said the receipt's weight rested on its outside signatures.
+/// Every other surface had stopped saying that two days before, and it went on printing here
+/// because this branch only runs when a log names the key, which no walk of the surfaces had done.
 ///
 /// # Whose list it is
 ///
@@ -755,8 +760,9 @@ fn against_the_key_log(receipt: &Receipt, key_log: Option<&KeyLog>, held: &[[u8;
             format!(
                 "{head}. {} **This is a list we signed and not third-party evidence.** It makes a \
                  key we published one we cannot quietly unpublish, to a reader who kept an earlier \
-                 head; it does not make us trustworthy to a stranger, and the weight of this receipt \
-                 still rests on the third-party signatures in it. {judged}",
+                 head; it does not make us trustworthy to a stranger. The bound in this receipt is \
+                 the signer's own claim, and each outside signature in it shows one thing about the \
+                 time and none vouches for the bound. {judged}",
                 match the_vouching_entry(log, &key, reading) {
                     Some((window, label)) => format!(
                         "Entry {} of {of}, \"{label}\", names this key as an agent key {}, and the \

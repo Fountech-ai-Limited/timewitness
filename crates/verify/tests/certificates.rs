@@ -170,11 +170,24 @@ fn a_certified_key_with_both_outside_instants_inside_its_window_is_held() {
         detail.contains("places the subject and not the signing"),
         "{detail}"
     );
+    // The grade says whose the bound is, in the words the page and the help use. It said the
+    // receipt's weight rested on its outside signatures until 2026-09-28, two days after every other
+    // surface stopped saying it, because only a log naming the key reaches it. The key log step
+    // under a certifying log leaves the question to the grade, and says nothing of weight either.
+    let whose = "The bound in this receipt is the signer's own claim, and each outside signature";
+    assert!(detail.contains(whose), "{detail}");
+    assert!(
+        detail.contains("shows one thing about the time and none vouches for the bound."),
+        "{detail}"
+    );
+    assert!(!detail.contains("weight"), "{detail}");
     let step = a.step(KEY_LOG_QUESTION).expect("asked");
     assert!(
         matches!(step.state, timewitness_verify::State::Held(_)),
         "{step:?}"
     );
+    let answer = step.state.detail();
+    assert!(!answer.contains("weight"), "{answer}");
 }
 
 #[test]

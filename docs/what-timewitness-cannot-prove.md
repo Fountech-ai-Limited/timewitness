@@ -1,5 +1,30 @@
 # What TimeWitness cannot prove
 
+Version 27, 2026-09-29. Supersedes version 26 of 2026-09-26, which it keeps whole and corrects in
+three places. The item on binaries said there was no published page and that a stranger compiles
+the verifier, and from 2026-09-28 the page is served at timewitness.dev/verify, so it now says the
+verifier runs three ways and that no release carries a binary. The item on what a receipt carries
+said a format carrying source measurements would be version 1, and version 1 is what ships from
+`v0.2`, so it now says a later version. The section on what is built today said every fact in it
+was about 2026-09-09, and its items are dated to their own days. The list still runs to 61 items.
+
+Version 26, 2026-09-26. Supersedes version 25 of the same day, which it keeps whole and corrects in
+two places. The claim at the head of the list said the beacon puts the reading no earlier than its
+round. The round is fetched after the reading is taken, so what it shows is that the receipt was made
+no earlier than that round, which is what the item on the beacon below has always said. The item on
+the corridor said the reading has to overlap it, and a reading is a point: it is the receipt's interval
+that is held to overlap the corridor. The note on version 18 said the outside signatures say when the
+reading was taken and that the corridor makes the moment checkable. Neither is true, since no signature
+in a receipt dates the reading, and version 25 withdrew the first without naming the note; this one
+names it. The list still runs to 61 items.
+
+Version 25, 2026-09-26. Supersedes version 24 of 2026-09-25, which it keeps whole and corrects in
+two places. The claim at the head of the list read as if the outside evidence dated the reading, and
+no signature in a receipt does that, so it now says each part shows one thing about the time and none
+says when. The times of day in the item on what is built today were the desktop's own
+clock, three hours ahead of UTC, with no zone written; they are now given in UTC, the offset read off
+the committed receipts. The list still runs to 61 items.
+
 Version 24, 2026-09-25. Supersedes version 23 of 2026-09-24, which it keeps whole and rewrites in
 one item. The item said the agent installs no service and starts at no boot, and `timewitness agent
 install` now hands it to systemd, launchd or Task Scheduler. It now says what that is, that a
@@ -73,7 +98,7 @@ product reached and when is the honest half of the item, and each now says in it
 the receipt it was taken from has been replaced. The sentence that breaks the width down into its
 parts was reasoning from the wrong one of the four, and it is re-derived from the receipt that is
 actually on disk: 153.875 ms wide, 38.011 ms of the model's own residual, 35.081 ms of the sources
-overlapping and 3.586 ms of the oscillator, all four read 2026-09-10 at 17:38 off
+overlapping and 3.586 ms of the oscillator, all four read 2026-09-10 at 14:38 UTC off
 `cargo run -q -p timewitness-cli -- verify` on that receipt. Nothing else about the list changed.
 `scripts/three-surfaces.sh` moved in the same commit and stopped pinning those figures as prose:
 it reads them off the receipt now, which is what would have caught this.
@@ -217,11 +242,11 @@ of what is built today. The last group is marked, because those move.
 ## The claim, so the limits have something to be limits of
 
 TimeWitness says: at this local counter reading, UTC was somewhere in this interval, and here is
-signed evidence from three parties who have never heard of us about when that reading was taken.
-The interval is our own claim and the outside evidence does not vouch for it. That evidence is
-checked, and on the receipt committed in this repository it holds the moment from below and not from
-above: the beacon says the reading was not earlier than its round, and the timestamp authority states
-no accuracy of its own, so nothing here puts a number on how wrong that authority's clock could be. A
+signed evidence from three parties who have never heard of us, each part showing one thing about the
+time and none saying when that reading was taken. The interval is our own claim and the outside
+evidence does not vouch for it. That evidence is checked, and on the receipt committed in this repository it leaves one edge and not
+two: the beacon round shows the receipt was made no earlier than that round, and the timestamp authority
+states no accuracy of its own, so nothing here puts a number on how wrong that authority's clock could be. A
 bound resting on that evidence is what we are building towards. Bounded time and unbroken order. Not
 accurate time.
 
@@ -229,8 +254,8 @@ accurate time.
 
 **It cannot prove exact UTC over the public internet.** The design's bound is milliseconds and today's is about a sixth of a second on a machine that reaches the sources that narrow it. A machine that reaches only Roughtime is refused rather than given a wider bound, and the section on what is built says why. The 5 to 50 ms, the 1 ms and the 100
 microsecond figures are quoted from public research and none of them has been measured by us. They
-belong, in that order, to the public internet with no hardware of our own, to a good local network
-against a stratum-1 source, and to a cloud instance with a hypervisor clock. The first two are read from David Mills' Executive Summary: Computer Network Time Synchronization, which puts an internet path at a few milliseconds to several tens of milliseconds and a clock updated each minute from a primary reference at about a millisecond. The third is from Amazon's post of November 2023 on microsecond clocks for EC2 instances, which gives it as the clock error bound a supported instance typically sees over NTP. A claim needing
+belong, in that order, to the public internet with no hardware of our own, to a clock updated
+once a minute, as primary reference clocks are, and to a cloud instance with a hypervisor clock. The first two are read from David Mills' Executive Summary: Computer Network Time Synchronization, which puts an internet path at a few milliseconds to several tens of milliseconds and a clock updated once a minute, the interval used with primary reference clocks, at the order of a millisecond. The third is from Amazon's post of November 2023 on microsecond clocks for EC2 instances, which gives it as the clock error bound a supported instance typically sees over NTP. A claim needing
 microsecond truth needs hardware this product does not sell. Nanoseconds is the resolution of the
 local read and never the accuracy to UTC; the two get confused constantly and that confusion is the
 problem this product exists to fix.
@@ -287,7 +312,7 @@ in the parties involved; it is what their signatures actually say.
 **An authenticated corridor does not tighten the bound.** A Roughtime server states a midpoint and a
 radius in whole seconds, and the three public servers reachable on 2026-09-07 were stating one, three
 and five. So a corridor is seconds wide. It puts a signed interval round the moment its server
-answered, which a stranger can check and which the reading has to overlap, and the millisecond figure comes from ordinary time sources rather than from it. Plain NTP
+answered, which a stranger can check and which the receipt's interval has to overlap, and the millisecond figure comes from ordinary time sources rather than from it. Plain NTP
 and NTS run in every stamp beside the corridor, and neither signs anything a stranger can check.
 Anybody who expects Roughtime to be the precise part has the roles the wrong way round.
 
@@ -433,7 +458,7 @@ is a qualified trust service.
 
 ## About what is built today, which is the part that moves
 
-Everything in this section is a fact about 2026-09-09 rather than about the design.
+Everything in this section is a fact about the day each item names rather than about the design.
 
 **A bound is about 155 ms where a machine reaches the sources that narrow it, measured 2026-09-09 at sixteen polling rounds on an ordinary desktop, and a machine that reaches only Roughtime is refused, where before the operator floor it got seconds.** Three time source clients exist in this repository, Roughtime, plain NTP
 and NTS, and only Roughtime signs anything a stranger can check, so the one that can be shown to a
@@ -442,13 +467,13 @@ bound resting on Roughtime alone would be seconds wide whatever else is done to 
 floor refuses such a round; a plain NTP server states a delay and a dispersion in units of about
 fifteen microseconds and signs nothing at all.
 Measured against Roughtime alone on 2026-09-08, every one of them at the four rounds the Action
-shipped that day: a bound of 16.219 s from a GitHub runner, a bound of 16.424 s on an ordinary desktop's receipt committed at that path then and since replaced, and a bound of 16.439 s from that same desktop, stamped at 11:08. Measured against two kinds
-on 2026-09-09 at the sixteen rounds the Action ships now, on an ordinary desktop: 153.6 ms and 164.8 ms wide over the first two of three passes at 14:52, and a bound of 176.7 ms on that desktop's receipt committed at that path then and since replaced, taken at 15:05. At 12:09 UTC a GitHub runner reached a bound of 211.3 ms, and that desktop reached the same on the remaining one of its three. Every one of those is our own measurement on
-the machine it names, and none of them is a figure for anybody else's machine. Measured with all three kinds on 2026-09-09 at the sixteen rounds the Action ships: 154.1 ms, 159.2 ms and 154.7 ms wide over three passes on an ordinary desktop at 20:28, and a bound of 149.8 ms on the receipt committed at that path then and since replaced, taken at 20:32, nine servers answering and nine kept. Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms wide over three passes at 21:39, and a bound of 153.9 ms on the receipt committed in this repository at 21:41 on that desktop's clock, 18:41 UTC, nine servers behind six operators and nine kept. Enforcing independence narrowed nothing and was never going to, because the rule refuses rounds rather than narrowing them: the sources overlapping is 35.1 ms of half width on that receipt against 34.9 ms on the one before it. Measured through the resident agent on the same desktop on 2026-09-18, after the ageing of a source's interval over the local counter was bounded by the band, at thirty-six minutes of uptime and a thirty-two second polling cadence: 130.346 ms, 115.308 ms and 115.260 ms wide over three readings at 23:32, nine servers behind six operators and nine kept, with the sources overlapping at 37.991 ms of half width on the first and 36.830 ms on the other two. Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at the same uptime and the same cadence: 128.7 ms, 128.8 ms and 129.1 ms wide over three readings at 22:17, against 122.7 ms, 122.8 ms and 122.6 ms wide from the same agent at the same uptime and the same cadence before the rule at 21:04. The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did. The third kind narrowed nothing and the breakdown says so: the sources overlapping is 34.9 ms of half width on that nine-source receipt against 34.5 ms on the six-source one taken at 15:05, and what moved between the two receipts is the oscillator, 0.5 ms against 17.3 ms, which is how long after the last exchange each stamp was taken. Measured through the resident agent with all three kinds on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 122.7 ms, 122.8 ms and 122.6 ms wide over three readings at 21:04, against 133.5 ms, 136.8 ms and 128.9 ms wide from the same agent at the same uptime and the same cadence with two kinds at 16:27. The sources overlapping did not move there either, 37.6 ms of half width against 37.1 to 38.3 ms, so the ten milliseconds between the two sets is the fit and the oscillator rather than the sources. Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms wide over three readings at 16:27, against 161.1 ms, 159.4 ms and 162.2 ms wide from the one-shot command on the same machine twelve minutes earlier. What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit. Of the 153.875 ms of width on the receipt committed in this repository, the largest single part is the model's own regression residual doubled by the coverage factor, 38.011 ms of half width, with 35.081 ms of the sources overlapping and 3.586 ms of the oscillator beside it, all four read 2026-09-10 off the verify command run on that receipt, which prints half widths.
+shipped that day: a bound of 16.219 s from a GitHub runner, a bound of 16.424 s on an ordinary desktop's receipt committed at that path then and since replaced, and a bound of 16.439 s from that same desktop, stamped at 08:08 UTC. Measured against two kinds
+on 2026-09-09 at the sixteen rounds the Action ships now, on an ordinary desktop: 153.6 ms and 164.8 ms wide over the first two of three passes at 11:52 UTC, and a bound of 176.7 ms on that desktop's receipt committed at that path then and since replaced, taken at 12:05 UTC. At 12:09 UTC a GitHub runner reached a bound of 211.3 ms, and that desktop reached the same on the remaining one of its three. Every one of those is our own measurement on
+the machine it names, and none of them is a figure for anybody else's machine. Measured with all three kinds on 2026-09-09 at the sixteen rounds the Action ships: 154.1 ms, 159.2 ms and 154.7 ms wide over three passes on an ordinary desktop at 17:28 UTC, and a bound of 149.8 ms on the receipt committed at that path then and since replaced, taken at 17:32 UTC, nine servers answering and nine kept. Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms wide over three passes at 18:39 UTC, and a bound of 153.9 ms on the receipt committed in this repository at 21:41 on that desktop's clock, 18:41 UTC, nine servers behind six operators and nine kept. Enforcing independence narrowed nothing and was never going to, because the rule refuses rounds rather than narrowing them: the sources overlapping is 35.1 ms of half width on that receipt against 34.9 ms on the one before it. Measured through the resident agent on the same desktop on 2026-09-18, after the ageing of a source's interval over the local counter was bounded by the band, at thirty-six minutes of uptime and a thirty-two second polling cadence: 130.346 ms, 115.308 ms and 115.260 ms wide over three readings at 20:32 UTC, nine servers behind six operators and nine kept, with the sources overlapping at 37.991 ms of half width on the first and 36.830 ms on the other two. Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at the same uptime and the same cadence: 128.7 ms, 128.8 ms and 129.1 ms wide over three readings at 19:17 UTC, against 122.7 ms, 122.8 ms and 122.6 ms wide from the same agent at the same uptime and the same cadence before the rule at 18:04 UTC. The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did. The third kind narrowed nothing and the breakdown says so: the sources overlapping is 34.9 ms of half width on that nine-source receipt against 34.5 ms on the six-source one taken at 12:05 UTC, and what moved between the two receipts is the oscillator, 0.5 ms against 17.3 ms, which is how long after the last exchange each stamp was taken. Measured through the resident agent with all three kinds on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 122.7 ms, 122.8 ms and 122.6 ms wide over three readings at 18:04 UTC, against 133.5 ms, 136.8 ms and 128.9 ms wide from the same agent at the same uptime and the same cadence with two kinds at 13:27 UTC. The sources overlapping did not move there either, 37.6 ms of half width against 37.1 to 38.3 ms, so the ten milliseconds between the two sets is the fit and the oscillator rather than the sources. Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms wide over three readings at 13:27 UTC, against 161.1 ms, 159.4 ms and 162.2 ms wide from one-shot runs on that machine twelve minutes earlier. What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit. Of the 153.875 ms of width on the receipt committed in this repository, the largest single part is the model's own regression residual doubled by the coverage factor, 38.011 ms of half width, with 35.081 ms of the sources overlapping and 3.586 ms of the oscillator beside it, all four read 2026-09-10 off the verify command run on that receipt, which prints half widths.
 Polling more times does help and it is the shipped default that was wrong about which way: below
 three rounds no line is fitted, so the scatter of the measurements is never measured and never
 enters the width, and the bound at one round is narrower because less was measured rather than
-because the clock is better known. Measured on this desktop at 12:54 and 12:56 on 2026-09-08 against
+because the clock is better known. Measured on this desktop at 09:54 and 09:56 UTC on 2026-09-08 against
 Roughtime alone, two passes at each setting: 6.2 s wide at one round, 17.4 s wide at three, 16.4 s wide at four,
 12.0 s wide at sixteen and 10.4 s wide at thirty-two. So the figure this product leads with is its own bound, about 155 ms at sixteen rounds where the sources that narrow it are reachable. Where only Roughtime is reachable it now refuses, and the 12 s of width it reached there on 2026-09-08 is from before the operator floor. About one second is still the target and it is a target for something else: a bound
 resting on third-party evidence rather than on the agent's own model, which nothing outside the
@@ -610,8 +635,8 @@ kind, an operator, a timescale, the leap and smear state and whether the source 
 none of the four timestamps of an exchange, no round trip and no uncertainty a source stated. So a
 stranger can check that the parts of the width add up to the width and that a majority was kept, and
 cannot work out any part of it from what the sources said. The width is the agent's arithmetic on
-measurements only the agent saw. A receipt format that carries them would be version 1, and it is
-not built.
+measurements only the agent saw. A receipt format that carries them would be a later version than
+the version 1 that ships, and it is not built.
 
 **The operator names the floor counts are strings the signer wrote.** The verifier counts operators from
 the labels in the receipt rather than taking a count the receipt states, which stops the agent's
@@ -688,10 +713,12 @@ keeps nothing and stops nothing.
 nothing portable is produced, so there is no artefact a third party could be shown. The phrase reads
 as a description of something that exists and it describes something that does not.
 
-**There is no released binary, so nothing is downloadable.** The verifier is built and works, as a
-command line tool and as one HTML page that runs from a local disk with no network. Both are built
-from source in this repository. The `v0` release carries no binary and there is no published page,
-so today a stranger compiles it rather than downloading it.
+**There is no released binary.** The verifier is built and works three ways: as a command line
+tool, as one HTML page that runs from a local disk with no network, and as that same page served at
+timewitness.dev/verify, which needs no toolchain and no account and reads the receipt in the browser
+without sending it anywhere. The served page names the commit it was built from, so a reader can
+build the same page and compare. No release carries a binary, so a stranger who wants the command
+line or the Action compiles it from source rather than downloading it.
 
 **Nothing links an agent's key to anybody, except our own.** A receipt proves that whoever signed it
 held that key. A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and the one agent key we vouch for, which signs our own receipts from 2026-09-24, with the window it is ours in. That is our own word about our own key and it is not third-party evidence. The receipt committed in

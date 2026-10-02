@@ -223,17 +223,6 @@
   },
   {
    "figures": [
-    "six seconds",
-    "a quarter of a second"
-   ],
-   "surfaces": [
-    "action.yml"
-   ],
-   "sentence": "Sixteen is the default because it takes about six seconds and each further second after it buys less than a quarter of a second of width. required: false default: \"16\" max-width: description: >- The widest interval this agent will sign for, in nanoseconds.",
-   "reason": "arithmetic on two readings stated above it"
-  },
-  {
-   "figures": [
     "1788979278918450302 ns"
    ],
    "surfaces": [
@@ -368,18 +357,6 @@
    ],
    "sentence": "153.875 ms",
    "reason": "the conditions are in the table line this figure sits in"
-  },
-  {
-   "figures": [
-    "six seconds",
-    "a quarter of a second"
-   ],
-   "surfaces": [
-    "content/for-maintainers.json",
-    "/for-maintainers"
-   ],
-   "sentence": "Sixteen takes about six seconds and each further second buys less than a quarter of a second of width.",
-   "reason": "arithmetic on two readings stated above it"
   },
   {
    "figures": [

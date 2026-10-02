@@ -6,6 +6,10 @@ name: Binaries check
 # which every leg runs. Each leg also runs the binary built for it and holds `--version` to the tag.
 #
 # `release.yml` calls it once the assets are attached, and it can be run by hand on any release.
+#
+# Each macOS and Windows signature is held to our own identities, read from
+# `scripts/signing-identities.json` in the commit this runs from, which is `main` when the release
+# workflow calls it. While one of them is unset every leg fails, and says which.
 
 on:
   workflow_call:

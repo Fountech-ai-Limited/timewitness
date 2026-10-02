@@ -29,8 +29,9 @@
 //!
 //! It makes the log something we cannot quietly rewrite for a reader who kept an earlier head. It
 //! does not make the log worth anything to somebody seeing it for the first time, and our own word
-//! is still never third-party evidence: a key log of ours is our own party, and the weight of a
-//! receipt rests on the third-party signatures in it.
+//! is still never third-party evidence: a key log of ours is our own party. The bound in a receipt
+//! is the signer's own claim, and each outside signature in it shows one thing about the time and
+//! none vouches for the bound.
 
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
