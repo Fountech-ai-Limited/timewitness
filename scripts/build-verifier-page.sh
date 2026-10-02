@@ -38,13 +38,25 @@ cargo build -p timewitness-verify-web --release --target "$target"
 bytes=$(wc -c < "$wasm" | tr -d ' ')
 echo "module is $bytes bytes"
 
+# The commit the page is built from, written into it so a reader knows which command line to hold it
+# to. A tree with changes nobody committed is said as such, because no reader can check out the
+# commit plus whatever was on this disk, and a page naming a bare commit it was not built from would
+# send them to a command line that might answer differently.
+built_from="$(git rev-parse HEAD 2>/dev/null || true)"
+if [ -z "$built_from" ]; then
+    built_from="not-a-commit"
+elif [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    built_from="$built_from-modified"
+fi
+echo "built from $built_from"
+
 echo "assembling the page"
 python - "$page" "$wasm" "verifier-page/brand/tokens.css" \
-         "verifier-page/brand/timewitness-lockup-on-dark.svg" "$out" <<'PYTHON'
+         "verifier-page/brand/timewitness-lockup-on-dark.svg" "$out" "$built_from" <<'PYTHON'
 import base64
 import sys
 
-page_path, wasm_path, tokens_path, lockup_path, out_path = sys.argv[1:6]
+page_path, wasm_path, tokens_path, lockup_path, out_path, built_from = sys.argv[1:7]
 
 page = open(page_path, encoding="utf-8").read()
 tokens = open(tokens_path, encoding="utf-8").read()
@@ -61,8 +73,9 @@ page = page.replace(
     '<img src="' + lockup_src + '" alt="TimeWitness">',
 )
 page = page.replace("<!-- WASM-BASE64 -->", encoded)
+page = page.replace("<!-- BUILT-FROM -->", built_from)
 
-for marker in ("<!-- BRAND-TOKENS -->", "<!-- BRAND-LOCKUP -->", "<!-- WASM-BASE64 -->"):
+for marker in ("<!-- BRAND-TOKENS -->", "<!-- BRAND-LOCKUP -->", "<!-- WASM-BASE64 -->", "<!-- BUILT-FROM -->"):
     assert marker not in page, marker + " was not filled in"
 
 open(out_path, "w", encoding="utf-8", newline="\n").write(page)

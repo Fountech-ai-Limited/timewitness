@@ -917,7 +917,7 @@ fn timescale_conflict(survivors: &[&Candidate], inside_a_smear_window: bool) -> 
         for b in survivors.iter().skip(i + 1) {
             if a.smear.conflicts_with(b.smear) {
                 return Some(format!(
-                    "{} handles a leap second as {:?} and {} handles it as {:?}, and {when}",
+                    "{} {} and {} {}, and {when}",
                     a.id, a.smear, b.id, b.smear
                 ));
             }
@@ -966,12 +966,12 @@ fn smear_split(
         let gap = gap_between(&out.interval, region);
         if gap > 0 && gap <= ceiling {
             return Some(format!(
-                "{} was {} ms outside what the other sources agreed and handles a leap second as \
-                 {:?} where they handle it as {:?}, which is a smear rather than a broken clock as \
-                 far as anything here can tell",
+                "{} was {} ms outside what the other sources agreed, and it {} where {} {}, \
+                 which is a smear rather than a broken clock as far as anything here can tell",
                 out.id,
                 nanos_as_millis(gap),
                 out.smear,
+                survivors[0].id,
                 survivors[0].smear,
             ));
         }

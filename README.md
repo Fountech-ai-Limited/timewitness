@@ -16,6 +16,10 @@ what this is being built towards.
 
 The claim is bounded time and unbroken order. It is not accurate time.
 
+To go from a machine with nothing of ours on it to a receipt you have checked yourself, follow
+[the quick start](docs/quick-start.md). It is one short page, and every command on it is walked on a
+clean machine every morning.
+
 ## What is built today
 
 This repository is early and it says so rather than describing a finished product.
@@ -24,10 +28,10 @@ This repository is early and it says so rather than describing a finished produc
 |---|---|
 | Shared types | built |
 | Source interface and the four-timestamp exchange | built |
-| A continuously running agent | built as a foreground process, `timewitness agent`. It holds one clock model, disciplines it on a schedule and answers a reading to `timewitness stamp --agent` with no network call in the reading. It installs no service and starts at no boot, so it runs only while somebody keeps it running, and the Action below does not use it |
+| A continuously running agent | built, `timewitness agent`, as a foreground process or as a service. It holds one clock model, disciplines it on a schedule and answers a reading to `timewitness stamp --agent` with no network call in the reading. `timewitness agent install` hands it to the platform's own service manager so that it starts at boot, and a restart has been checked on Linux only. The Action below does not use it. A fresh agent warms up: `timewitness status` says how wrong the clock could be within a minute of it starting, and most stamps are refused while it settles. Each refusal says why in a sentence. How long the settling took over measured starts, with the machine, the network and the date, is on the limitation list below |
 | Four to six independent sources | built, on the count this product defines and enforces. Independent is the operator: a source names who runs it, the selection counts operators rather than names, a majority resting on a minority of operators is refused, and the shipped floor is four, so a round short of it declines to sign rather than widening. Nine servers reach six operators, so two can go dark and the agent carries on. Two things the count cannot see, both on the limitation list: it is an upper bound, since a shared upstream, path, constellation or implementation is one fault however many companies it is; and three programs stand behind the nine names, so a defect in one of them is one fault across three at once. The fourth source kind, local hardware, has no client and needs a receiver this product cannot assume anybody has |
 | Clock model: selection, weighting, regression, holdover | built |
-| Receipt format | version 0 built and frozen, and it is what the `v0` and `v0.1` releases write, `docs/receipt-format-v0.md`. Version 1 is what the `v0.2` and `v0.3` releases write: it states the three terms that set a receipt's width, the part of the holdover covering a rate the agent is not correcting for, and which path the reading came by, and it can carry a witness over the receipt's own signature. `v0.2` and `v0.3` read both versions and `v0.1` refuses version 1 by name, `docs/receipt-format-v1.md` |
+| Receipt format | version 0 built and frozen, and it is what the `v0` and `v0.1` releases write, `docs/receipt-format-v0.md`. Version 1 is what the `v0.2`, `v0.3` and `v0.4` releases write: it states the three terms that set a receipt's width, the part of the holdover covering a rate the agent is not correcting for, and which path the reading came by, and it can carry a witness over the receipt's own signature. `v0.2` and `v0.3` read both versions and `v0.1` refuses version 1 by name, `docs/receipt-format-v1.md` |
 | Roughtime client, the authenticated corridor | built, proved against three public servers |
 | NTS client, an authenticated source that is never evidence | built, proved against three public servers. Its keys are symmetric, so it improves the clock and can never be shown to a stranger |
 | Freshness beacon client, not-earlier-than | built for drand, one beacon of the two the design asks for |
@@ -36,9 +40,9 @@ This repository is early and it says so rather than describing a finished produc
 | GitHub Action | built. One line in a workflow, and the receipt goes into the SLSA provenance and the container image labels that already ship. From `v0.3` the provenance names the format the receipt is written in, read off the receipt; the `v0.2` Action labelled every receipt `timewitness-receipt-v0`, which is wrong for the version 1 receipts it writes |
 | A bound resting on outside evidence | not built. Every receipt says its bound rests on the agent's own model. The outside signatures it carries are checked, and on both timestamp authorities that ship the token states no accuracy of its own, so it bounds nothing in UTC and the receipt is left with one edge rather than two. Nothing issues a receipt whose width rests on outside signatures. The format can say so, the verifier refuses the claim unless all three roles check out, and a reader who has read an authority's published practice can allow for that authority's clock in their own anchors, which gives the edge back as the reader's own figure and never as the authority's |
 | Order within a chain | built two receipts at a time, from the `v0.2` release. `timewitness order` reads two receipts offline and keeps two answers apart: the intervals say which moment came first, and a hash link says which of two receipts of one chain was signed first. Nothing walks a whole chain |
-| A public log of agent keys | not built. A receipt proves whoever signed it held that key and nothing about who that was. A log of our two Roughtime server keys is served at `timewitness.dev/key-log.txt` and names no agent key, and the `v0` release cannot read it |
+| A public log of agent keys | built for our own key. A receipt proves whoever signed it held that key and nothing about who that was. `timewitness.dev/key-log.txt` names our two Roughtime server keys and the one agent key we vouch for, with its window, and a verifier built from `main` names the entry and the window or refuses a key outside it. It is our own word and not third-party evidence. The key of the receipt committed here is not in it and nobody else's is either, and the `v0` release cannot read it |
 
-`v0`, `v0.1`, `v0.2` and `v0.3` are tagged and released as source, with no binary. Both halves are built from source in this
+`v0`, `v0.1`, `v0.2`, `v0.3` and `v0.4` are tagged and released as source, with no binary. Both halves are built from source in this
 repository, so today a stranger compiles the verifier rather than downloading it.
 
 ## The two numbers, which are not the same number
@@ -213,8 +217,7 @@ resting on third-party evidence rather than on the agent's own model, which noth
 tests constructs, and which a timestamp authority writing whole seconds puts a floor under. That is
 the rule underneath it, and it holds for everything this product says about itself: the prose may be
 forward-looking and a number may not, because a reader reproduces a number and cannot reproduce a
-plan. The agent runs only while somebody keeps it running: it installs no service, starts at no
-boot, and is not running after a restart until a person starts it again. Leaving the agent running longer stops narrowing the bound after about thirty minutes. The model's own residual is the largest single part of the bound on the agent's path and it falls as synchronisations pile up, so a reader is likely to assume that an agent left up all day reaches a narrower number. It does not. `Policy::regression_window` is 1800 seconds and the model drops every point older than that before `history_capacity` binds, so at the shipped thirty-two second cadence the fit saturates at about fifty-six points after half an hour and never has more. Measured 2026-09-10 through the model's own simulated harness at that cadence, which is the arithmetic of the model and not a reading from a real path: the residual falls from 13.522 ms of half width at five minutes to 5.802 ms at the window, and is then 5.752 ms at forty minutes, at an hour, at ninety minutes and at two hours, the same number to the nanosecond. Measured the same day on an ordinary desktop through a resident agent against the nine published servers, one reading every three minutes: 47.704 ms of half width at five minutes of uptime, 22.262 ms at thirty-two minutes, and no lower after that. Whether thirty minutes is the right window is an open question about the regression rather than a setting anybody can change from outside. `timewitness agent` holds
+plan. The agent starts at boot only where somebody has installed it as a service, and a restart has been checked on Linux and nowhere else. Leaving the agent running longer stops narrowing the bound after about thirty minutes. The model's own residual is the largest single part of the bound on the agent's path and it falls as synchronisations pile up, so a reader is likely to assume that an agent left up all day reaches a narrower number. It does not. `Policy::regression_window` is 1800 seconds and the model drops every point older than that before `history_capacity` binds, so at the shipped thirty-two second cadence the fit saturates at about fifty-six points after half an hour and never has more. Measured 2026-09-10 through the model's own simulated harness at that cadence, which is the arithmetic of the model and not a reading from a real path: the residual falls from 13.522 ms of half width at five minutes to 5.802 ms at the window, and is then 5.752 ms at forty minutes, at an hour, at ninety minutes and at two hours, the same number to the nanosecond. Measured the same day on an ordinary desktop through a resident agent against the nine published servers, one reading every three minutes: 47.704 ms of half width at five minutes of uptime, 22.262 ms at thirty-two minutes, and no lower after that. Whether thirty minutes is the right window is an open question about the regression rather than a setting anybody can change from outside. `timewitness agent` holds
 one clock model, disciplines it against the sources every thirty-two seconds and answers a reading
 to `timewitness stamp --agent`. The one line a workflow installs runs the one-shot command and not
 the agent, so every receipt this product has issued in continuous integration came from a model
@@ -228,7 +231,7 @@ where they touch or overlap, and a hash link says which of two receipts of one c
 Two receipts signed by different agent keys are not a chain, so only their intervals are compared. A countersigned exchange shows that two claims are consistent with an order and nothing more: neither side's interval is evidence for the other, an overlap is undecided, and the command that reads one ships from `v0.2`. There is no refusal receipt. A refusal is a return value inside the agent. Nothing signed
 and nothing portable is produced, so there is no artefact a third party could be shown. There is no
 released binary, so a stranger compiles the verifier rather than downloading it. Nothing links an
-agent's key to anybody. A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and no agent key. The `v0` release cannot read it. There is no first-run figure from anybody outside.
+agent's key to anybody, except our own. A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and the one agent key we vouch for, which signs our own receipts from 2026-09-24, with the window it is ours in. The `v0` release cannot read it. There is no first-run figure from anybody outside.
 One freshness beacon works rather than the two the design asks for. One kind of final witness works;
 there is no OpenTimestamps anchor. Roughtime is an Internet-Draft and not an RFC: the IETF datatracker showed revision 19 in the RFC Editor Queue on 17 September 2026.
 A sleep is detected and has never been watched happening: the agent reads the two counters an
@@ -261,7 +264,7 @@ before there is anything to count.
 One line in a workflow file:
 
 ```yaml
-- uses: Fountech-ai-Limited/timewitness@v0.3
+- uses: Fountech-ai-Limited/timewitness@v0.4
   with:
     subject: dist/widget.tar.gz
 ```
@@ -269,7 +272,7 @@ One line in a workflow file:
 There is no configuration file and no secret to set. The receipt lands beside the artefact, goes into
 the SLSA provenance and container image labels where those are named, and the workflow summary carries
 what the receipt does and does not establish. The inputs are the ones in `action.yml` at the tag you
-pin, so read that file at `v0.3` rather than here: an input added on `main` reaches a workflow only
+pin, so read that file at `v0.4` rather than here: an input added on `main` reaches a workflow only
 with the release after it. `deadline` arrived in `v0.2`, so a workflow pinned to `@v0.1` that sets it
 gets a warning from GitHub and no deadline.
 

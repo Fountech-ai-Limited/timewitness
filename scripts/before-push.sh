@@ -202,6 +202,7 @@ another_key="$(mktemp)"
 head -c 32 /dev/urandom >"$another_key"
 step "  and a head by a key the verifier does not hold" key_log_refuses "not signed by the key the verifier holds for us" "$another_key" "$throwaway_key.log" --signer "$signer"
 step "  and no copy last served without --first" key_log_refuses "no copy last served" "$throwaway_key" "$throwaway_key.nowhere/key-log.txt" --signer "$signer"
+step "The log answers for our keys" bash -c "TIMEWITNESS_BIN=target/debug/timewitness bash scripts/our-key-in-the-log.sh '$throwaway_key.log' --signer '$signer'"
 rm -f "$throwaway_key" "$throwaway_key.log" "$throwaway_key.longer" "$another_key"
 step "Verifying needs no account and no call to us" cargo test -p timewitness-architecture --test verify_path_needs_nothing_of_ours
 # The other half of that CI step, `scripts/verify-offline.sh`, takes the network away in a Linux
@@ -221,6 +222,7 @@ fi
 # built, so it cannot run without it.
 step "The verifier page"   bash scripts/build-verifier-page.sh
 step "The verifier page asks for nothing" bash -c "node scripts/verifier-page-offline.mjs && node scripts/verifier-page-offline.mjs --self-test && node scripts/verifier-page-in-a-browser.mjs"
+step "The page as a host serves it" node scripts/the-served-verifier-page.mjs --self-test
 step "Repository hygiene"  bash scripts/repo-hygiene.sh
 step "Repository hygiene still refuses its seeds" bash scripts/repo-hygiene.sh --self-test
 step "The guards are written to the contract" bash -c "bash scripts/guard-lint.sh --self-test && bash scripts/guard-lint.sh scripts"

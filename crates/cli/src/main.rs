@@ -20,6 +20,7 @@ mod order_cmd;
 mod render;
 mod roughtime_serve_cmd;
 mod send_cmd;
+mod service_cmd;
 mod stamp_cmd;
 mod status_cmd;
 mod verify_cmd;

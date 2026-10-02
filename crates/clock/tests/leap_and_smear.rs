@@ -408,3 +408,33 @@ fn a_source_is_described_by_the_sample_the_bound_was_built_from() {
         "and having said so it cannot be one of the sources the bound rests on"
     );
 }
+
+#[test]
+fn a_leap_refusal_names_how_each_source_handles_the_second_in_words() {
+    // Both leap refusals name how the sources handle the second, and until 2026-09-24 they named it
+    // with the policy's debug form, `Linear { window_seconds: 86400 }`, in a sentence a person reads.
+    let world = World::still(0);
+    let (mut split, clock) = model_on(&world);
+    let at_the_split = round(&mut split, &world, &mid_smear_pool(), &clock);
+
+    let (mut pending, clock) = model_on(&world);
+    let announced: Vec<Path> = mid_smear_pool()
+        .into_iter()
+        .map(|mut p| {
+            p.leap = LeapIndicator::AddSecond;
+            p.server_error = 0;
+            p
+        })
+        .collect();
+    let while_pending = round(&mut pending, &world, &announced, &clock);
+
+    for validity in [at_the_split, while_pending] {
+        assert!(
+            matches!(validity, Validity::TimescaleConflict { .. }),
+            "{validity:?}"
+        );
+        let said = timewitness_core::Refusal::new(validity).to_string();
+        assert_eq!(timewitness_core::refusal::insides_in(&said), None, "{said}");
+        assert!(said.contains("86400 s"), "the window is still said: {said}");
+    }
+}

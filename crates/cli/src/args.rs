@@ -56,6 +56,7 @@ const TAKES_A_VALUE: &[&str] = &[
     "--event",
     "--repository",
     "--to",
+    "--user",
 ];
 
 /// What each subcommand accepts, and how many things it takes that are not options.
@@ -99,7 +100,12 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
         ],
         0,
     ),
-    ("agent", &["--endpoint", "--interval", "--max-width"], 0),
+    // One, for `install` or `uninstall`. With nothing it is the agent itself, in the foreground.
+    (
+        "agent",
+        &["--endpoint", "--interval", "--max-width", "--user"],
+        1,
+    ),
     (
         "roughtime-serve",
         &["--bind", "--key", "--interval", "--max-width"],

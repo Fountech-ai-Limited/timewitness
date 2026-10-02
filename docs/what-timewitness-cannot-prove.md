@@ -1,5 +1,18 @@
 # What TimeWitness cannot prove
 
+Version 24, 2026-09-25. Supersedes version 23 of 2026-09-24, which it keeps whole and rewrites in
+one item. The item said the agent installs no service and starts at no boot, and `timewitness agent
+install` now hands it to systemd, launchd or Task Scheduler. It now says what that is, that a
+restart has been checked on Linux and not on macOS or Windows, what keeps the service from setting
+the clock on each, and that no release carries a binary yet. The list still runs to 61 items.
+
+Version 23, 2026-09-24. Supersedes version 22 of the same day, which it keeps whole and corrects in
+one item. The key log we serve named no agent key until this version, and it now names the one we
+vouch for, which signs our own receipts from 2026-09-24, so the item on keys says what that log
+vouches for, why the key of the receipt committed in this repository is not in it, that any key it
+does not name is refused against it as not ours, and that the window is judged on the receipt's own
+reading. The list still runs to 61 items.
+
 Version 22, 2026-09-24. Supersedes version 21 of 2026-09-23, which it keeps whole and corrects in
 three places, all of them about what the `v0.2` release ships. The item saying nothing verifies order
 said so of every release until this one, and `v0.2` carries `timewitness order`, so the item now says
@@ -441,13 +454,19 @@ the rule underneath it, and it holds for everything this product says about itse
 forward-looking and a number may not, because a reader reproduces a number and cannot reproduce a
 plan.
 
-**The agent runs only while somebody keeps it running: it installs no service, starts at no boot,
-and is not running after a restart until a person starts it again.** `timewitness agent` holds one
-clock model, disciplines it against the sources every thirty-two seconds and answers a reading to
-`timewitness stamp --agent`. It is a foreground process and there is no Windows service, no systemd
-unit and no scheduler entry anywhere in this repository. So a machine that reboots overnight has no
-agent in the morning, and the bound a stamp gets then is whatever a model built from nothing can
-support.
+**The agent starts at boot only where somebody has installed it as a service, and a restart has been
+checked on Linux and nowhere else.** `timewitness agent install` hands the agent to a systemd unit
+on Linux, a launchd daemon on macOS or a scheduled task at boot on Windows, and `timewitness agent
+uninstall` takes it away again. Run by hand, `timewitness agent` is a foreground process that runs
+until it is stopped, so a machine that reboots has no agent until something starts it. On 2026-09-25
+a Linux virtual machine with the service installed was restarted, and the agent was answering
+afterwards with nobody having started it. The machine was built for the check and thrown away after
+it. On macOS and Windows the install and the uninstall have been checked and a restart has not, so
+there the agent coming back after a reboot is built and not shown. On Linux the unit takes away the
+agent's permission to set the clock. On macOS only root may set it and the daemon does not run as
+root. Windows has no such switch, so there the promise that the agent leaves the clock alone rests
+on the code. A release gets binaries only when every one of them is signed, and no release has any
+yet, so today the service is installed from a command line somebody compiled.
 
 **Leaving the agent running longer stops narrowing the bound after about thirty minutes.** The
 model's own residual is the largest single part of the bound on the agent's path and it falls as
@@ -671,9 +690,14 @@ command line tool and as one HTML page that runs from a local disk with no netwo
 from source in this repository. The `v0` release carries no binary and there is no published page,
 so today a stranger compiles it rather than downloading it.
 
-**Nothing links an agent's key to anybody.** A receipt proves that whoever signed it held that key.
-A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and no agent key. So a reader who does not already recognise an agent key learns only that one key
-signed this. The `v0` release refuses that log's format by name, so reading it takes a verifier built
+**Nothing links an agent's key to anybody, except our own.** A receipt proves that whoever signed it
+held that key. A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and the one agent key we vouch for, which signs our own receipts from 2026-09-24, with the window it is ours in. That is our own word about our own key and it is not third-party evidence. The receipt committed in
+this repository was signed on 2026-09-09 by an earlier key whose private half cannot be accounted for,
+so the log does not name it. Any key the log does not name, that one included, is refused against it
+as not ours, and a reader who does not already recognise that key learns only that one key signed
+this. The window is judged on
+the receipt's own reading, so it catches a receipt that says it was signed outside the window and not
+one that lies about when. The `v0` release refuses that log's format by name, so reading it takes a verifier built
 from `main` until a later release. The Action generates a key on the runner where none is
 supplied, which is what keeps the install to one line and is exactly as meaningful as that sounds.
 

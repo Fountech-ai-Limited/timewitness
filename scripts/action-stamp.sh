@@ -209,7 +209,10 @@ summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
     echo
     echo "The agent key that signed it proves that one agent held that key and nothing about who that"
     echo "was. A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two"
-    echo "Roughtime servers and no agent key, so there is nothing yet to check this key against."
+    echo "Roughtime servers and the one agent key we vouch for, which signs our own receipts from"
+    echo "2026-09-24. A key generated on this runner is not in it, so checked against that log this"
+    echo "receipt is refused as not ours. Checked without it, the receipt verifies on its own evidence as"
+    echo "it always did."
     echo
     echo "### Checking it"
     echo

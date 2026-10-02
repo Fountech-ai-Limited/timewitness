@@ -10,6 +10,10 @@
      no connection, no image from an address, no frame, no font, no form, no base. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The commit this page was built from, filled in by the build. A reader who wants the command line
+     that gives the same answers as this page builds it at this commit, and a check reading the page
+     off a host compares it with the command line built there and nowhere else. -->
+<meta name="tw-built-from" content="<!-- BUILT-FROM -->">
 <title>Check a TimeWitness receipt</title>
 <!-- BRAND-TOKENS -->
 <style>
@@ -157,6 +161,7 @@ and carries signed evidence from parties who have never heard of us. This page c
 
 <footer>
   <p id="build"></p>
+  <p id="built-from" class="mono"></p>
   <p>The source of everything this page does is in the repository, in
   <code>crates/verify</code> and <code>crates/verify-web</code>. Reading it is the only way to know
   what it checks; taking our word for it would be the thing this product exists to replace.</p>
@@ -211,6 +216,12 @@ async function start() {
     "This page carries the verifier as " +
     Math.round(WASM_BASE64.length * 3 / 4 / 1024) +
     " kilobytes of WebAssembly and needs nothing else.";
+  const builtFrom = document.querySelector('meta[name="tw-built-from"]').content;
+  document.getElementById("built-from").textContent = /^[0-9a-f]{40}$/.test(builtFrom)
+    ? "It was built from commit " + builtFrom + " of the timewitness repository, and the command " +
+      "line built at that commit gives the same answer about the same receipt."
+    : "It was not built from a commit anybody else can check out, so no command line is named " +
+      "here to compare it with.";
 }
 
 function element(tag, className, text) {

@@ -6,10 +6,10 @@
 //!
 //! ## What it does not do, said here because a reader will assume otherwise
 //!
-//! It installs nothing. There is no Windows service, no systemd unit, no scheduler entry and
-//! nothing that starts at boot. It is a foreground process that runs until it is stopped, and if
-//! this machine restarts it is not running afterwards. The limitation list says so on all three
-//! surfaces.
+//! It installs nothing itself. It is a foreground process that runs until it is stopped, and if this
+//! machine restarts it is not running afterwards. `timewitness agent install`, in `service_cmd`,
+//! hands this same process to whatever starts things at boot, and `timewitness agent uninstall`
+//! takes it away again.
 //!
 //! It does not set this machine's clock. The default is measure and vouch, exactly as the one-shot
 //! command's is, because the Windows time service contends with any other discipliner by design and
@@ -27,9 +27,11 @@
 
 use std::collections::BTreeSet;
 use std::net::TcpListener;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use timewitness_agent::crossing::an_agent_answers;
 use timewitness_agent::resident::{Resident, SystemSurroundings};
 use timewitness_agent::serve::{serve, Cadence, Reporter};
 use timewitness_agent::wire::Endpoint;
@@ -43,6 +45,7 @@ use timewitness_sources::TimeSource;
 
 use crate::args::Args;
 use crate::render;
+use crate::service_cmd;
 use crate::verify_cmd::Outcome;
 
 /// How many reads to take when measuring the counter's own granularity.
@@ -54,6 +57,25 @@ const GRANULARITY_READS: usize = 2_000;
 
 /// Run it.
 pub fn run(args: &Args) -> Outcome {
+    match args.positional.first().map(String::as_str) {
+        None => {}
+        Some("install") => return service_cmd::install(args),
+        Some("uninstall") => return service_cmd::uninstall(args),
+        Some(other) => {
+            return fail(&format!(
+                "{other:?} is not something the agent does. `timewitness agent install` starts it \
+                 at every boot, `timewitness agent uninstall` stops that, and `timewitness agent \
+                 --endpoint <file>` runs it here until it is stopped"
+            ))
+        }
+    }
+    if args.value("--user").is_some() {
+        return fail(
+            "--user names the account a service runs as, so it goes with `timewitness agent \
+             install`. Run by hand, the agent runs as whoever started it",
+        );
+    }
+
     let endpoint_path = match args.required("--endpoint") {
         Ok(path) => path,
         Err(e) => return fail(&e.0),
@@ -76,6 +98,19 @@ pub fn run(args: &Args) -> Outcome {
         ..Policy::default()
     };
 
+    // Asked before anything is bound or written, so a refused start leaves the file and the agent
+    // it names exactly as they were. Writing over a live file is what orphaned the first agent until
+    // 2026-09-24: it went on polling other people's servers with nothing left to find it by.
+    if let Some(address) = already_answering(Path::new(endpoint_path)) {
+        return fail(&format!(
+            "an agent is already answering on {endpoint_path}, at {address}, so this one has not \
+             started. A second agent there would take the file over and leave the first running \
+             with nothing to find it by. Stop the first one, or give this one a file of its own \
+             with --endpoint. If no agent of yours is running, something else has taken that \
+             address, and deleting {endpoint_path} lets this one start"
+        ));
+    }
+
     // The port is the operating system's to choose. A fixed one would collide with whatever else is
     // on this machine and would have to be configured, and there is nothing here for a stranger to
     // find: the address is written into a file only this account can read, beside the token.
@@ -95,7 +130,7 @@ pub fn run(args: &Args) -> Outcome {
         Ok(endpoint) => endpoint,
         Err(e) => return fail(&format!("{e}")),
     };
-    if let Err(e) = endpoint.write(std::path::Path::new(endpoint_path)) {
+    if let Err(e) = endpoint.write(Path::new(endpoint_path)) {
         return fail(&format!("{endpoint_path} could not be written: {e}"));
     }
 
@@ -170,6 +205,16 @@ pub fn run(args: &Args) -> Outcome {
     // rather than a way of stopping the agent. Stopping it is a signal, and a signal does not come
     // back here.
     fail("this machine stopped accepting connections on the loopback interface")
+}
+
+/// The address of an agent still answering on the file at `path`, if one is.
+///
+/// A file that is not there, or is not an endpoint, has nobody behind it, and neither has one whose
+/// agent was stopped: that one is written over, as it always was, because a killed agent leaves its
+/// file behind and the next one has to be able to start.
+fn already_answering(path: &Path) -> Option<String> {
+    let existing = Endpoint::read(path).ok()?;
+    an_agent_answers(&existing).then_some(existing.address)
 }
 
 /// How many distinct operators a list of sources reaches.

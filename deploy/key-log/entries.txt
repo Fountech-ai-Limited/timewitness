@@ -22,3 +22,11 @@ timewitness-key-log v1
 # party between them, and neither is an independent source for anybody's bound.
 entry server 6b45b1fb87a041acf63ea47947ee998679a9af21e4557b1c779dd32c4a33eef0 1789220088000000000 - roughtime server of ours, London, timewitness-roughtime-lhr.fly.dev:2002
 entry server 709f1f17443f3827c695bf71dadf92db31cf8f6b501a36f1ab2dea5e02aedb4c 1789220256000000000 - roughtime server of ours, Virginia, timewitness-roughtime-iad.fly.dev:2002
+#
+# The agent key of ours, and the only one this log vouches for. It signs our own receipts from the
+# moment its window opens. The receipt in crates/verify/tests/data/our-agent-key that was taken before
+# that moment is refused as not ours, which is what the window is for. The receipt committed at
+# crates/verify/tests/data/a-real-stamp was signed on 2026-09-09 by an earlier key whose private half
+# cannot be accounted for, so it is not named here: an entry cannot be taken back, and one for that
+# key would vouch for anything signed with it.
+entry agent 77a1c78c43c0b1ec55456c54f3abb82473a9f8c98fdaad8886d34cc924238f8a 1790267170000000000 - agent of ours, signing our own receipts from 2026-09-24

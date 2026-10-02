@@ -55,8 +55,8 @@
 //! negotiated, and there is no method to add one to. The agent does not sign anything and does not
 //! see what is being stamped; it hands over a reading and the caller builds its own receipt.
 //!
-//! It installs nothing. There is no service, no scheduler entry and no thing that starts at boot. It
-//! is a foreground process that runs until it is stopped, and the limitation list says so.
+//! It installs nothing. What starts the agent at boot is the command line's `agent install`, which
+//! hands the same foreground process to the platform's own service manager.
 
 #![forbid(unsafe_code)]
 

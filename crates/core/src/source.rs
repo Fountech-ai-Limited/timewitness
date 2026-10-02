@@ -366,6 +366,22 @@ impl SmearPolicy {
     }
 }
 
+/// What a source does with a leap second, as the verb phrase a refusal puts after its name.
+///
+/// A leap refusal names each side of the disagreement, and it named them with the debug form until
+/// 2026-09-24, so a person was told a source handled the second as `Linear { window_seconds: 86400 }`.
+impl fmt::Display for SmearPolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SmearPolicy::None => write!(f, "steps a leap second"),
+            SmearPolicy::Linear { window_seconds } => {
+                write!(f, "spreads a leap second over {window_seconds} s")
+            }
+            SmearPolicy::Unknown => write!(f, "does not say how it handles a leap second"),
+        }
+    }
+}
+
 /// What a source says about an upcoming leap second.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum LeapIndicator {

@@ -7,12 +7,13 @@
 //! binary as a log whose head checks, and that the two edits a log exists to catch are caught on
 //! the bytes a reader would actually be handed.
 //!
-//! **What a pass says.** The committed receipt was signed by an agent key and this log holds the
-//! keys of two Roughtime servers of ours, so the verifier's answer for that receipt is that the log
-//! has nothing to say about an agent key: not checked, and not a refusal. Until 2026-09-15 it was
-//! a refusal, and every test here expected it. The point is where the answer comes from: a log it
-//! read, under a head it checked against a key it holds, rather than a file it could not make
-//! sense of.
+//! **What a pass says.** From 2026-09-24 the log names the agent key our own receipts are signed
+//! with, so a receipt signed by it inside its window is held and the answer names the entry and the
+//! window, and one signed by it before the window opened is refused as not ours. The receipt in
+//! `a-real-stamp` was signed by an earlier key the log does not name, so against this log it is
+//! refused as not ours too. Until then the log held only the keys of two Roughtime servers of ours
+//! and every answer was not checked. The point is where the answer comes from: a log it read, under
+//! a head it checked against a key it holds, rather than a file it could not make sense of.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -118,14 +119,35 @@ fn signer() -> String {
     hex(&sign_head(&KeyLog::default(), &SIGNING_KEY, UnixNanos(0)).signed_by)
 }
 
-/// `timewitness verify --key-log`, as a script would run it, holding the test key for our head.
+/// One of the two receipts signed by our own key, turned from the hex it is committed as back into
+/// the bytes a reader is handed, in the folder beside `log`.
+fn our_receipt(name: &str, log: &Path) -> PathBuf {
+    let hex = std::fs::read_to_string(
+        repository().join(format!("crates/verify/tests/data/our-agent-key/{name}.hex")),
+    )
+    .expect("the committed receipt");
+    let digits: Vec<u8> = hex.bytes().filter(u8::is_ascii_hexdigit).collect();
+    let bytes: Vec<u8> = digits
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).expect("ascii"), 16).expect("hex"))
+        .collect();
+    let path = log
+        .parent()
+        .expect("a log sits in a folder")
+        .join(format!("{name}.cbor"));
+    std::fs::write(&path, bytes).expect("written");
+    path
+}
+
+/// `timewitness verify --key-log`, as a script would run it, holding the test key for our head, on
+/// the receipt signed by our own key inside its window.
 fn verify_against(log: &Path) -> (i32, String) {
-    let fixture = repository().join("crates/verify/tests/data/a-real-stamp");
+    let data = repository().join("crates/verify/tests/data/our-agent-key");
     let run = Command::new(env!("CARGO_BIN_EXE_timewitness"))
         .arg("verify")
-        .arg(fixture.join("receipt.cbor"))
+        .arg(our_receipt("inside-its-window", log))
         .arg("--subject")
-        .arg(fixture.join("subject.bin"))
+        .arg(data.join("subject.txt"))
         .arg("--key-log")
         .arg(log)
         .arg("--key-log-signer")
@@ -154,13 +176,19 @@ fn a_fresh_copy_is_read_and_its_head_checks() {
 
     let (code, text) = verify_against(&log);
 
-    assert_eq!(code, 0, "a log of server keys has nothing to say about an agent's receipt and does not refuse it: {text}");
+    assert_eq!(
+        code, 0,
+        "a receipt signed by our key inside its window is ours and the log says so: {text}"
+    );
     assert!(text.contains("accepted=true"), "{text}");
     assert!(
         text.contains(&format!("key_log_entries={}", signed.entries.len())),
         "{text}"
     );
-    assert!(text.contains("key_log_agent_entries=0"), "{text}");
+    assert!(
+        text.contains(&format!("key_log_agent_entries={}", signed.agent_entries())),
+        "{text}"
+    );
     assert!(
         text.contains("key_log_head=checked"),
         "the head has to be checked under the key this reader holds for us: {text}"
@@ -169,7 +197,91 @@ fn a_fresh_copy_is_read_and_its_head_checks() {
         text.contains(&format!("key_log_head_signed_by={}", signer())),
         "{text}"
     );
-    assert!(text.contains("key_log_step=not-checked"), "{text}");
+    assert!(text.contains("key_log_step=held"), "{text}");
+    assert!(text.contains("key_log_entry=3"), "{text}");
+    assert!(
+        text.contains("key_log_windows=3:1790267170000000000..open"),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_committed_receipt_is_refused_as_not_ours_because_its_key_is_not_in_the_log() {
+    // Signed on 2026-09-09 by a key whose private half cannot be accounted for, so the log does not
+    // name it. A log that did would vouch for anything that key signs, and an entry cannot be taken
+    // back.
+    let dir = work("committed");
+    let log = a_fresh_copy(&dir);
+    let fixture = repository().join("crates/verify/tests/data/a-real-stamp");
+    let run = Command::new(env!("CARGO_BIN_EXE_timewitness"))
+        .arg("verify")
+        .arg(fixture.join("receipt.cbor"))
+        .arg("--subject")
+        .arg(fixture.join("subject.bin"))
+        .arg("--key-log")
+        .arg(&log)
+        .arg("--key-log-signer")
+        .arg(signer())
+        .arg("--fields")
+        .output()
+        .expect("the binary runs");
+    let mut text = String::from_utf8_lossy(&run.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&run.stderr));
+    assert_eq!(run.status.code(), Some(1), "{text}");
+    assert!(text.contains("key_log_step=failed"), "{text}");
+    assert!(text.contains("key_log_windows=none"), "{text}");
+    assert!(text.contains("none of them names this key"), "{text}");
+}
+
+/// The receipt signed by the key our own receipts are signed with, before and after its window
+/// opened, read the way `scripts/our-key-in-the-log.sh` reads them.
+fn ours(name: &str, log: &Path) -> (i32, String) {
+    let data = repository().join("crates/verify/tests/data/our-agent-key");
+    let run = Command::new(env!("CARGO_BIN_EXE_timewitness"))
+        .arg("verify")
+        .arg(our_receipt(name, log))
+        .arg("--subject")
+        .arg(data.join("subject.txt"))
+        .arg("--key-log")
+        .arg(log)
+        .arg("--key-log-signer")
+        .arg(signer())
+        .arg("--fields")
+        .output()
+        .expect("the binary runs");
+    let mut text = String::from_utf8_lossy(&run.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&run.stderr));
+    (run.status.code().expect("an exit code"), text)
+}
+
+#[test]
+fn our_key_is_ours_inside_its_window_and_refused_as_not_ours_before_it() {
+    let dir = work("our-key");
+    let log = a_fresh_copy(&dir);
+
+    let (code, text) = ours("inside-its-window", &log);
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("key_log_step=held"), "{text}");
+    assert!(text.contains("key_log_entry=3"), "{text}");
+
+    // Signed by the same key, a few seconds before the log said it was ours. The window is the whole
+    // of what tells these two apart, so this is the one that shows the window is read at all.
+    let (code, text) = ours("before-its-window", &log);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        text.contains("refused_at=is that key one of ours"),
+        "{text}"
+    );
+    assert!(text.contains("key_log_step=failed"), "{text}");
+    assert!(text.contains("key_log_entry=none"), "{text}");
+    assert!(
+        text.contains("key_log_windows=3:1790267170000000000..open"),
+        "{text}"
+    );
+    assert!(
+        text.contains("refused as not ours at that moment"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -278,8 +390,8 @@ fn a_kept_copy_holds_the_served_log_to_it_through_the_command_line() {
     let added = Command::new(env!("CARGO_BIN_EXE_timewitness"))
         .args(["key-log", "--log"])
         .arg(&grown)
-        // A third server key rather than an agent key, so the key step's answer for the committed
-        // receipt stays what it is and this test reads only the kept-log step.
+        // A third server key rather than an agent key, so the key step's answer for our receipt
+        // stays what it is and this test reads only the kept-log step.
         .args([
             "--add",
             &hex(&[9u8; 32]),
@@ -298,7 +410,7 @@ fn a_kept_copy_holds_the_served_log_to_it_through_the_command_line() {
         String::from_utf8_lossy(&added.stdout)
     );
 
-    let fixture = repository().join("crates/verify/tests/data/a-real-stamp");
+    let ours = our_receipt("inside-its-window", &kept);
     let run = |log: &Path, kept: &Path| {
         // Both files are read back before the binary is asked to read them, because this test lost
         // its own folder between two runs of that binary on 2026-09-19 and what it reported was
@@ -314,7 +426,7 @@ fn a_kept_copy_holds_the_served_log_to_it_through_the_command_line() {
         }
         let run = Command::new(env!("CARGO_BIN_EXE_timewitness"))
             .arg("verify")
-            .arg(fixture.join("receipt.cbor"))
+            .arg(&ours)
             .arg("--key-log")
             .arg(log)
             .arg("--kept-log")
@@ -345,7 +457,7 @@ fn a_kept_copy_holds_the_served_log_to_it_through_the_command_line() {
     // Without --key-log, --kept-log has nothing to hold.
     let run = Command::new(env!("CARGO_BIN_EXE_timewitness"))
         .arg("verify")
-        .arg(fixture.join("receipt.cbor"))
+        .arg(&ours)
         .arg("--kept-log")
         .arg(&kept)
         .output()
@@ -353,7 +465,8 @@ fn a_kept_copy_holds_the_served_log_to_it_through_the_command_line() {
     assert_eq!(run.status.code(), Some(2));
 }
 
-/// The committed entries are the servers `deploy/roughtime/` stands up, and nothing else.
+/// The committed server entries are the servers `deploy/roughtime/` stands up, and the one agent
+/// entry is the key our own receipts are signed with, and nothing else.
 #[test]
 fn every_committed_entry_names_a_server_this_repository_deploys() {
     let committed = read(&entries());
@@ -361,10 +474,18 @@ fn every_committed_entry_names_a_server_this_repository_deploys() {
         committed.head.is_none(),
         "the committed file is the log with no head; a head is signed at build and served, never committed"
     );
-    assert_eq!(committed.entries.len(), 2);
-    assert_eq!(committed.agent_entries(), 0);
+    assert_eq!(committed.entries.len(), 3);
+    assert_eq!(committed.agent_entries(), 1);
 
     for entry in &committed.entries {
+        if entry.role == Role::Agent {
+            assert!(
+                entry.deployment.starts_with("agent of ours"),
+                "{}",
+                entry.deployment
+            );
+            continue;
+        }
         assert_eq!(entry.role, Role::Server, "{}", entry.deployment);
         let address = entry
             .deployment

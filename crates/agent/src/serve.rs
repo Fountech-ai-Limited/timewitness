@@ -41,7 +41,8 @@ use crate::resident::Resident;
 use timewitness_core::Validity;
 
 use crate::wire::{
-    carrier, encode_reading, encode_refusal, encode_refusal_past_ceiling, tokens_match, TOKEN_BYTES,
+    carrier, encode_reading, encode_refusal, encode_refusal_past_ceiling, tokens_match,
+    NOT_THIS_TOKEN, TOKEN_BYTES,
 };
 
 /// How often the agent asks the sources, and how hard it works to be able to answer at all.
@@ -346,7 +347,7 @@ fn take(
         Ok(mut resident) => {
             let validity = resident.take(exchanges);
             if !validity.is_valid() {
-                report(format!("the model will not answer: {validity:?}"));
+                report(will_not_answer(&validity));
             }
             resident.band()
         }
@@ -358,6 +359,11 @@ fn take(
             None
         }
     }
+}
+
+/// What the agent writes to its own output when a round leaves it refusing.
+fn will_not_answer(validity: &Validity) -> String {
+    format!("the model will not answer: {validity}")
 }
 
 /// How long to wait for a caller that connected and then went quiet.
@@ -402,10 +408,7 @@ pub fn answer(
         return;
     }
     if !tokens_match(&offered, token) {
-        let _ = stream.write_all(&encode_refusal(
-            "that is not this agent's token. The endpoint file this agent wrote carries the right \
-             one, and it is readable only by the account the agent runs as",
-        ));
+        let _ = stream.write_all(&encode_refusal(NOT_THIS_TOKEN));
         return;
     }
 
@@ -470,5 +473,20 @@ mod band_tests {
         assert!(first.contains("cannot tell"), "{first}");
         let second = lines[3].as_deref().unwrap_or_default();
         assert!(second.contains("inside the band"), "{second}");
+    }
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+    use timewitness_core::refusal::{insides_in, one_of_each};
+
+    #[test]
+    fn the_agent_says_why_it_will_not_answer_in_plain_words() {
+        for validity in one_of_each() {
+            let said = will_not_answer(&validity);
+            assert_eq!(insides_in(&said), None, "{said}");
+            assert!(said.contains(&validity.to_string()), "{said}");
+        }
     }
 }

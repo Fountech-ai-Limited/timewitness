@@ -129,11 +129,11 @@ sentences=(
   # rather than two measurements from different days.
   "Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms wide over three readings at 16:27, against 161.1 ms, 159.4 ms and 162.2 ms wide from the one-shot command on the same machine twelve minutes earlier."
   "What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit."
-  # Replaced 2026-09-09, when a resident agent went into the tree. Both sentences
-  # they replace said the agent did not exist, and one of them is now four sentences, because
-  # what exists is narrower than what a reader will assume: a foreground process that installs
-  # nothing, that the shipped Action does not use, against two source clients rather than four.
-  "The agent runs only while somebody keeps it running: it installs no service, starts at no boot, and is not running after a restart until a person starts it again."
+  # Replaced 2026-09-09, when a resident agent went into the tree, and again on 2026-09-25, when
+  # `timewitness agent install` went in. The sentence it replaces said the agent installs no service
+  # and starts at no boot. What exists is still narrower than a reader will assume: a service on
+  # three systems, with a restart checked on one of them and no binary in any release.
+  "The agent starts at boot only where somebody has installed it as a service, and a restart has been checked on Linux and nowhere else."
   # Added 2026-09-10. The measurement that says where a longer baseline stops buying anything.
   "Leaving the agent running longer stops narrowing the bound after about thirty minutes."
   "The one line a workflow installs runs the one-shot command and not the agent, so every receipt this product has issued in continuous integration came from a model built and thrown away in the same job."
@@ -179,7 +179,8 @@ sentences=(
   # command signed up to 30 s whether or not it ran inside the Action.
   "The resident agent refuses any interval wider than 250 ms, and the one-shot command, which the GitHub Action runs, refuses one wider than 2 s."
   # Added 2026-09-15. A log of our keys has been served since that afternoon and no surface said so.
-  "A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and no agent key."
+  # Rewritten 2026-09-24, when the log came to name the agent keys our own receipts are signed with.
+  "A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and the one agent key we vouch for, which signs our own receipts from 2026-09-24, with the window it is ours in."
   # Added 2026-09-10. All three are refusals the agent makes that no surface said it made, and
   # every claim ships beside what it cannot prove: a refusal a reader has not been told about is a
   # surprise, and this list exists so that nothing about this product is a surprise.

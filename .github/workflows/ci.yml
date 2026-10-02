@@ -96,6 +96,14 @@ jobs:
           refuse "not signed by the key the verifier holds for us" "$RUNNER_TEMP/another-key" "$RUNNER_TEMP/key-log.txt" --signer "$signer"
           refuse "no copy last served" "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/nowhere/key-log.txt" --signer "$signer"
 
+      - name: The log answers for our keys
+        # The log built above, read the way a stranger reads the one we serve. The receipt signed by
+        # our key inside its window is held and names the entry and the window; the one signed by that
+        # key before its window opened is refused as not ours, and so is the committed receipt, whose
+        # key the log does not name. A reader checks
+        # the served copy with the same script and no arguments, under the key that ships for our head.
+        run: TIMEWITNESS_BIN=target/debug/timewitness bash scripts/our-key-in-the-log.sh "$RUNNER_TEMP/key-log.txt" --signer "$signer"
+
       - name: Verifying needs no account and no call to us
         # Two halves, and each catches what the other cannot. The test reads what the verifier links
         # and what its sources say, so it names the file and the line. The script takes the network
@@ -142,6 +150,14 @@ jobs:
           node scripts/verifier-page-offline.mjs
           node scripts/verifier-page-offline.mjs --self-test
           node scripts/verifier-page-in-a-browser.mjs
+
+      - name: The page as a host serves it
+        # The check a host is held to, `scripts/the-served-verifier-page.mjs <address>`, run on this
+        # tree's page served on the loopback address, and then on five seeds, each refused by its own
+        # part: a wrong verdict shown, a wrong width shown, the file sent on the click, the file sent
+        # as the page is left, and a page built from another commit. The two seeds that send the file
+        # have to reach the server with it, so each is seen connected.
+        run: node scripts/the-served-verifier-page.mjs --self-test
 
       - name: Repository hygiene
         run: bash scripts/repo-hygiene.sh

@@ -162,7 +162,18 @@ impl Refusal {
 
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.validity {
+        write!(f, "{}", self.validity)
+    }
+}
+
+/// Why the model will not answer, as a person reads it.
+///
+/// This is the only way a refusal reaches anybody. Its debug form is for a test failing, and a
+/// sentence built from it prints the type's insides, which is what a stamp with no network did
+/// until 2026-09-24. Every sentence here is held to plain words by the tests below.
+impl fmt::Display for Validity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
             Validity::Valid => write!(f, "no refusal"),
             Validity::NeverSynchronised => {
                 write!(
@@ -170,10 +181,12 @@ impl fmt::Display for Refusal {
                     "the clock has not synchronised yet, so there is no bound to give"
                 )
             }
-            Validity::SuspendedSinceLastSync { resume_generation } => write!(
+            // The generation count is for the receipt and the verifier. A person needs to know
+            // the machine slept, and how many times it has is not a reason.
+            Validity::SuspendedSinceLastSync { .. } => write!(
                 f,
-                "the machine resumed from sleep (generation {resume_generation}) and has not \
-                 synchronised since, so the bound is unknown"
+                "this machine resumed from sleep and has not synchronised since, so the bound is \
+                 unknown until it hears from its sources again"
             ),
             Validity::SystemClockStepped { by } => write!(
                 f,
@@ -251,6 +264,140 @@ impl fmt::Display for Refusal {
 
 impl std::error::Error for Refusal {}
 
+/// One of each refusal, so a test can read every sentence a person could be handed.
+///
+/// The list is held to the type by [`kind_of`], whose match has no catch-all arm. A refusal added
+/// to [`Validity`] does not compile until it has a number there, and the test that reads this list
+/// fails until the list carries one of it. So a new refusal cannot reach anybody without its
+/// sentence having been read first. `Valid` is not here, because it is not a refusal.
+#[doc(hidden)]
+#[must_use]
+pub fn one_of_each() -> Vec<Validity> {
+    vec![
+        Validity::NeverSynchronised,
+        Validity::SuspendedSinceLastSync {
+            resume_generation: 3,
+        },
+        Validity::SystemClockStepped { by: -2_500_000_000 },
+        Validity::HoldoverExceeded {
+            elapsed: 1_000_000_000_000,
+            ceiling: 960_000_000_000,
+        },
+        Validity::InsufficientSources {
+            present: 0,
+            required: 3,
+        },
+        Validity::NoMajority {
+            present: 5,
+            agreeing: 2,
+        },
+        Validity::FreeMajority {
+            present: 6,
+            informative: 3,
+        },
+        Validity::InsufficientOperators {
+            present: 2,
+            required: 4,
+        },
+        Validity::OperatorMajority {
+            present: 6,
+            supporting: 2,
+        },
+        Validity::TimescaleConflict {
+            detail: "time.example handles a leap second by stepping it and ntp.example handles \
+                     it by spreading it over 86400 s, and a leap second is pending"
+                .to_string(),
+        },
+        Validity::PolicyRefused {
+            detail: "coverage_factor is 0.5 and has to be a number no smaller than one".to_string(),
+        },
+        Validity::CounterBeforeStart { by: 1_500_000 },
+        Validity::BoundTooWide {
+            width: 1_203_645_522,
+            ceiling: 250_000_000,
+        },
+    ]
+}
+
+/// How many kinds of refusal there are, which is the number of arms in [`kind_of`] less `Valid`.
+#[doc(hidden)]
+pub const KINDS_OF_REFUSAL: usize = 13;
+
+/// Which kind of refusal this is, numbered from one, or nought for `Valid`.
+///
+/// No catch-all arm, on purpose. It is the line that will not compile when a refusal is added, and
+/// that is what sends the person adding one to [`one_of_each`].
+#[doc(hidden)]
+#[must_use]
+pub const fn kind_of(validity: &Validity) -> usize {
+    match validity {
+        Validity::Valid => 0,
+        Validity::NeverSynchronised => 1,
+        Validity::SuspendedSinceLastSync { .. } => 2,
+        Validity::SystemClockStepped { .. } => 3,
+        Validity::HoldoverExceeded { .. } => 4,
+        Validity::InsufficientSources { .. } => 5,
+        Validity::NoMajority { .. } => 6,
+        Validity::FreeMajority { .. } => 7,
+        Validity::InsufficientOperators { .. } => 8,
+        Validity::OperatorMajority { .. } => 9,
+        Validity::TimescaleConflict { .. } => 10,
+        Validity::PolicyRefused { .. } => 11,
+        Validity::CounterBeforeStart { .. } => 12,
+        Validity::BoundTooWide { .. } => 13,
+    }
+}
+
+/// What in a sentence would tell a person they had been handed the program's insides rather than a
+/// reason, or nothing where it reads as words.
+///
+/// A refusal printed with its debug form reads `InsufficientSources { present: 0, required: 3 }`,
+/// which was found on 2026-09-24 in the sentence a stamp with no network printed. Three marks give
+/// that away whatever the type: braces, a path separator, and a word joined from two capitalised
+/// words. The names of the refusals themselves are looked for as well, because a variant with no
+/// fields prints as one bare capitalised word and none of the three marks catches it.
+#[doc(hidden)]
+#[must_use]
+pub fn insides_in(said: &str) -> Option<String> {
+    for mark in ["{", "}", "::", "Some(", "Ok(", "Err("] {
+        if said.contains(mark) {
+            return Some(mark.to_string());
+        }
+    }
+    const NAMES: [&str; 17] = [
+        "Valid",
+        "NeverSynchronised",
+        "SuspendedSinceLastSync",
+        "SystemClockStepped",
+        "HoldoverExceeded",
+        "InsufficientSources",
+        "NoMajority",
+        "FreeMajority",
+        "InsufficientOperators",
+        "OperatorMajority",
+        "TimescaleConflict",
+        "PolicyRefused",
+        "CounterBeforeStart",
+        "BoundTooWide",
+        "Linear",
+        "SmearPolicy",
+        "Validity",
+    ];
+    for word in said.split(|c: char| !c.is_alphanumeric() && c != '_') {
+        if NAMES.contains(&word) {
+            return Some(word.to_string());
+        }
+        let joined = word
+            .chars()
+            .zip(word.chars().skip(1))
+            .any(|(a, b)| a.is_lowercase() && b.is_uppercase());
+        if joined {
+            return Some(word.to_string());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,5 +422,45 @@ mod tests {
         let said = r.to_string();
         assert!(said.contains('2'));
         assert!(said.contains('3'));
+    }
+
+    #[test]
+    fn the_list_holds_one_of_every_refusal() {
+        let mut seen: Vec<usize> = one_of_each().iter().map(kind_of).collect();
+        seen.sort_unstable();
+        let every: Vec<usize> = (1..=KINDS_OF_REFUSAL).collect();
+        assert_eq!(seen, every, "one_of_each has to carry each refusal once");
+    }
+
+    #[test]
+    fn every_refusal_says_why_in_plain_words() {
+        for validity in one_of_each() {
+            let said = Refusal::new(validity.clone()).to_string();
+            assert_eq!(insides_in(&said), None, "{said}");
+            assert_eq!(
+                validity.to_string(),
+                said,
+                "a state and its refusal say one thing"
+            );
+        }
+    }
+
+    #[test]
+    fn the_insides_are_caught_in_every_shape_they_came_in() {
+        let debug = format!(
+            "{:?}",
+            Validity::InsufficientSources {
+                present: 0,
+                required: 3
+            }
+        );
+        assert!(insides_in(&debug).is_some(), "{debug}");
+        assert!(insides_in(&format!("{:?}", Validity::NeverSynchronised)).is_some());
+        assert!(insides_in("handles a leap second as Linear").is_some());
+        assert!(insides_in("the refusal said Some(3)").is_some());
+        assert_eq!(
+            insides_in("0 sources answered and 3 are needed, time.cloudflare.com did not answer"),
+            None
+        );
     }
 }
