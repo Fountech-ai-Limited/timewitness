@@ -21,13 +21,13 @@
 //! malformed and none has a bad signature; each is a false claim in a well-formed file, which is the
 //! only kind this format is really up against.
 
-use crate::anchors::TrustAnchors;
+use crate::anchors::{RoughtimeServerKey, TrustAnchors};
 use crate::error::ReceiptError;
-use crate::report::{EntryReport, Outcome, Verified};
-use crate::schema::{AgentClaim, Evidence, Payload, Receipt, Role, FORMAT_VERSION};
+use crate::report::{Bracket, EntryReport, Outcome, Verified};
+use crate::schema::{AgentClaim, Evidence, Payload, Receipt, Role, FORMAT_VERSION, LEAP_VALUES};
 use crate::value::Value;
 use timewitness_core::evidence::{drand, rfc3161, roughtime, Checked};
-use timewitness_core::time::{Nanos, NANOS_PER_SEC};
+use timewitness_core::time::{Nanos, UnixNanos, NANOS_PER_SEC};
 use timewitness_core::EpsilonBasis;
 
 /// The widest a third-party sandwich may be before it stops supporting anything.
@@ -58,6 +58,7 @@ pub fn validate(receipt: &Receipt) -> Result<(), ReceiptError> {
 /// The report it returns says which entries were checked and how. That is not decoration: a
 /// verifier that answers with a single word has hidden the only thing a careful reader wants.
 pub fn validate_with(receipt: &Receipt, anchors: &TrustAnchors) -> Result<Verified, ReceiptError> {
+    check_strings(receipt)?;
     check_version(receipt)?;
     check_payload(receipt)?;
     check_chain(receipt)?;
@@ -79,6 +80,64 @@ pub fn validate_with(receipt: &Receipt, anchors: &TrustAnchors) -> Result<Verifi
         basis_reason: reason,
         anchors_held: anchors.count(),
     })
+}
+
+/// Refuse a receipt whose strings carry a character a line of a report cannot.
+///
+/// This runs before every other check because it is about what the other checks are allowed to put
+/// in front of a reader. A receipt is a file a stranger hands us, and every string in it was
+/// written by whoever signed it. Those strings reach people through reports, and a report is a
+/// format: `timewitness verify --fields` is one `name=value` per line, and `scripts/action-stamp.sh`
+/// reads it with `sed` and puts the answers into a workflow's outputs.
+///
+/// Measured 2026-09-19: a correctly signed receipt whose first source had `kind` set to `ntp`, a
+/// newline, `earliest_ns=1`, a newline, `width_ns=1` verified clean, saying the receipt held up, and
+/// its own `--fields` report carried `earliest_ns=1` and `width_ns=1:1,nts:3,roughtime:3` above the
+/// report's real ones. Two intended lines became four in `$GITHUB_OUTPUT` with attacker-chosen
+/// content on two of them.
+///
+/// **Refused here rather than escaped at the report, and the reason is that there is more than one
+/// report.** An escape belongs to whichever format does the escaping, so it has to be got right in
+/// the fields report, in the human one, in anything written later, and in whatever a consumer
+/// builds on top. A control character in a source's name or a hash algorithm is not a thing an
+/// honest agent writes, in any of them. So the answer is that such a receipt is not well formed,
+/// which is one rule in one place, and the reader is told which field and what was in it.
+///
+/// The value is printed escaped, or the refusal would plant the lines the refusal is about, and it
+/// is cut to what a person reads, because a receipt may carry sixty kilobytes in one string and a
+/// refusal nobody can read is a refusal that gets skipped.
+///
+/// **What the rule is, said plainly so nobody reads it as more.** It refuses the Unicode control
+/// characters, which is every ASCII control and every C1 one, and that is what breaks a line in a
+/// report, in a shell variable and in anything reading a value as a C string. It does not refuse
+/// U+2028 and U+2029, which are separators rather than controls and which some readers treat as
+/// line breaks. Nothing in this product puts a receipt's strings anywhere those two would split a
+/// line: the fields report is read by `sed`, and neither verifier page writes a string into HTML.
+/// The day one of them does, this is the rule to widen.
+///
+/// This does not stand alone and it was never meant to. `render::fields` holds every value it
+/// prints to one line as well, because a receipt refused here still reaches that report through the
+/// refusal path.
+fn check_strings(receipt: &Receipt) -> Result<(), ReceiptError> {
+    /// How much of the offending string the refusal shows.
+    const SHOWN: usize = 120;
+
+    for (at, value) in receipt.strings() {
+        if let Some(bad) = value.chars().find(|c| c.is_control()) {
+            let short: String = value.chars().take(SHOWN).collect();
+            let cut = if short.chars().count() < value.chars().count() {
+                format!("{short:?} and more")
+            } else {
+                format!("{short:?}")
+            };
+            return Err(ReceiptError::Field(format!(
+                "{at} is {cut}, which carries the control character {bad:?}. Nothing an agent \
+                 names carries one, and a report is written a line at a time, so a receipt that \
+                 could write its own lines into one is refused rather than read"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Check the shape of a receipt as a raw value tree, before it has been read into fields.
@@ -244,6 +303,23 @@ fn check_sources(receipt: &Receipt) -> Result<(), ReceiptError> {
         return Err(ReceiptError::Inconsistent(format!(
             "the receipt says {} sources were kept and marks {listed_kept}",
             c.sources_kept
+        )));
+    }
+    // A leap value this format cannot read is refused here, before anything reads it. `leap` is the
+    // field the majority test below turns on, and the honest answer about a string nothing here
+    // knows is that the verifier cannot tell what the source said. Answering that as though the
+    // source had said its clock was fine is the fault corrected here on 2026-09-19: one capital
+    // letter and nine
+    // sources that had all declared their own clocks wrong read as nine sound ones. Refusing here
+    // means a reader is told which source and which value rather than being told the receipt
+    // contradicts itself, which would be a different and untrue thing to say about it.
+    if let Some(s) = c.unreadable_leap() {
+        return Err(ReceiptError::Field(format!(
+            "source {} says its leap indicator is {:?} and this format knows {}, so nothing here \
+             can tell whether it could have disagreed with anybody",
+            s.id,
+            s.leap,
+            LEAP_VALUES.join(", ")
         )));
     }
     // A source cannot be kept and also have told the agent its own clock was wrong. The agent drops
@@ -522,9 +598,31 @@ fn examine(receipt: &Receipt, anchors: &TrustAnchors) -> Result<Vec<EntryReport>
     Ok(reports)
 }
 
+/// A refusal under a key the reader holds for the party the entry names.
 fn refused(scheme: &str, signer: &str, why: &str) -> ReceiptError {
     ReceiptError::Inconsistent(format!(
         "the {scheme} entry offered as evidence does not check out against {signer}: {why}"
+    ))
+}
+
+/// A refusal anybody can make from the receipt alone, whatever keys they hold.
+///
+/// Added 2026-09-08 for the outer blob and widened on 2026-09-15 to everything inside it. Each of
+/// the three arms below returned `NotChecked` the moment the reader held no anchor for the party
+/// an entry named, before it had looked at the bytes past the outer blob, so a receipt whose blob
+/// was four bytes of `deadbeef` was refused by the default verifier and accepted under
+/// `--no-anchors`, and then, once the signer's name was read off the attestation first, a reply of
+/// zeros behind a renamed server was accepted by the default verifier as well, exit 0, on every
+/// route. The name sits in bytes whoever wrote the receipt controls.
+///
+/// So the rule is that the set of checks that run never depends on anything the receipt says. Every
+/// check whose inputs are all inside the receipt runs on every entry, and what the reader holds
+/// decides one thing only: whether the signature is checked. A well-formed attestation nobody holds
+/// a key for is `not checked`, which is a fact about the reader and not a fault in the receipt. An
+/// attestation that fails on its own bytes is a failure at every setting.
+fn on_its_own(scheme: &str, why: &str) -> ReceiptError {
+    ReceiptError::Inconsistent(format!(
+        "the {scheme} entry offered as evidence fails a check that needs no key to see: {why}"
     ))
 }
 
@@ -538,32 +636,23 @@ fn into_outcome(checked: Checked) -> Outcome {
     }
 }
 
-/// A fault anybody can see, whatever keys they hold.
+/// The interval a receipt prints beside an entry, against an attestation that supports none.
 ///
-/// Added 2026-09-08. Each of the three checks below returned `NotChecked` the moment the verifier
-/// held no anchor for the scheme, before it had looked at the bytes at all, so a receipt whose blob
-/// was four bytes of `deadbeef` was refused by the default verifier and accepted under
-/// `--no-anchors` with `accepted = true` and exit 0. That is a guard failing open on the field
-/// every shell in this repository reads.
-///
-/// The distinction the flag exists for is kept and it is the point of this function. A well-formed
-/// attestation nobody holds a key for is `not checked`, which is a fact about the reader and not a
-/// fault in the receipt. A blob that is not the shape the scheme stores needs no key to see, so it is
-/// a failure at every setting of the flag. Unpacking is the whole of the test: it reads a magic
-/// string and two lengths and touches no cryptography.
-fn well_formed(
-    scheme: &str,
-    blob: &[u8],
-    unpack: impl FnOnce(&[u8]) -> Result<(), String>,
-) -> Result<(), ReceiptError> {
-    unpack(blob).map_err(|why| {
-        ReceiptError::Inconsistent(format!(
-            "the {scheme} entry offered as evidence is not a stored {scheme} attestation at all,              which needs no key to see: {why}"
-        ))
-    })
+/// Added 2026-09-19. An RFC 3161 token whose authority states no accuracy is
+/// checked, and it still puts no number on how wrong that authority's clock could be, so it
+/// supports no interval in UTC. A receipt may print the instant the token states beside it and may
+/// not print a width round that instant, because there is nothing for a width to be inside.
+fn printed_interval_claims_nothing(entry: &Evidence) -> Result<(), &'static str> {
+    if entry.radius.unwrap_or(0).max(0) != 0 {
+        return Err(
+            "the receipt prints a width beside this entry and the attestation supports no \
+             interval at all for a width to sit inside",
+        );
+    }
+    Ok(())
 }
 
-/// The interval the receipt prints beside an entry, against the one the signature supports.
+/// The interval the receipt prints beside an entry, against the one the attestation supports.
 ///
 /// Added 2026-09-08, when the verifier shipped. `examine_corridor` compared the printed instant and
 /// the printed radius against the response, and the other two arms compared the instant alone and
@@ -575,22 +664,22 @@ fn well_formed(
 /// reaching outside the one the signed content supports. Printing a narrower one is allowed and is
 /// the ordinary case, a beacon and a token each printing the single instant their scheme states,
 /// because a narrower claim is a weaker one.
+///
+/// Returns the reason rather than the error, because whether it needed a key depends on the
+/// scheme: a token states its own moment and a round's moment is arithmetic on the chain.
 fn printed_interval_is_supported(
-    scheme: &str,
-    signer: &str,
     entry: &Evidence,
-    checked: &Checked,
-) -> Result<(), ReceiptError> {
+    earliest: UnixNanos,
+    latest: UnixNanos,
+) -> Result<(), &'static str> {
     let radius = entry.radius.unwrap_or(0).max(0);
-    let earliest = entry.at.as_nanos() - radius;
-    let latest = entry.at.as_nanos() + radius;
-    if earliest < checked.earliest().as_nanos() || latest > checked.latest().as_nanos() {
-        return Err(refused(
-            scheme,
-            signer,
+    if entry.at.as_nanos() - radius < earliest.as_nanos()
+        || entry.at.as_nanos() + radius > latest.as_nanos()
+    {
+        return Err(
             "the receipt prints an interval beside this entry that reaches outside the one the \
              signature supports",
-        ));
+        );
     }
     Ok(())
 }
@@ -611,7 +700,7 @@ fn nonce_value(bytes: &[u8]) -> &[u8] {
     value
 }
 
-/// The nonce the receipt prints beside an entry, against the one the signature was actually over.
+/// The nonce the receipt prints beside an entry, against the one the attestation was made over.
 ///
 /// The other half of the same rule as the interval above, and it was the half left open. A nonce is
 /// the field that answers "could this response have been fetched in advance", a reader looks at it,
@@ -624,127 +713,176 @@ fn nonce_value(bytes: &[u8]) -> &[u8] {
 /// nonce was derived from nor the payload hash inside that binding. An RFC 3161 token reports the
 /// nonce inside the signed token. A drand round reports none, because a public beacon has nothing
 /// of ours in it, so a receipt printing a nonce beside one is printing a value that rests on
-/// nothing.
-fn printed_nonce_is_the_checked_one(
-    scheme: &str,
-    signer: &str,
-    entry: &Evidence,
-    checked: &Checked,
-) -> Result<(), ReceiptError> {
+/// nothing. All three are read off the stored bytes, so this needs no key for any of them.
+fn printed_nonce_is_the_signed_one(entry: &Evidence, signed: Option<&[u8]>) -> Result<(), String> {
     let printed = match &entry.nonce {
         // A receipt that prints no nonce claims nothing about one. Quieter than the evidence is
         // allowed; louder is what this refuses.
         None => return Ok(()),
         Some(printed) => printed,
     };
-    match &checked.nonce {
+    match signed {
         Some(signed) if nonce_value(printed) == nonce_value(signed) => Ok(()),
-        Some(signed) => Err(refused(
-            scheme,
-            signer,
-            &format!(
-                "the receipt prints a {} byte nonce beside this entry and the response was made \
-                 over a different {} byte one",
-                printed.len(),
-                signed.len()
-            ),
+        Some(signed) => Err(format!(
+            "the receipt prints a {} byte nonce beside this entry and the response was made over \
+             a different {} byte one",
+            printed.len(),
+            signed.len()
         )),
-        None => Err(refused(
-            scheme,
-            signer,
-            &format!(
-                "the receipt prints a {} byte nonce beside this entry and this scheme signs over \
-                 no nonce at all, so the printed value rests on nothing",
-                printed.len()
-            ),
+        None => Err(format!(
+            "the receipt prints a {} byte nonce beside this entry and this scheme signs over no \
+             nonce at all, so the printed value rests on nothing",
+            printed.len()
         )),
     }
 }
 
-/// A corridor entry, checked against every Roughtime key the verifier holds.
+/// The first sixteen hex digits of a key hash, which is how a reader will look it up in a list.
+fn short_hex(bytes: &[u8]) -> String {
+    bytes.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+/// What to say about a label the receipt prints beside an entry the reader could not check.
 ///
-/// Two things beyond the signature. The instant and radius the receipt printed have to be the ones
-/// the response actually carries, because a reader looks at the printed numbers, and a verifier that
-/// checks a signature and then believes a different number beside it has checked nothing useful.
-/// And where the nonce was derived from a subject, that subject has to be this receipt's payload,
-/// or the response is a genuine signature about somebody else's document.
+/// The label is the receipt's own word for who signed, and the report prints it beside the
+/// outcome. Where the reader holds a key under that very name and the attestation names some other
+/// key, saying only "this reader holds no key with that hash" leaves the label doing the work of an
+/// identity: a reader holding the shipped keys was shown "from roughtime.int08h.com: not checked"
+/// beside a request that named nobody int08h. So the sentence says whose word the label is.
+fn about_the_label(entry: &Evidence, held_under_that_name: bool) -> String {
+    match (&entry.detail, held_under_that_name) {
+        (Some(label), true) => format!(
+            ". The receipt labels this entry {label:?}, and the key this reader holds under that \
+             name is not the one the attestation names, so the label is the receipt's word and not \
+             this reader's"
+        ),
+        _ => String::new(),
+    }
+}
+
+/// A corridor entry: everything the bytes can be held to, then the key the reader holds for the
+/// server the request names.
+///
+/// The instant and radius the receipt printed have to be the ones the response actually carries,
+/// because a reader looks at the printed numbers, and a verifier that checks a signature and then
+/// believes a different number beside it has checked nothing useful. Where the nonce was derived
+/// from a subject, that subject has to be this receipt's payload, or the response is a genuine
+/// signature about somebody else's document. Both are read off the stored bytes, so both run
+/// whatever the reader holds.
+///
+/// Who signed the corridor is written in the request as the hash of the server's long-term key,
+/// and the keys the reader holds under that hash are the only ones tried. A reader holding none has
+/// not checked the entry, and the report says so. Until 2026-09-15 every key held was tried in turn
+/// and a response fitting none of them was read as the receipt contradicting itself, so a reader
+/// holding two of the three published keys was told an intact receipt was a lie.
 fn examine_corridor(
     entry: &Evidence,
     payload: &Payload,
     anchors: &TrustAnchors,
 ) -> Result<Outcome, ReceiptError> {
-    well_formed("roughtime", &entry.blob, |blob| {
-        roughtime::unpack_blob(blob)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    })?;
-    if anchors.roughtime_servers.is_empty() {
-        return Ok(Outcome::NotChecked(
-            "this verifier holds no Roughtime server key".to_string(),
+    let inspected =
+        roughtime::inspect(&entry.blob).map_err(|e| on_its_own("roughtime", &e.to_string()))?;
+    if inspected.midpoint() != entry.at {
+        return Err(on_its_own(
+            "roughtime",
+            "the response states a different moment from the one the receipt prints beside it",
         ));
     }
-    let mut last = String::new();
-    for server in &anchors.roughtime_servers {
-        match roughtime::check(&entry.blob, &server.long_term_public_key, &server.name) {
-            Ok(checked) => {
-                if checked.midpoint() != entry.at {
-                    return Err(refused(
-                        "roughtime",
-                        &server.name,
-                        "the response states a different moment from the one the receipt prints \
-                         beside it",
-                    ));
-                }
-                if entry.radius != Some(checked.radius()) {
-                    return Err(refused(
-                        "roughtime",
-                        &server.name,
-                        "the response states a different radius from the one the receipt prints \
-                         beside it",
-                    ));
-                }
-                printed_nonce_is_the_checked_one("roughtime", &server.name, entry, &checked)?;
-                let stored = roughtime::unpack_blob(&entry.blob)
-                    .map_err(|e| refused("roughtime", &server.name, &e.to_string()))?;
-                if !stored.binding.is_empty() && !stored.binding.starts_with(&payload.hash) {
-                    return Err(refused(
-                        "roughtime",
-                        &server.name,
-                        "the nonce was bound to a subject, and that subject is not what this \
-                         receipt is stamping",
-                    ));
-                }
-                return Ok(into_outcome(checked));
-            }
-            Err(e) => last = e.to_string(),
+    if entry.radius != Some(inspected.radius()) {
+        return Err(on_its_own(
+            "roughtime",
+            "the response states a different radius from the one the receipt prints beside it",
+        ));
+    }
+    printed_nonce_is_the_signed_one(entry, Some(inspected.nonce()))
+        .map_err(|why| on_its_own("roughtime", &why))?;
+    if !inspected.binding().is_empty() && !inspected.binding().starts_with(&payload.hash) {
+        return Err(on_its_own(
+            "roughtime",
+            "the nonce was bound to a subject, and that subject is not what this receipt is \
+             stamping",
+        ));
+    }
+
+    let named = inspected.requested_key_hash();
+    let holders: Vec<&RoughtimeServerKey> = anchors
+        .roughtime_servers
+        .iter()
+        .filter(|server| roughtime::server_key_hash(&server.long_term_public_key) == named)
+        .collect();
+    if holders.is_empty() {
+        let label_held = entry.detail.as_deref().is_some_and(|label| {
+            anchors
+                .roughtime_servers
+                .iter()
+                .any(|server| server.name == label)
+        });
+        return Ok(Outcome::NotChecked(format!(
+            "the request names a server whose long-term key hashes to {}, and this reader holds \
+             no Roughtime key with that hash; it holds {}, so nothing here can check the \
+             signature{}",
+            short_hex(&named),
+            anchors.roughtime_servers.len(),
+            about_the_label(entry, label_held)
+        )));
+    }
+    let mut last = (String::new(), String::new());
+    for server in holders {
+        match inspected.under(&server.long_term_public_key, &server.name) {
+            Ok(checked) => return Ok(into_outcome(checked)),
+            Err(e) => last = (server.name.clone(), e.to_string()),
         }
     }
-    // Every key was tried and none fits. A response that verifies under no key the verifier holds
-    // is not evidence to that verifier, and the receipt put it forward as though it were.
+    // The reader holds the key the request names and the response does not verify under it. That
+    // is not a fact about the reader: the receipt put forward a signature that does not check out.
     Err(refused(
         "roughtime",
-        "any server key this verifier holds",
-        &last,
+        &format!("the key this reader holds for {}", last.0),
+        &last.1,
     ))
 }
 
-/// A beacon entry, checked against every drand chain the verifier holds.
+/// A beacon entry: the shape of the round, then the chain the reader holds for the one it names.
+///
+/// A round signs over no nonce, so one printed beside it rests on nothing whatever chain it names.
+/// Which moment the round falls at is arithmetic on the chain's schedule, which is part of the
+/// anchor, so the printed moment is held to the round only where the reader holds the chain.
 fn examine_beacon(entry: &Evidence, anchors: &TrustAnchors) -> Result<Outcome, ReceiptError> {
-    well_formed("drand", &entry.blob, |blob| {
-        drand::unpack_blob(blob)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    })?;
-    if anchors.drand_chains.is_empty() {
-        return Ok(Outcome::NotChecked(
-            "this verifier holds no drand chain".to_string(),
-        ));
+    let inspected = drand::inspect(&entry.blob).map_err(|e| on_its_own("drand", &e.to_string()))?;
+    printed_nonce_is_the_signed_one(entry, None).map_err(|why| on_its_own("drand", &why))?;
+
+    let named = inspected.named_chain();
+    let holders: Vec<&drand::Chain> = anchors
+        .drand_chains
+        .iter()
+        .filter(|chain| chain.hash == named)
+        .collect();
+    if holders.is_empty() {
+        let label_held = entry
+            .detail
+            .as_deref()
+            .is_some_and(|label| anchors.drand_chains.iter().any(|chain| chain.name == label));
+        return Ok(Outcome::NotChecked(format!(
+            "the round names a chain whose hash begins {}, and this reader holds no drand chain \
+             with that hash; it holds {}, so nothing here can check the signature{}",
+            short_hex(&named),
+            anchors.drand_chains.len(),
+            about_the_label(entry, label_held)
+        )));
     }
-    let mut last = String::new();
-    for chain in &anchors.drand_chains {
-        match drand::check(&entry.blob, chain) {
+    let mut last = (String::new(), String::new());
+    for chain in holders {
+        match inspected.under(chain) {
             Ok(checked) => {
-                if checked.earliest() != entry.at {
+                let (Some(earliest), Some(latest)) = (checked.earliest(), checked.latest()) else {
+                    return Err(refused(
+                        "drand",
+                        chain.name,
+                        "the round states no moment at all, and a round falls at one instant on \
+                         the schedule its chain publishes",
+                    ));
+                };
+                if earliest != entry.at {
                     return Err(refused(
                         "drand",
                         chain.name,
@@ -752,58 +890,101 @@ fn examine_beacon(entry: &Evidence, anchors: &TrustAnchors) -> Result<Outcome, R
                          beside it",
                     ));
                 }
-                printed_interval_is_supported("drand", chain.name, entry, &checked)?;
-                printed_nonce_is_the_checked_one("drand", chain.name, entry, &checked)?;
+                printed_interval_is_supported(entry, earliest, latest)
+                    .map_err(|why| refused("drand", chain.name, why))?;
                 return Ok(into_outcome(checked));
             }
-            Err(e) => last = e.to_string(),
+            Err(e) => last = (chain.name.to_string(), e.to_string()),
         }
     }
-    Err(refused("drand", "any chain this verifier holds", &last))
+    Err(refused(
+        "drand",
+        &format!("the group key this reader holds for {}", last.0),
+        &last.1,
+    ))
 }
 
-/// A witness entry, checked against every timestamp authority the verifier holds.
+/// A witness entry: everything the token can be held to, then the authority whose certificate the
+/// reader pinned.
 ///
-/// The token has to be about this receipt's payload. A token about anything else is a real
-/// signature by a real authority and is evidence for a different document.
+/// The token has to be about this receipt's payload, a token about anything else being a real
+/// signature by a real authority and evidence for a different document, and the moment, interval
+/// and nonce the receipt prints beside it have to be the ones the token states. All of that is in
+/// the token, so all of it runs whatever the reader holds. The token also carries the certificates
+/// it was signed under and a pin names one of them by digest, so an authority is tried only where
+/// one of its pins is in the token.
 fn examine_witness(
     entry: &Evidence,
     payload: &Payload,
     anchors: &TrustAnchors,
 ) -> Result<Outcome, ReceiptError> {
-    well_formed("rfc3161", &entry.blob, |blob| {
-        rfc3161::unpack_blob(blob)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    })?;
-    if anchors.timestamp_authorities.is_empty() {
-        return Ok(Outcome::NotChecked(
-            "this verifier holds no timestamp authority certificate".to_string(),
+    let inspected = rfc3161::inspect(&entry.blob, &payload.hash)
+        .map_err(|e| on_its_own("rfc3161", &e.to_string()))?;
+    // Tied to what the token states rather than to what it supports, and the two are different
+    // questions after the change of 2026-09-19. The stated instant is the last moment the time the token
+    // writes can name, it comes off the signed bytes alone, and it is the same whatever trust
+    // material the reader holds. The edge in UTC needs the authority's account of its own clock
+    // error and can be absent altogether, so tying the printed instant to it would make whether a
+    // receipt verifies depend on what each reader happens to hold.
+    if inspected.stated_instant() != entry.at {
+        return Err(on_its_own(
+            "rfc3161",
+            "the token states a different moment from the one the receipt prints beside it",
         ));
     }
-    let mut last = String::new();
-    for authority in &anchors.timestamp_authorities {
-        match rfc3161::check(&entry.blob, authority, &payload.hash) {
-            Ok(checked) => {
-                if checked.latest() != entry.at {
-                    return Err(refused(
-                        "rfc3161",
-                        &authority.name,
-                        "the token states a different moment from the one the receipt prints \
-                         beside it",
-                    ));
-                }
-                printed_interval_is_supported("rfc3161", &authority.name, entry, &checked)?;
-                printed_nonce_is_the_checked_one("rfc3161", &authority.name, entry, &checked)?;
-                return Ok(into_outcome(checked));
-            }
-            Err(e) => last = e.to_string(),
+    // What the token supports on its own bytes, with nothing the reader chose in it, so this runs
+    // the same way for everybody. A reader's own allowance widens what the entry is reported to
+    // support and never what the receipt is allowed to have printed.
+    match inspected.supports(None) {
+        Some((earliest, latest)) => printed_interval_is_supported(entry, earliest, latest)
+            .map_err(|why| on_its_own("rfc3161", why))?,
+        None => printed_interval_claims_nothing(entry).map_err(|why| on_its_own("rfc3161", why))?,
+    }
+    printed_nonce_is_the_signed_one(entry, inspected.nonce())
+        .map_err(|why| on_its_own("rfc3161", &why))?;
+
+    let carried = inspected.certificate_digests();
+    let holders: Vec<&rfc3161::Authority> = anchors
+        .timestamp_authorities
+        .iter()
+        .filter(|authority| {
+            authority
+                .accepted_certificates
+                .iter()
+                .any(|pin| carried.contains(pin))
+        })
+        .collect();
+    if holders.is_empty() {
+        let pinned: usize = anchors
+            .timestamp_authorities
+            .iter()
+            .map(|authority| authority.accepted_certificates.len())
+            .sum();
+        let label_held = entry.detail.as_deref().is_some_and(|label| {
+            anchors
+                .timestamp_authorities
+                .iter()
+                .any(|authority| authority.name == label)
+        });
+        return Ok(Outcome::NotChecked(format!(
+            "the token carries {} certificate{} and this reader holds no pin naming any of them; \
+             it holds {pinned}, so nothing here can check the signature{}",
+            carried.len(),
+            if carried.len() == 1 { "" } else { "s" },
+            about_the_label(entry, label_held)
+        )));
+    }
+    let mut last = (String::new(), String::new());
+    for authority in holders {
+        match inspected.under(authority) {
+            Ok(checked) => return Ok(into_outcome(checked)),
+            Err(e) => last = (authority.name.clone(), e.to_string()),
         }
     }
     Err(refused(
         "rfc3161",
-        "any authority this verifier holds",
-        &last,
+        &format!("the certificate this reader pinned for {}", last.0),
+        &last.1,
     ))
 }
 
@@ -816,7 +997,7 @@ fn examine_witness(
 /// "not a token", correctly signed by the agent, were accepted with the strongest claim the format
 /// can make.
 ///
-/// What replaced that refusal is a precondition with four parts, and all four have to hold.
+/// What replaced that refusal is a precondition with five parts, and all five have to hold.
 ///
 /// 1. One entry in each of the three roles.
 /// 2. Every one of those three verified by this code against a key chosen in advance. An entry
@@ -825,6 +1006,12 @@ fn examine_witness(
 /// 4. The sandwich narrow enough to be about this reading. A genuine beacon from the morning and a
 ///    genuine token from the evening are both real and both signed, and between them they say
 ///    nothing about a stamp taken at noon that a calendar would not.
+/// 5. The interval the receipt claims covers the whole of what the two signatures enclose. They say
+///    the moment was inside the bracket and nothing about where inside it, so a claim narrower than
+///    the bracket, or one hanging over either edge of it, rests on the signer's own model whatever
+///    the receipt calls it. Until 2026-09-15 this was not asked, and the committed receipt with its
+///    basis rewritten was granted a sandwich on a 153.875 ms width inside a 2 s bracket, then told
+///    the reader the width rested on outside signatures.
 fn decide_basis(
     receipt: &Receipt,
     entries: &[EntryReport],
@@ -847,7 +1034,26 @@ fn decide_basis(
     let beacon = find(Role::NotEarlierThan);
     let witness = find(Role::NotLaterThan);
 
-    let (Some(beacon), Some(witness), true) = (beacon, witness, corridor.is_some()) else {
+    // The same bracket the verifier prints under its verdict, so the figure a sandwich is judged on
+    // and the figure a reader is shown are one number: the latest checked beacon against the
+    // earliest checked witness, rather than whichever of each the receipt happened to list first.
+    let bracket = Bracket::of(entries);
+    // The witness was checked and its authority states no accuracy, so it moved no edge. Said on
+    // its own, because the line below would otherwise report the not-later-than role as checked
+    // and refuse the sandwich in the same breath, which is a contradiction for the reader to
+    // resolve. Added 2026-09-19.
+    if bracket.not_later.is_none() && bracket.not_later_was_checked_and_bounds_nothing {
+        return refuse_or_report(
+            "the not-later-than attestation was checked and its authority states no accuracy of \
+             its own, so it puts no number on how wrong that authority's clock could be and \
+             bounds nothing in UTC. A sandwich needs two edges and this one has one, so the bound \
+             rests on the agent's own model"
+                .to_string(),
+        );
+    }
+    let (Some(not_earlier), Some(not_later), true) =
+        (bracket.not_earlier, bracket.not_later, corridor.is_some())
+    else {
         return refuse_or_report(format!(
             "of the three roles a sandwich is made of, this verifier checked corridor: {}, \
              not-earlier-than: {}, not-later-than: {}. A basis that cannot be checked is not \
@@ -857,14 +1063,8 @@ fn decide_basis(
             witness.is_some()
         ));
     };
+    let width = not_later - not_earlier;
 
-    let (Outcome::Checked { earliest, .. }, Outcome::Checked { latest, .. }) =
-        (&beacon.outcome, &witness.outcome)
-    else {
-        unreachable!("both were found by is_checked");
-    };
-
-    let width = latest.as_nanos() - earliest.as_nanos();
     if width < 0 {
         return refuse_or_report(format!(
             "the not-later-than attestation is dated {} ns before the not-earlier-than value, so \
@@ -881,6 +1081,24 @@ fn decide_basis(
         ));
     }
 
+    // The claim has to cover the bracket, edge to edge. The signatures put the moment somewhere
+    // inside it and say nothing about where, so any part of the bracket the claim leaves out is a
+    // part the signer ruled out on its own model, and any part of the claim outside the bracket
+    // is one the signatures never spoke to. The width itself is not compared, because a claim as
+    // wide as the bracket and shifted off it would pass a width test and still rest on the signer.
+    let claim = &receipt.claim;
+    let covers = claim.earliest <= not_earlier && claim.latest >= not_later;
+    if claims_a_sandwich && !covers {
+        return Err(ReceiptError::OurClaimAsEvidence(format!(
+            "the two outside signatures enclose {width} ns and the interval this receipt claims \
+             is {} ns wide and does not cover them, so they say the moment was inside those \
+             {width} ns and nothing about which {} ns of them; the width rests on the signer's own \
+             model and this receipt puts it where outside evidence goes",
+            receipt.width(),
+            receipt.width()
+        )));
+    }
+
     // Two different things can be true here and the report has to say which. The receipt may claim a
     // sandwich, in which case the claim is granted. Or it may claim its bound rests on the agent's
     // own model, in which case the sandwich holds up but the receipt is not resting on it, and a
@@ -890,8 +1108,8 @@ fn decide_basis(
         return Ok((
             true,
             format!(
-                "all three roles were checked against keys chosen in advance, and the two outside \
-                 signatures enclose {} s",
+                "all three roles were checked against keys chosen in advance, the two outside \
+                 signatures enclose {} s, and the interval this receipt claims covers them",
                 width / NANOS_PER_SEC
             ),
         ));
@@ -901,9 +1119,13 @@ fn decide_basis(
         format!(
             "this receipt says its bound rests on the agent's own model, and it is judged on that. \
              All three roles were checked anyway, against keys chosen in advance, and the two \
-             outside signatures enclose {} s, so the moment is pinned from outside even though the \
-             width is not",
-            width / NANOS_PER_SEC
+             outside signatures enclose {} s, so the moment is pinned from outside {}",
+            width / NANOS_PER_SEC,
+            if covers {
+                "and the interval it claims covers them, which it did not rest on"
+            } else {
+                "even though the width is not"
+            }
         ),
     ))
 }

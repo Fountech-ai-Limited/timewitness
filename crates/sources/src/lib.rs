@@ -104,7 +104,9 @@ impl Exchange {
     pub fn stated_uncertainty(&self) -> Nanos {
         let dispersion = self.root_dispersion.max(0);
         let half_delay = self.root_delay.max(0) / 2;
-        dispersion + half_delay
+        // Saturating, because both halves are the source's to write and the integer's ceiling is a
+        // value a source can write. The clock model refuses a claim that large before it is used.
+        dispersion.saturating_add(half_delay)
     }
 }
 

@@ -4,20 +4,22 @@
 //! that it is refused anyway. A receipt whose signature is wrong is an easy case. A receipt whose
 //! signature is perfectly good and whose contents are a lie is the case this format exists for.
 
-use timewitness_core::evidence::{drand, rfc3161, roughtime};
 use timewitness_core::{
     Bound, BoundBreakdown, EpsilonBasis, FusionRule, Generations, LeapIndicator, MonotonicNanos,
     Operator, Reading, SmearPolicy, SourceId, SourceKind, SourceState, Stamp, Timescale, UnixNanos,
 };
-use timewitness_receipt::schema::Role;
+use timewitness_receipt::schema::{Payload, Role};
 use timewitness_receipt::value::Value;
 use timewitness_receipt::{
-    cbor, chain_link, open, sha256_payload, validate, AgentKey, Evidence, PolicyRecord, Receipt,
-    ReceiptError, Scheme,
+    cbor, chain_link, open, validate, AgentKey, Evidence, PolicyRecord, Receipt, ReceiptError,
+    Scheme,
 };
 
 const MS: i128 = 1_000_000;
-const NOW: i128 = 1_757_000_000_000_000_000;
+/// The moment the corridor capture below states, so a receipt built here sits inside it.
+const NOW: i128 = 1_788_806_207 * 1_000 * MS;
+/// The subject all three captures are about: thirty-two bytes of 0x5a, standing in for a hash.
+const SUBJECT: [u8; 32] = [0x5a; 32];
 
 fn key() -> AgentKey {
     AgentKey::from_seed(&[7u8; 32])
@@ -76,7 +78,10 @@ fn receipt() -> Receipt {
         &stamp(),
         1,
         None,
-        sha256_payload(b"the artefact being stamped"),
+        Payload {
+            algorithm: "sha-256".to_string(),
+            hash: SUBJECT.to_vec(),
+        },
         key().public_key_bytes(),
         PolicyRecord {
             max_bound_width: 250 * MS,
@@ -87,19 +92,21 @@ fn receipt() -> Receipt {
     )
 }
 
-// The three fixtures below carry blobs packed the way each scheme stores one, holding bytes that
-// verify under nothing. That is deliberate and it is what these tests are about: the roles, the
-// basis and the format, with no cryptography anywhere. Before 2026-09-08 the blobs were plain runs
-// of one byte, and that day a blob that is not the shape its scheme stores became a refusal in its
-// own right, which those runs of bytes are.
+// The three fixtures below are the captures under `data/sandwich/`, three real attestations about
+// one subject taken within four seconds of each other on 2026-09-07, and `receipt()` sits inside
+// them. Nothing here holds a key for any of them, so every one reports as not checked, and what
+// these tests are about is the roles, the basis and the format rather than the signatures. Until
+// 2026-09-15 they were blobs of the right outer shape with bytes inside that verified under nothing,
+// and that day a stored attestation whose inside is not an exchange of its scheme, or whose printed
+// moment the bytes do not state, became a refusal whatever the reader holds, which those were.
 fn roughtime_entry() -> Evidence {
     Evidence {
         role: Role::AuthenticatedUtcCorridor,
         scheme: Scheme::new("roughtime"),
-        at: UnixNanos(NOW - MS),
-        radius: Some(3 * MS),
-        blob: roughtime::pack_blob(&[], &[], &[0xa1; 96]),
-        nonce: Some(vec![0x5a; 32]),
+        at: UnixNanos(NOW),
+        radius: Some(1_000 * MS),
+        blob: unhex(include_str!("data/sandwich/roughtime.hex")),
+        nonce: Some(unhex(include_str!("data/sandwich/roughtime-nonce.hex"))),
         detail: Some("a public Roughtime server".to_string()),
     }
 }
@@ -108,11 +115,11 @@ fn beacon_entry() -> Evidence {
     Evidence {
         role: Role::NotEarlierThan,
         scheme: Scheme::new("drand"),
-        at: UnixNanos(NOW - 30 * MS),
+        at: UnixNanos(NOW - 2_000 * MS),
         radius: None,
-        blob: drand::pack_blob(&[0xb2; 32], 4_210_987, &[0xb2; 96]),
+        blob: unhex(include_str!("data/sandwich/drand.hex")),
         nonce: None,
-        detail: Some("round 4210987".to_string()),
+        detail: Some("round 32000947".to_string()),
     }
 }
 
@@ -120,12 +127,27 @@ fn witness_entry() -> Evidence {
     Evidence {
         role: Role::NotLaterThan,
         scheme: Scheme::new("rfc3161"),
-        at: UnixNanos(NOW + 40 * MS),
+        // The token writes whole seconds, so the edge it supports is the end of the second it
+        // names, one second after the corridor's moment plus one more for the resolution.
+        at: UnixNanos(NOW + 2_000 * MS),
         radius: None,
-        blob: rfc3161::pack_blob(&[0xc3; 64], &[0xc3; 128]),
-        nonce: None,
+        blob: unhex(include_str!("data/sandwich/rfc3161.hex")),
+        nonce: Some(unhex(include_str!("data/sandwich/rfc3161-nonce.hex"))),
         detail: Some("a public timestamp authority".to_string()),
     }
+}
+
+fn unhex(text: &str) -> Vec<u8> {
+    let digits: Vec<u8> = text
+        .bytes()
+        .filter(|b| b.is_ascii_hexdigit())
+        .map(|b| match b {
+            b'0'..=b'9' => b - b'0',
+            b'a'..=b'f' => b - b'a' + 10,
+            _ => b - b'A' + 10,
+        })
+        .collect();
+    digits.chunks(2).map(|c| (c[0] << 4) | c[1]).collect()
 }
 
 // ---------------------------------------------------------------------------

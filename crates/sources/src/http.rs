@@ -28,6 +28,12 @@ use crate::SourceError;
 /// orders of magnitude of room and still refuses a server that answers with a stream.
 const MAX_BODY: usize = 1_048_576;
 
+/// The port a plain HTTP address is reached on where it names none.
+///
+/// Public for the same reason as the two in [`crate::nts`]: the document an operator opens a
+/// firewall from is held to this rather than to a number written out again beside it.
+pub const DEFAULT_PORT: u16 = 80;
+
 /// A URL split into the three parts this client needs.
 struct Target {
     host: String,
@@ -51,7 +57,7 @@ fn parse(url: &str) -> Result<Target, SourceError> {
             p.parse::<u16>()
                 .map_err(|_| SourceError::Transport(format!("{p} is not a port")))?,
         ),
-        None => (authority.to_string(), 80),
+        None => (authority.to_string(), DEFAULT_PORT),
     };
     if host.is_empty() {
         return Err(SourceError::Transport(format!("{url} names no host")));

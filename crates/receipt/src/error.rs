@@ -14,7 +14,11 @@ pub enum ReceiptError {
     Encoding(String),
     /// The COSE envelope is wrong, or the signature does not check out.
     Signature(String),
-    /// A field is missing or is the wrong shape.
+    /// A field is missing, or is the wrong shape, or carries a value this format does not know.
+    ///
+    /// The third of those was added to the sentence on 2026-09-19, when an unreadable leap value
+    /// started being refused here. It had always been in the variant's meaning and never in its
+    /// words, and the words are what a reader is handed.
     Field(String),
     /// The receipt is a version this code does not know.
     UnknownVersion(i128),
@@ -38,7 +42,10 @@ impl fmt::Display for ReceiptError {
         match self {
             ReceiptError::Encoding(d) => write!(f, "the receipt is not readable: {d}"),
             ReceiptError::Signature(d) => write!(f, "the signature does not check out: {d}"),
-            ReceiptError::Field(d) => write!(f, "the receipt is missing something it needs: {d}"),
+            ReceiptError::Field(d) => write!(
+                f,
+                "the receipt has a field missing, or one this format cannot read: {d}"
+            ),
             ReceiptError::UnknownVersion(v) => write!(
                 f,
                 "this receipt says it is version {v} and this code reads version 0, so it will not \

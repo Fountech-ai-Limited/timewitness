@@ -1,5 +1,34 @@
 # What TimeWitness cannot prove
 
+Version 20, 2026-09-19. Supersedes version 19 of 2026-09-15, which it keeps whole and corrects in two
+places, both of them the same fault. The claim at the head of the list said the outside evidence pins
+the moment to a few seconds, and the note on version 18 said it again. An authority that states no
+accuracy of its own has not stated a nought, so its token bounds nothing in UTC, and both authorities
+that ship are in that state: the receipt committed in this repository is left with the beacon's edge
+from below and nothing from above. The shipped verifier has said so since 2026-09-19 and these two
+sentences had not caught up. The list still runs to 59 items. Six edits between version 19 and this
+one carried no version note of their own, so this note covers what it names and the repository's
+history covers the rest.
+
+Version 19, 2026-09-15. Supersedes version 18 of the same day, which it keeps whole, corrects in six
+places and adds two items to. The Roughtime-only path was called seconds wide in four places and the
+shipped product refuses it: three operators is under the floor of four, and nothing that ships lowers
+the floor, where this list said one line of configuration did. The front page was said to claim four
+to six independent sources, and it is the README that does. A refusal was called a receipt in one
+item while a later item says no refusal receipt exists. The one-shot command's ceiling moved from
+30 s to 2 s, and the item on the ceilings now says what each path signs up to and why. The key item
+names the log of our keys that is served. The two new items are that a receipt carries no
+measurement from any source, so nobody can recompute its width, and that the operator names the
+floor counts are strings the signer wrote. The list runs to 59 items rather than 57.
+
+Version 18, 2026-09-15. Supersedes version 17 of 2026-09-11, which it keeps whole and corrects in two
+places. The claim at the head of the list said the outside evidence in a receipt supports the
+interval. It does not: every receipt says its bound rests on the agent's own model, and the outside
+signatures say when the reading was taken rather than how wide the interval is. The claim now says
+which is which. The item on the corridor said it makes the bound checkable and
+that no ordinary time source runs here; it makes the moment checkable, and plain NTP and NTS run in
+every stamp. The list still runs to 57 items.
+
 Version 17, 2026-09-11. Supersedes version 16 of 2026-09-10, which it keeps whole and adds two items
 to. A source that could not have disagreed with anybody no longer decides which
 other source is in the minority, and the two new items say what that fixed and what it did not: three
@@ -160,12 +189,17 @@ of what is built today. The last group is marked, because those move.
 ## The claim, so the limits have something to be limits of
 
 TimeWitness says: at this local counter reading, UTC was somewhere in this interval, and here is
-signed evidence from three parties who have never heard of us that supports it. Bounded time and
-unbroken order. Not accurate time.
+signed evidence from three parties who have never heard of us about when that reading was taken.
+The interval is our own claim and the outside evidence does not vouch for it. That evidence is
+checked, and on the receipt committed in this repository it holds the moment from below and not from
+above: the beacon says the reading was not earlier than its round, and the timestamp authority states
+no accuracy of its own, so nothing here puts a number on how wrong that authority's clock could be. A
+bound resting on that evidence is what we are building towards. Bounded time and unbroken order. Not
+accurate time.
 
 ## About time itself
 
-**It cannot prove exact UTC over the public internet.** The design's bound is milliseconds and today's is about a sixth of a second on a machine that reaches the sources that narrow it and seconds on one that reaches only Roughtime, and the section on what is built says why. The 5 to 50 ms, the 1 ms and the 100
+**It cannot prove exact UTC over the public internet.** The design's bound is milliseconds and today's is about a sixth of a second on a machine that reaches the sources that narrow it. A machine that reaches only Roughtime is refused rather than given a wider bound, and the section on what is built says why. The 5 to 50 ms, the 1 ms and the 100
 microsecond figures are quoted from public research and none of them has been measured by us. They
 belong, in that order, to the public internet with no hardware of our own, to a good local network
 against a stratum-1 source, and to a cloud instance with a hypervisor clock. A claim needing
@@ -194,6 +228,26 @@ moment of synchronising and 234.6 ms at fifteen minutes, come from the simulated
 wrote down; they are the arithmetic of the model rather than a reading from a real network. An agent
 that cannot reach its sources stops issuing receipts; it does not issue worse ones.
 
+**It cannot prove that this machine's oscillator is the one the arithmetic assumes.** Every
+allowance the model derives for the oscillator rests on one assumption: that the rate of this
+machine's counter stays inside the band the policy states for it, a hundred parts per million from
+one end of the band to the other at the shipped settings, so the largest magnitude a part may
+honestly show is fifty. Both figures are `Policy::frequency_span_ppm` in this tree. They come from a
+consumer crystal's published specification across its temperature range, they are a choice about
+hardware rather than a measurement, and nothing in this product has measured either on real
+hardware. What the agent does do, from 2026-09-18, is read its own fitted rate back against that
+band every time it fits one. Where the fit puts the machine outside the band and is sharp enough to
+tell one rate in the band from another, the model stops claiming the rate and widens by the
+magnitude it measured instead, so the interval holds what was seen rather than what was assumed.
+Where the fit is not that sharp, and that means an error bar wider than the whole band, it has
+measured nothing about this counter, so neither the magnitude nor the error bar is carried and the
+widening is half the band, exactly as it is before any fit at all. That is what every start
+produces, because the first rounds are a fraction of a second apart and a rate fitted across a
+fraction of a second is the sources' own scatter divided by almost nothing. So what it cannot do is
+see a machine outside the band until there is a fit sharp enough to say so, and there is none in
+the first rounds after a start. On a machine outside the
+band, nothing on this page is a promise the arithmetic can keep.
+
 ## About the evidence, and this is where most of the surprises are
 
 The three evidence roles do different jobs and none of them does another's. Nothing below is a fault
@@ -201,11 +255,10 @@ in the parties involved; it is what their signatures actually say.
 
 **An authenticated corridor does not tighten the bound.** A Roughtime server states a midpoint and a
 radius in whole seconds, and the three public servers reachable on 2026-09-07 were stating one, three
-and five. So a corridor is seconds wide. It is the thing that makes the bound checkable by a
-stranger, and in the design the millisecond figure comes from ordinary time sources rather than from
-it. Today there are no ordinary time sources here, only the corridor, which is why the bound is
-seconds and not milliseconds. Anybody who expects Roughtime to be the precise part has the roles the
-wrong way round.
+and five. So a corridor is seconds wide. It puts a signed interval round the moment that a stranger
+can check, and the millisecond figure comes from ordinary time sources rather than from it. Plain NTP
+and NTS run in every stamp beside the corridor, and neither signs anything a stranger can check.
+Anybody who expects Roughtime to be the precise part has the roles the wrong way round.
 
 **A corridor does not prove the server's clock was right.** It proves that the holder of a named key
 signed a statement covering a nonce we chose. The draft says so itself. A server whose clock is wrong
@@ -247,21 +300,18 @@ set aside; all three then took part in deciding which of the narrow sources was 
 They could not have disagreed with any of them. Measured on 2026-09-11 in
 `crates/clock/tests/two_kinds_of_source.rs`, which runs on the simulated harness rather than on a real
 path, so every figure in this item and the two below it is the arithmetic of the model and not a
-reading from the wire: three honest NTP servers throw out a liar two hundred milliseconds off them, and
-adding three Roughtime servers kept him, taking the interval from 12.52 ms to 223.52 ms and moving
-the reading 82.570909 ms. Nothing signed in either round was untrue and both held UTC. What was
+reading from the wire: three honest NTP servers throw out a liar whose interval sits two hundred milliseconds off them, and adding three Roughtime servers kept him, taking the interval from 12.52 ms to 223.52 ms wide and moving the reading 82.570909 ms inside that interval. Nothing signed in either round was untrue and both held UTC. What was
 wrong is that three faults were tolerated where none of the three had been earned.
 
 From 2026-09-11 the sources that could have disagreed decide who is in the minority, and the interval
-is taken over what is left standing. The same round now comes back at 34.52 ms with the liar thrown
+is taken over what is left standing. The same round now comes back at 34.52 ms of width with the liar thrown
 out and the reading where it was. This can narrow an interval only by throwing a source out: a source
 that does not reach the interval contributes nothing inside it, so dropping it cannot move an edge,
 and an honest round where nobody is in the minority comes back exactly where it always did.
 
 **What that second rule still does not cover, and it is a figure rather than a caveat.** How much
 room the width allows for a fault is still counted over every source that answered, so a source that
-could not have disagreed still buys the interval some room: 34.52 ms in the round above against the
-12.52 ms the narrow sources reach on their own. Counting that over the sources that could have
+could not have disagreed still buys the interval some room: 34.52 ms of width in the round above against the 12.52 ms of width the narrow sources reach on their own. Counting that over the sources that could have
 disagreed is the same arithmetic pointed at the width, and it takes an ordinary honest round of four
 agreeing servers down to the narrowest of them with no fault tolerance left, so it is a decision
 about the claim rather than a defect to fix. It is still open.
@@ -299,9 +349,14 @@ of what is being stamped, before the receipt exists, because a receipt cannot co
 covers itself. So the not-later-than edge is about the payload rather than about the receipt as a
 whole.
 
-**A final witness does not prove its own clock either.** It is that authority's word, signed. Neither
-of the two authorities used states any accuracy at all, which is not a claim of perfection: it means
-neither puts a number on its own error.
+**A final witness does not prove its own clock either, and on the two authorities used it bounds
+nothing at all.** It is that authority's word, signed. Neither of the two authorities used states any
+accuracy, which is not a claim of perfection: it means neither puts a number on its own error. So
+neither token bounds the moment in UTC, however good its signature is, and the verifier says so
+rather than computing an edge. Until 2026-09-19 it did compute one, reading the absent field as a
+stated nought, which is the narrowest the token could possibly be read. A reader who has read an
+authority's published practice can say what they allow for that authority's clock, in their own
+anchors, and the figure is then printed as theirs. Nothing that ships carries one.
 
 **A timestamp token is checked against a pinned certificate, not a chain to a root.** What this code
 establishes is that a token was signed by the key in a certificate chosen in advance. It does not
@@ -330,7 +385,8 @@ authenticated proof that ingestion was complete, and this product has neither.
 
 ## About what it does when something is wrong
 
-**It does not prevent anything.** A refusal receipt records that TimeWitness declined to sign. It
+**It does not prevent anything.** A refusal records that TimeWitness declined to sign, and today
+that record is a return value inside the agent rather than anything a third party can be shown. It
 does not record an action being stopped, and there is no enforcement path in this design. A clock
 rollback is the same: it is detected and recorded after the event, and nothing it enabled is undone.
 
@@ -345,22 +401,22 @@ services and none of them is a qualified trust service.
 
 Everything in this section is a fact about 2026-09-09 rather than about the design.
 
-**A bound is about 155 ms where a machine reaches the sources that narrow it, measured 2026-09-09 at sixteen polling rounds on an ordinary desktop, and seconds wide where it reaches only Roughtime.** Three time source clients exist in this repository, Roughtime, plain NTP
+**A bound is about 155 ms where a machine reaches the sources that narrow it, measured 2026-09-09 at sixteen polling rounds on an ordinary desktop, and a machine that reaches only Roughtime is refused, where before the operator floor it got seconds.** Three time source clients exist in this repository, Roughtime, plain NTP
 and NTS, and only Roughtime signs anything a stranger can check, so the one that can be shown to a
 stranger is the one that cannot narrow the bound. A Roughtime server states its own uncertainty as a radius in whole seconds, so a
-bound resting on Roughtime alone is seconds wide whatever else is done to it, and a plain NTP server
-states a delay and a dispersion in units of about fifteen microseconds and signs nothing at all.
+bound resting on Roughtime alone would be seconds wide whatever else is done to it, and the shipped
+floor refuses such a round; a plain NTP server states a delay and a dispersion in units of about
+fifteen microseconds and signs nothing at all.
 Measured against Roughtime alone on 2026-09-08, every one of them at the four rounds the Action
-shipped that day: 16.219 s from a GitHub runner, 16.424 s on the receipt committed at that path then and since replaced, and 16.439 s from a stamp on an ordinary desktop at 11:08. Measured against two kinds
-on 2026-09-09 at the sixteen rounds the Action ships now: 153.6 ms, 164.8 ms and 211.3 ms over three
-passes on an ordinary desktop at 14:52, 176.7 ms on the receipt committed at that path then and since replaced, taken at 15:05, and 211.3 ms from a GitHub runner at 12:09 UTC. Every one of those is our own measurement on
-the machine it names, and none of them is a figure for anybody else's machine. Measured with all three kinds on 2026-09-09 at the sixteen rounds the Action ships: 154.1 ms, 159.2 ms and 154.7 ms over three passes on an ordinary desktop at 20:28, and 149.8 ms on the receipt committed at that path then and since replaced, taken at 20:32, nine servers answering and nine kept. Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms over three passes at 21:39, and 153.9 ms on the receipt committed in this repository at 21:41, nine servers behind six operators and nine kept. Enforcing independence narrowed nothing and was never going to, because the rule refuses rounds rather than narrowing them: the sources overlapping is 35.1 ms of half width on that receipt against 34.9 ms on the one before it. Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 128.7 ms, 128.8 ms and 129.1 ms over three readings at 22:17, against 122.7 ms, 122.8 ms and 122.6 ms from the same agent at the same uptime and the same cadence before the rule at 21:04. The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did. The third kind narrowed nothing and the breakdown says so: the sources overlapping is 34.9 ms of half width on that nine-source receipt against 34.5 ms on the six-source one taken at 15:05, and what moved between the two receipts is the oscillator, 0.5 ms against 17.3 ms, which is how long after the last exchange each stamp was taken. Measured through the resident agent with all three kinds on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 122.7 ms, 122.8 ms and 122.6 ms over three readings at 21:04, against 133.5 ms, 136.8 ms and 128.9 ms from the same agent at the same uptime and the same cadence with two kinds at 16:27. The sources overlapping did not move there either, 37.6 ms of half width against 37.1 to 38.3 ms, so the ten milliseconds between the two sets is the fit and the oscillator rather than the sources. Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms over three readings at 16:27, against 161.1 ms, 159.4 ms and 162.2 ms from the one-shot command on the same machine twelve minutes earlier. What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit. The largest single part of the 153.875 ms on the receipt committed in this repository is the model's own regression residual doubled by the coverage factor, 38.011 ms of half width, with 35.081 ms of the sources overlapping and 3.586 ms of the oscillator beside it, all four read 2026-09-10 off the verify command run on that receipt, which prints half widths.
+shipped that day: a bound of 16.219 s from a GitHub runner, a bound of 16.424 s on an ordinary desktop's receipt committed at that path then and since replaced, and a bound of 16.439 s from that same desktop, stamped at 11:08. Measured against two kinds
+on 2026-09-09 at the sixteen rounds the Action ships now, on an ordinary desktop: 153.6 ms and 164.8 ms wide over the first two of three passes at 14:52, and a bound of 176.7 ms on that desktop's receipt committed at that path then and since replaced, taken at 15:05. At 12:09 UTC a GitHub runner reached a bound of 211.3 ms, and that desktop reached the same on the remaining one of its three. Every one of those is our own measurement on
+the machine it names, and none of them is a figure for anybody else's machine. Measured with all three kinds on 2026-09-09 at the sixteen rounds the Action ships: 154.1 ms, 159.2 ms and 154.7 ms wide over three passes on an ordinary desktop at 20:28, and a bound of 149.8 ms on the receipt committed at that path then and since replaced, taken at 20:32, nine servers answering and nine kept. Measured again with the independence rule in, on the same desktop at the same sixteen rounds: 149.3 ms, 161.2 ms and 163.2 ms wide over three passes at 21:39, and a bound of 153.9 ms on the receipt committed in this repository at 21:41, nine servers behind six operators and nine kept. Enforcing independence narrowed nothing and was never going to, because the rule refuses rounds rather than narrowing them: the sources overlapping is 35.1 ms of half width on that receipt against 34.9 ms on the one before it. Measured through the resident agent on the same desktop on 2026-09-18, after the ageing of a source's interval over the local counter was bounded by the band, at thirty-six minutes of uptime and a thirty-two second polling cadence: 130.346 ms, 115.308 ms and 115.260 ms wide over three readings at 23:32, nine servers behind six operators and nine kept, with the sources overlapping at 37.991 ms of half width on the first and 36.830 ms on the other two. Measured through the resident agent with the independence rule in, on the same desktop on 2026-09-09, at the same uptime and the same cadence: 128.7 ms, 128.8 ms and 129.1 ms wide over three readings at 22:17, against 122.7 ms, 122.8 ms and 122.6 ms wide from the same agent at the same uptime and the same cadence before the rule at 21:04. The sources overlapping is 38.4 ms of half width there against 37.6 ms before the rule, so the six milliseconds between the two sets is a public network an hour apart rather than anything the rule did. The third kind narrowed nothing and the breakdown says so: the sources overlapping is 34.9 ms of half width on that nine-source receipt against 34.5 ms on the six-source one taken at 15:05, and what moved between the two receipts is the oscillator, 0.5 ms against 17.3 ms, which is how long after the last exchange each stamp was taken. Measured through the resident agent with all three kinds on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 122.7 ms, 122.8 ms and 122.6 ms wide over three readings at 21:04, against 133.5 ms, 136.8 ms and 128.9 ms wide from the same agent at the same uptime and the same cadence with two kinds at 16:27. The sources overlapping did not move there either, 37.6 ms of half width against 37.1 to 38.3 ms, so the ten milliseconds between the two sets is the fit and the oscillator rather than the sources. Measured through the resident agent on the same desktop on 2026-09-09, at thirty-six minutes of uptime and a thirty-two second polling cadence: 133.5 ms, 136.8 ms and 128.9 ms wide over three readings at 16:27, against 161.1 ms, 159.4 ms and 162.2 ms wide from the one-shot command on the same machine twelve minutes earlier. What the agent moved is one term: the model's own residual fell from 39.3 to 45.6 ms of half width on those one-shot runs to 24.3 to 25.0 ms, and the sources overlapping did not move at all, so on that machine the width is now set by the sources rather than by the fit. Of the 153.875 ms of width on the receipt committed in this repository, the largest single part is the model's own regression residual doubled by the coverage factor, 38.011 ms of half width, with 35.081 ms of the sources overlapping and 3.586 ms of the oscillator beside it, all four read 2026-09-10 off the verify command run on that receipt, which prints half widths.
 Polling more times does help and it is the shipped default that was wrong about which way: below
 three rounds no line is fitted, so the scatter of the measurements is never measured and never
 enters the width, and the bound at one round is narrower because less was measured rather than
 because the clock is better known. Measured on this desktop at 12:54 and 12:56 on 2026-09-08 against
-Roughtime alone, two passes at each setting: 6.2 s at one round, 17.4 s at three, 16.4 s at four,
-12.0 s at sixteen and 10.4 s at thirty-two. So the figure this product leads with is its own bound, about 155 ms at sixteen rounds where the sources that narrow it are reachable and about 12 s where only Roughtime is. About one second is still the target and it is a target for something else: a bound
+Roughtime alone, two passes at each setting: 6.2 s wide at one round, 17.4 s wide at three, 16.4 s wide at four,
+12.0 s wide at sixteen and 10.4 s wide at thirty-two. So the figure this product leads with is its own bound, about 155 ms at sixteen rounds where the sources that narrow it are reachable. Where only Roughtime is reachable it now refuses, and the 12 s of width it reached there on 2026-09-08 is from before the operator floor. About one second is still the target and it is a target for something else: a bound
 resting on third-party evidence rather than on the agent's own model, which nothing outside the
 tests constructs, and which a timestamp authority writing whole seconds puts a floor under. That is
 the rule underneath it, and it holds for everything this product says about itself: the prose may be
@@ -397,41 +453,49 @@ build runner is a machine that has existed for ninety seconds, so there is nothi
 be resident on, and the answer to that is not a longer baseline: it is a bound resting on
 third-party evidence.
 
-**A fresh agent refuses to answer at all for its first two to three minutes.** The four settling
-rounds a second apart buy the model a line to fit and nothing more. A reading is extrapolated over
-however long ago the last round was, so once the agent settles into its thirty-two second cadence
-the width sweeps up across each gap, and a fit whose baseline is three seconds is being asked to
-reach thirty. The residual that comes out of that is far past the shipped 250 ms ceiling, and the
-agent refuses rather than signing an interval wider than the one it said it would sign. Measured
-2026-09-10 on an ordinary Windows desktop against the nine published servers, at the shipped
-thirty-two second cadence and 250 ms ceiling, one reading every five seconds for twelve minutes,
-twice: the last refusal was at 166 s of uptime on the first run and at 168 s on the second, and 25
-and 24 of the first 34 readings were refused. It can sign once in its first seconds and then stop,
-which is worse than not signing at all for somebody who reads the first answer as the settled one:
-the second run signed at 6 s of uptime, right after the settling rounds, and then refused every
-reading from 11 s to 69 s. What the settling rounds buy is a fit that exists, and not a fit worth
-signing.
+**A fresh agent refuses most readings for its first two minutes.** The four settling rounds a
+fraction of a second apart buy the model a line to fit and nothing more. A reading is extrapolated
+over however long ago the last round was, so once the agent settles into its thirty-two second
+cadence the width sweeps up across each gap, and a fit whose baseline is under a second is being
+asked to reach thirty. The residual that comes out of that is far past the shipped 250 ms ceiling,
+and the agent refuses rather than signing an interval wider than the one it said it would sign.
+Measured 2026-09-18 on an ordinary Windows desktop against the nine published servers, at the
+shipped thirty-two second cadence and 250 ms ceiling, on two agents started in the same minute: one
+asked every five seconds for forty minutes, where the last refusal was at 102 s of uptime and 13 of
+the first 34 readings were refused, and one asked every ten seconds for seven minutes, where the
+last refusal was at 101 s and 8 of the first 17 were refused. It can sign once in its first seconds
+and then stop, which is worse than not signing at all for somebody who reads the first answer as the
+settled one: the first of those two signed at 3 s of uptime, right after the settling rounds,
+refused every reading from 9 s to 37 s, signed once at 43 s and refused again from 48 s to 67 s.
+What the settling rounds buy is a fit that exists, and not a fit worth signing. Measured the same
+way on the same machine on 2026-09-10, one reading every five seconds for twelve minutes, twice, the
+last refusal was at 166 s of uptime on one run and 168 s on the other, with 25 and 24 of the first
+34 readings refused; the ageing of a source's interval changed on 2026-09-18, and the figures from
+that day are the ones that describe the code that ships.
 
 **After it settles the agent still refuses a reading whenever the bound crosses the ceiling, and the
 share is not a fixed number.** The shipped cadence is thirty-two seconds and the shipped ceiling is
 250 ms, so the width sweeps up across each polling gap and where the top of that sweep lands is what
 decides whether a reading is signed. On an ordinary desktop the top of it sits close enough to the
-ceiling that the answer moves with the network. Measured 2026-09-10 on an ordinary Windows desktop
-at those settings, one reading every five seconds: nought refused of 100 readings from three to
-twelve minutes of uptime on one run and nought of 103 on a second, at widths of 144.636 to 238.409
-ms and 140.933 to 217.723 ms. Measured again the same morning on the same machine, forty
-readings five seconds apart at five to eight minutes of uptime: one refused, at 254.047 ms
-against the 250 ms ceiling. So the share on one machine on one day is somewhere between nought and
-one in forty, and a deployment should expect a refusal now and then rather than never. The refusal
-is the design working rather than a fault: a wider interval says something true and a narrow wrong
-one does not, and the last good reading is never offered.
+ceiling that the answer moves with the network. Measured 2026-09-18 on an ordinary Windows desktop
+at those settings, one reading every five seconds: nought refused of 101 readings from three to
+twelve minutes of uptime, at widths of 130.988 to 203.677 ms, and nought of 23 readings ten seconds
+apart from three to seven minutes on a second agent started in the same minute, at widths of 149.224
+to 197.686 ms. Measured 2026-09-10 on the same machine, before the ageing of a source's interval
+changed, one reading every five seconds: nought refused of 100 readings from three to twelve minutes
+of uptime on one run and nought of 103 on a second, at widths of 144.636 to 238.409 ms and widths of
+140.933 to 217.723 ms, and one refused of forty readings five seconds apart at five to eight
+minutes, at 254.047 ms of width against the 250 ms ceiling. So the share on one machine, measured on
+2026-09-10 and 2026-09-18, is somewhere between nought and one in forty, and a deployment should
+expect a refusal now and then rather than never. The refusal is the design working rather than a
+fault: a wider interval says something true and a narrow wrong one does not, and the last good
+reading is never offered.
 
 **The agent answers sixty-four callers at once and refuses the sixty-fifth.** A cap is a refusal, so
 it is on this list with the rest of them. Every caller gets a thread of its own from 2026-09-10, and
 past `CALLERS_AT_ONCE` a caller is turned away in words rather than queued behind the others,
 because a queue behind a full cap is the same unavailability moved somewhere the caller cannot see
-it. Before that date the agent answered one caller at a time and waited two seconds for a token
-before it looked at one, so two sockets opened and left silent stopped the machine issuing receipts
+it. Before that date the agent answered one caller at a time and its ceiling on waiting for a token before it looked at one was two seconds, so two sockets opened and left silent stopped the machine issuing receipts
 at all: measured on an ordinary Windows desktop, a legitimate ask took 56 ms alone and 40158 ms
 behind twenty of them. What the cap does not do is make the agent proof against somebody who already
 runs code on this machine. It turns a cheap permanent outage into an expensive temporary one:
@@ -444,7 +508,7 @@ nine can fail for a different reason in the code.** `SourceKind` names plain NTP
 local hardware, and three of the four have a client, `crates/sources/src/roughtime.rs`,
 `crates/sources/src/ntp.rs` and `crates/sources/src/nts.rs`. What runs is three servers of each of
 those three kinds. Local hardware has no client and needs a receiver this product cannot assume
-anybody has. The front page says four to six independent sources, and independent in this product
+anybody has. The README says four to six independent sources, and independent in this product
 means the operator rather than the protocol, which is the only reading the design supports:
 `SourceKind` has four variants, so six kinds cannot exist and a claim of four to six kinds could
 never be met. On the count this product defines and enforces the claim is met, at six operators with
@@ -483,12 +547,31 @@ than what it was. Where the operator itself is in doubt, two names are treated a
 than two, because merging can only lower the count and refuse, while splitting inflates the very
 floor that is supposed to catch it.
 
+**A receipt carries no measurement from any source, so nobody else can recompute its width.** For each source it names an id, a
+kind, an operator, a timescale, the leap and smear state and whether the source was kept. It carries
+none of the four timestamps of an exchange, no round trip and no uncertainty a source stated. So a
+stranger can check that the parts of the width add up to the width and that a majority was kept, and
+cannot work out any part of it from what the sources said. The width is the agent's arithmetic on
+measurements only the agent saw. A receipt format that carries them would be version 1, and it is
+not built.
+
+**The operator names the floor counts are strings the signer wrote.** The verifier counts operators from
+the labels in the receipt rather than taking a count the receipt states, which stops the agent's
+arithmetic being checked against itself. It does not stop the labels being made up. A signer running
+nine servers at one company could name nine companies, and nothing in NTP, NTS or Roughtime lets a
+reader see which company answered. A Roughtime corridor, where one is carried and checked, is signed
+by a key the reader holds, and every other operator name is the signer's word.
+
 **A machine that can reach only the three public Roughtime servers reaches three operators, which is
-under the shipped floor of four, so it refuses to sign until somebody lowers the floor deliberately.**
-That path was already the seconds-wide one and it is now also the one the shipped policy declines, on
-two counts rather than one: the width ceiling of 250 ms refuses it as well. Lowering the floor is one
-line of configuration and it is deliberately not the default, because a product whose independence
-floor bends to whatever the network gave it today has a floor in name only.
+under the shipped floor of four, so it refuses to sign, and nothing that ships lowers the floor.**
+That path was the seconds-wide one until 2026-09-09. The shipped product now declines it on two
+counts: the operator floor refuses the round before any width is looked at, and the width ceilings
+refuse it as well, 250 ms through the resident agent and, on the one-shot command the Action runs, a 2 s ceiling.
+No option on the command line and no input to the Action lowers the floor. It is `min_operators` in
+`Policy::default`, in `crates/clock/src/policy.rs`, so lowering it means building from a changed
+source. That is deliberate, because a product whose independence floor bends to whatever the network
+gave it today has a floor in name only. Every seconds-wide figure on this list is from before the
+floor, and none of them is a receipt the shipped product issues.
 
 **NTS authenticates a source and can never be evidence for a bound.** The keys come out of a TLS
 session and are symmetric, so this machine holds the same secret the server used and could compose
@@ -497,7 +580,7 @@ produce it. `SourceKind::Nts` answers no to `carries_third_party_signature`, an 
 no attestation, and nothing from that client appears in a receipt in any of the three evidence roles.
 It improves the clock and it is not a witness.
 
-**Through the resident agent the reading behind a stamp is taken with no network call at all; through the one-shot command the network call that produced it is part of the same few seconds as the stamp.** This is about the reading and the bound and not about the whole run: gathering the three attestations is network work either way, and the receipt says how many it carries. The verifier prints the age of the newest exchange behind the interval on every receipt, so a reader does not have to take any of it on trust. What the agent buys is not free either: the reading is extrapolated over however long ago the last round was, and the model charges for that, so the term for the oscillator grows as the term for the fit falls.
+**Through the resident agent the reading behind a stamp is taken with no network call at all; through the one-shot command the network call that produced it is part of the same few seconds as the stamp.** This is about the reading and the bound and not about the whole run: gathering the three attestations is network work either way, and the receipt says how many it carries. The verifier prints the age of the newest exchange behind the interval on every receipt, so a reader can see how long the model extrapolated for; that age is read off the receipt, and the receipt is the signer's. What the agent buys is not free either: the reading is extrapolated over however long ago the last round was, and the model charges for that, so the term for the oscillator grows as the term for the fit falls.
 
 **Every receipt this product issues says its bound rests on the agent's own model, so no receipt yet
 carries third-party signed evidence for its bound.** All three evidence roles are fetched, carried
@@ -505,13 +588,18 @@ in the receipt and checked by the verifier against keys a reader chose in advanc
 does is support the width: the receipt's own bound is the agent's claim and is labelled as one. The
 format can express a bound resting on outside signatures and nothing issues a receipt that does.
 
-**The shipped default refuses any interval wider than 250 ms, and the GitHub Action raises that to
-30 s, which is headroom and not a measurement.** Read on 2026-09-09 off
-`crates/clock/src/policy.rs`, `max_bound_width` in `Policy::default`, and off the `max-width` input
-in `action.yml`. A runner reached 211.3 ms on 2026-09-09 and 16.219 s the day before, so the ceiling
-is set for the bad day rather than the good one. The refusal is the honesty mechanism of this
-product and the one configuration that ships loosens it by a factor of a hundred and twenty, which
-is why both numbers are here rather than one.
+**The resident agent refuses any interval wider than 250 ms, and the one-shot command, which the
+GitHub Action runs, refuses one wider than 2 s.** Read on 2026-09-15 off `max_bound_width` in
+`Policy::default`, in `crates/clock/src/policy.rs`, off `CI_MAX_BOUND_WIDTH` in
+`crates/cli/src/stamp_cmd.rs`, and off the `max-width` input in `action.yml`. Only the agent holds
+itself to 250 ms. The one-shot path needs a ceiling of its own, because the widest receipt the one-shot command on a build runner has given us, 287.147 ms wide on 2026-09-14 at sixteen rounds, is already past the agent's. Two
+seconds is the narrowest interval a Roughtime corridor can state, a radius of one second either side,
+so a bound wider than that says less than one signed corridor already tells a stranger. It is about
+seven times that runner's width, and about nine times the bound of 211.3 ms another runner reached on
+2026-09-09. The ceiling was 30 s until 2026-09-15, sized for the 16.219 s of width a runner reached against
+Roughtime alone on 2026-09-08, a round the operator floor has refused since 2026-09-09. Every receipt
+the one-shot command signed before 2026-09-15 states that older ceiling in its own policy, the one at
+`crates/verify/tests/data/a-real-stamp/` included.
 
 **Nothing verifies order.** Every receipt carries a sequence number and the hash of the receipt
 before it, both signed, and no code anywhere compares two receipts, so nothing that exists today can
@@ -522,14 +610,15 @@ the second half of it is carried rather than checked.
 nothing portable is produced, so there is no artefact a third party could be shown. The phrase reads
 as a description of something that exists and it describes something that does not.
 
-**There is no release, so nothing is downloadable.** The verifier is built and works, as a command
-line tool and as one HTML page that runs from a local disk with no network. Both are built from
-source in this repository. There is no released binary and no published page, so today a stranger
-compiles it rather than downloading it.
+**There is no released binary, so nothing is downloadable.** The verifier is built and works, as a
+command line tool and as one HTML page that runs from a local disk with no network. Both are built
+from source in this repository. The `v0` release carries no binary and there is no published page,
+so today a stranger compiles it rather than downloading it.
 
 **Nothing links an agent's key to anybody.** A receipt proves that whoever signed it held that key.
-There is no public log of agent keys to check one against, so a reader who does not already recognise
-a key learns only that one key signed this. The Action generates a key on the runner where none is
+A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and no agent key. So a reader who does not already recognise an agent key learns only that one key
+signed this. The `v0` release refuses that log's format by name, so reading it takes a verifier built
+from `main` until a later release. The Action generates a key on the runner where none is
 supplied, which is what keeps the install to one line and is exactly as meaningful as that sounds.
 
 **There is no first-run figure from anybody who is not us.** Nobody outside has run it.
@@ -574,11 +663,14 @@ service sets the clock before the agent sees anything, and a leap second arrives
 one of these is recorded after the fact. What the agent controls is whether it puts its name to a
 reading taken afterwards.
 
-**Roughtime is an expiring Internet-Draft.** The version implemented is
-`draft-ietf-ntp-roughtime-19`, which expires on 18 September 2026, and the version number on the
-wire is the draft's own testing number rather than the one a published standard would use. What
-lapses is the reference rather than the protocol: the servers keep answering and receipts already
-issued stay checkable.
+**Roughtime is an Internet-Draft and not an RFC.** The version implemented is
+`draft-ietf-ntp-roughtime-19`, with intended status Experimental. Read off the IETF datatracker on
+17 September 2026, that revision was in the RFC Editor Queue, which is where a draft waits before it
+is published as an RFC, and a place in that queue is not a publication date. The version number on
+the wire is the draft's own testing number rather than the one the published RFC would use, so
+publication may change what a server answers on. What moves then is the reference rather than the
+receipts: a receipt already issued stays checkable, because the verifier carries the rules it was
+signed under.
 
 **Only RSA signatures are checked on timestamp tokens.** One of the four free authorities tried signs
 with ECDSA, and its tokens are refused by name rather than skipped past.

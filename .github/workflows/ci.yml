@@ -25,6 +25,12 @@ jobs:
           # The whole history. Three of the repository checks read every commit, and at the default
           # depth of one they see a single commit and do nothing in the place they were put to run.
           fetch-depth: 0
+          # The commits that were written, rather than the merge GitHub builds to try them out. On a
+          # pull request the default is that merge, whose author and committer are both GitHub's own
+          # identities, and `scripts/repo-hygiene.sh` reads every commit's author and committer and
+          # refuses one that is not ours. So the default checkout failed the run on a branch whose
+          # own commits were all clean, which is a check reporting on a commit nobody wrote.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install the toolchain
         run: |
@@ -56,12 +62,67 @@ jobs:
       - name: The key log builds from this tree
         # The signed log a reader is handed is built by this script and nothing else, so it is run
         # here on every push with a key made for the run and thrown away with it. What this proves is
-        # the path: the committed entries sign, the result is an extension of nothing, and the
-        # verifier reads it back under a head it checks. The key that signs the served copy is never
-        # in this repository or this workflow.
+        # the path: the committed entries sign, the first head is written with --first and nothing
+        # else, the verifier reads it back under a head it checks against the key it was told to
+        # hold, and a second run holds a new log to the first. The key that signs the served copy is
+        # never in this repository or this workflow. The throwaway's public half comes from openssl
+        # rather than from the script's own output, which is the fault the --signer check exists
+        # for.
         run: |
           head -c 32 /dev/urandom > "$RUNNER_TEMP/throwaway-key"
-          TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/key-log.txt"
+          signer="$({ printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x70\x04\x22\x04\x20'; cat "$RUNNER_TEMP/throwaway-key"; } | openssl pkey -inform DER -pubout -outform DER | tail -c 32 | od -An -v -tx1 | tr -d ' \n')"
+          echo "signer=$signer" >> "$GITHUB_ENV"
+          TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/key-log.txt" --first --signer "$signer"
+          TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/key-log.txt" --signer "$signer"
+
+      - name: That script still refuses what it is built to refuse
+        # The script run backwards, four ways, and each has to refuse for its own reason. A first
+        # head where a copy already exists; a copy last served that the tree does not extend, made
+        # by appending a third entry to the served copy with the shipped tool; a head signed by a
+        # key the verifier does not hold; and no copy last served without --first.
+        run: |
+          refuse() {
+            local reason="$1"; shift
+            if said="$(TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$@" 2>&1)"; then
+              printf '%s\n' "$said"; echo "key-log.sh wrote a log it is built to refuse: $reason"; exit 1
+            fi
+            printf '%s\n' "$said" | grep -qF "$reason" || { printf '%s\n' "$said"; echo "it refused, and not because $reason"; exit 1; }
+          }
+          refuse "not the first head" "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/key-log.txt" --first --signer "$signer"
+          cp "$RUNNER_TEMP/key-log.txt" "$RUNNER_TEMP/longer.txt"
+          target/debug/timewitness key-log --log "$RUNNER_TEMP/longer.txt" --add "$(printf '09%.0s' $(seq 32))" --role server --label "a third server" --sign "$RUNNER_TEMP/throwaway-key" >/dev/null
+          refuse "not a prefix of the one this would write" "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/longer.txt" --signer "$signer"
+          head -c 32 /dev/urandom > "$RUNNER_TEMP/another-key"
+          refuse "not signed by the key the verifier holds for us" "$RUNNER_TEMP/another-key" "$RUNNER_TEMP/key-log.txt" --signer "$signer"
+          refuse "no copy last served" "$RUNNER_TEMP/throwaway-key" "$RUNNER_TEMP/nowhere/key-log.txt" --signer "$signer"
+
+      - name: Verifying needs no account and no call to us
+        # Two halves, and each catches what the other cannot. The test reads what the verifier links
+        # and what its sources say, so it names the file and the line. The script takes the network
+        # away and holds the verdict to the one given with it, so it catches a way out nobody has
+        # thought to name. Generating a receipt may one day go through a service; verifying never
+        # does, and this is what fails the build the day that stops being true.
+        run: |
+          cargo test -p timewitness-architecture --test verify_path_needs_nothing_of_ours
+          TIMEWITNESS_BIN=target/debug/timewitness bash scripts/verify-offline.sh "$RUNNER_TEMP/key-log.txt"
+
+      - name: That check still catches a verifier that reaches out
+        # The script above run backwards, twice, and the run passes only if it refuses for the reason
+        # each mode is built to trip. A refusal for any other reason, such as no namespace being made
+        # at all, is not the check catching anything, so the reason is read as well as the exit.
+        run: |
+          prove() {
+            local mode="$1" expected="$2" said
+            if said="$(TW_OFFLINE_PROVE="$mode" TIMEWITNESS_BIN=target/debug/timewitness bash scripts/verify-offline.sh "$RUNNER_TEMP/key-log.txt" 2>&1)"; then
+              printf '%s\n' "$said"
+              echo "the offline check passed with TW_OFFLINE_PROVE=$mode, so it is not connected"
+              exit 1
+            fi
+            printf '%s\n' "$said"
+            printf '%s\n' "$said" | grep -qF "$expected" || { echo "it refused, and not for the reason $mode is built to trip"; exit 1; }
+          }
+          prove leaky "could still reach the internet"
+          prove lookup "answered differently with the network taken away"
 
       - name: The verifier page
         run: |
@@ -69,8 +130,46 @@ jobs:
           cargo build --release -p timewitness-cli
           bash scripts/build-verifier-page.sh
 
+      - name: The verifier page asks for nothing
+        # The page half of verifying needing no call to us, read off the page as built with its module
+        # embedded. The build step above already refuses a page that fails it; the self-test is the
+        # check run backwards, one seed per rule, and passes only if every seed is refused by its own
+        # rule and the page as built is not refused at all. The third run drives the Chrome on the
+        # runner at the page: a fetch reached through a split string, which no rule on the text can
+        # see, has to be refused by the page's own Content-Security-Policy, and the module has to
+        # come up under it.
+        run: |
+          node scripts/verifier-page-offline.mjs
+          node scripts/verifier-page-offline.mjs --self-test
+          node scripts/verifier-page-in-a-browser.mjs
+
       - name: Repository hygiene
         run: bash scripts/repo-hygiene.sh
+
+      - name: Repository hygiene still refuses its seeds
+        # The check above run over a scratch clone with one breach of each rule planted in it, on
+        # every push. Its message rule read clean on a message it should have refused in 2 of 10
+        # runs until 2026-09-15, because it piped into grep -q under pipefail, and nothing was
+        # watching it refuse anything.
+        run: bash scripts/repo-hygiene.sh --self-test
+
+      - name: The guards are written to the contract
+        # Every shell script under scripts/ is read for the three shapes of shell that read a
+        # check that could not run as a check that passed, and the lint is first watched refusing a
+        # seed per shape. A file is shell by its extension or by its first line, and the run prints
+        # how many it read and how many it skipped; it read *.sh alone until 2026-09-19, which was
+        # 9 of 24 files here and 3 of 26 in the site repository, while this comment said every one.
+        # The site repository's build reads its own scripts with this same file.
+        run: |
+          bash scripts/guard-lint.sh --self-test
+          bash scripts/guard-lint.sh scripts
+
+      - name: The hook's steps are this file's
+        # scripts/before-push.sh promises at its head to run what this file runs, in this order,
+        # and until 2026-09-15 nothing held it to that.
+        run: |
+          node scripts/steps-match.mjs --self-test
+          node scripts/steps-match.mjs
 
       - name: The limitation list, on the surfaces this commit ships
         # The tree route, because this job grades a commit. The markdown and the README are in it and
@@ -80,6 +179,28 @@ jobs:
         env:
           TW_SURFACES_SITE: tree
         run: bash scripts/three-surfaces.sh
+
+      - name: Every sentence agrees with the shipped policy
+        # The check above holds each surface to its twin, and on 2026-09-15 it was green over four
+        # faults that every surface shared. This one reads the floor, the two ceilings, the Roughtime
+        # operators, the source kinds and the basis off the code, and refuses a sentence that says
+        # otherwise. The second run is the check backwards, one seed per rule, each watched refused.
+        run: |
+          python3 scripts/policy-sentences.py --no-site
+          python3 scripts/policy-sentences.py --self-test
+
+      - name: No surface sells precision or prices a receipt
+        # Full precision for everybody, and never a price per receipt. The same rules read the site
+        # in the other repository. The two runs below it are this one backwards, and pass only if it
+        # refuses for the reason each seed is built to trip.
+        run: |
+          node scripts/no-price-on-evidence.mjs
+          for mode in precision:"a reduced-precision tier" per-receipt:"a price per receipt"; do
+            if said="$(TW_PRICE_PROVE="${mode%%:*}" node scripts/no-price-on-evidence.mjs 2>&1)"; then
+              printf '%s\n' "$said"; echo "the check passed with TW_PRICE_PROVE=${mode%%:*}, so it is not connected"; exit 1
+            fi
+            printf '%s\n' "$said" | grep -qF "offers ${mode#*:}" || { printf '%s\n' "$said"; echo "it refused, and not for ${mode#*:}"; exit 1; }
+          done
 
       - name: The guard that reads the served page is still running
         # The other half of splitting the surfaces check, and the reason the step above may finish

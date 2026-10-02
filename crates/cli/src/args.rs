@@ -43,6 +43,11 @@ const TAKES_A_VALUE: &[&str] = &[
     "--from",
     "--until",
     "--sign",
+    "--kept-log",
+    "--key-log-signer",
+    "--role",
+    "--retire",
+    "--at",
 ];
 
 /// What each subcommand accepts, and how many things it takes that are not options.
@@ -59,6 +64,8 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
             "--anchors",
             "--no-anchors",
             "--key-log",
+            "--kept-log",
+            "--key-log-signer",
             "--min-width",
             "--fields",
             "--json",
@@ -90,7 +97,10 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
     ),
     (
         "key-log",
-        &["--log", "--add", "--label", "--from", "--until", "--sign"],
+        &[
+            "--log", "--add", "--role", "--label", "--from", "--until", "--retire", "--at",
+            "--sign",
+        ],
         0,
     ),
     ("cannot-prove", &[], 0),
@@ -99,6 +109,16 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
 /// Accepted everywhere, because refusing an unrecognised option would otherwise make this the one
 /// thing a reader tries first and the one thing that stops working.
 pub const HELP: &str = "--help";
+
+/// Accepted everywhere for the same reason. Which verifier this is, and which receipt format it
+/// reads, is the first question somebody holding a `v0` receipt has.
+pub const VERSION: &str = "--version";
+
+/// The words that ask for help or for the version where a subcommand would go. Until 2026-09-15
+/// the first thing a stranger typed, `timewitness --help`, was refused as an option with nothing to
+/// apply to, and `-h` and `help` as subcommands this does not have.
+const ASKS_FOR_HELP: [&str; 3] = [HELP, "-h", "help"];
+const ASKS_FOR_VERSION: [&str; 2] = [VERSION, "version"];
 
 /// Why a command line could not be read.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,12 +136,17 @@ pub fn parse(argv: &[String]) -> Result<Args, ArgError> {
     let mut rest = argv.iter();
 
     if let Some(first) = rest.next() {
-        if first.starts_with("--") {
+        if ASKS_FOR_HELP.contains(&first.as_str()) {
+            args.flags.push(HELP.to_string());
+        } else if ASKS_FOR_VERSION.contains(&first.as_str()) {
+            args.flags.push(VERSION.to_string());
+        } else if first.starts_with("--") {
             return Err(ArgError(format!(
                 "{first} came before a subcommand, and there is nothing for it to apply to"
             )));
+        } else {
+            args.command = Some(first.clone());
         }
-        args.command = Some(first.clone());
     }
 
     while let Some(item) = rest.next() {
@@ -169,6 +194,12 @@ impl Args {
         self.flag(HELP)
     }
 
+    /// Whether the reader asked which build this is.
+    #[must_use]
+    pub fn wants_version(&self) -> bool {
+        self.flag(VERSION)
+    }
+
     /// Refuse anything this subcommand does not have, by name.
     ///
     /// Without this a mistyped option is parsed as a flag nobody reads, so `verify --min-sources 9`
@@ -187,7 +218,7 @@ impl Args {
         };
 
         for given in self.flags.iter().chain(self.values.keys()) {
-            if given != HELP && !accepted.contains(&given.as_str()) {
+            if given != HELP && given != VERSION && !accepted.contains(&given.as_str()) {
                 return Err(ArgError(format!(
                     "{command} has no {given}. Run `timewitness` with nothing after it for what it does have"
                 )));
@@ -305,12 +336,25 @@ mod tests {
             "--no-anchors",
             "--min-width",
             "1000",
+            "--key-log",
+            "log",
+            "--kept-log",
+            "old",
+            "--key-log-signer",
+            "00",
             "--fields",
             "--json",
             "--quiet",
         ]))
         .unwrap();
         assert!(verify.check_accepted().is_ok());
+
+        let key_log = parse(&argv(&[
+            "key-log", "--log", "l", "--add", "k", "--role", "agent", "--label", "n", "--from",
+            "1", "--until", "2", "--retire", "k", "--at", "3", "--sign", "s",
+        ]))
+        .unwrap();
+        assert!(key_log.check_accepted().is_ok());
 
         let stamp = parse(&argv(&[
             "stamp",

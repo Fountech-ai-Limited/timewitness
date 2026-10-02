@@ -26,9 +26,11 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 # The revision of https://github.com/RustSec/advisory-db that the build reads. Moved by hand, by
-# whoever has dealt with what the weekly job reported. Read 2026-09-10 at 20:13 off
-# `git -C ~/.cargo/advisory-db rev-parse HEAD`, at RUSTSEC-2026-0282.
-pin='b50980aad8b8f14f77e25a97b32dd94bf008b0af'
+# whoever has dealt with what the weekly job reported. Read 2026-09-15 at 02:04 off
+# `bash scripts/check-advisories.sh --latest`, at RUSTSEC-2026-0285, which it found against rustls
+# 0.23.44 a day after publication and which the pin before this one could not see. rustls moved to
+# 0.23.45 in the same act.
+pin='e2e640471715167f73e22eaf761f2e547adafeec'
 
 # The reader, pinned for the same reason the database is. `wanted_audit` is what CI installs and
 # what a message here tells somebody to install; `minimum_audit` is what this refuses to run below.
@@ -75,7 +77,14 @@ private_key_shapes=(
   'pss::SigningKey'
 )
 for shape in "${private_key_shapes[@]}"; do
-  if grep -rn --include='*.rs' -F "$shape" crates/ >/dev/null 2>&1; then
+  found="$(grep -rln --include='*.rs' -F "$shape" crates/)"
+  status=$?
+  if [ "$status" -gt 1 ]; then
+    echo "advisories: grep could not read crates/ (exit $status), so nothing was checked." >&2
+    exit 2
+  fi
+  if [ "$status" -eq 0 ]; then
+    printf '%s\n' "$found" >&2
     echo "advisories: the tree now contains $shape, which is an RSA private-key operation." >&2
     echo "advisories: that is the stated reopening condition for the RUSTSEC-2023-0071 ignore in" >&2
     echo "advisories: .cargo/audit.toml. Take the ignore out and deal with the advisory." >&2
@@ -151,7 +160,9 @@ else
   fi
 fi
 
+# Each note says "could not answer" in those words, because that is what `before-push.sh` looks for
+# when it decides whether a step that passed still has something a reader has to see.
 for note in "${notes[@]:-}"; do
-  [ -n "$note" ] && echo "  --  $note"
+  [ -n "$note" ] && echo "advisories: could not answer: $note"
 done
 exit 0

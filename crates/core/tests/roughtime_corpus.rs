@@ -85,7 +85,7 @@ fn every_captured_response_verifies_with_no_network_at_all() {
         });
         assert_eq!(checked.scheme, "roughtime");
         assert!(
-            checked.radius() > 0,
+            checked.radius().is_some_and(|r| r > 0),
             "{} states a radius of zero, which the draft forbids",
             c.name
         );
@@ -422,8 +422,11 @@ fn the_fake_server_is_faithful_enough_that_a_good_answer_verifies() {
     let blob = blob_for(&fake, &Behaviour::default(), &[5u8; 32]);
     let checked = roughtime::check(&blob, &fake.key(), "a server of our own")
         .expect("a well formed answer from our own server");
-    assert_eq!(checked.radius(), 3_000_000_000);
-    assert_eq!(checked.midpoint().as_nanos(), 1_788_800_000_000_000_000);
+    assert_eq!(checked.radius(), Some(3_000_000_000));
+    assert_eq!(
+        checked.midpoint().map(|m| m.as_nanos()),
+        Some(1_788_800_000_000_000_000)
+    );
 }
 
 #[test]

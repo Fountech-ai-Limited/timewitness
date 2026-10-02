@@ -220,7 +220,7 @@ fn reply_that_cannot_be_true() {
         10 * NANOS_PER_MILLI,
     );
     assert!(
-        !rig.model.ingest(&impossible),
+        rig.model.ingest(&impossible).is_some(),
         "a reply whose own two timestamps cannot both be true never becomes a sample"
     );
 }
@@ -385,7 +385,7 @@ fn source_understates_itself() {
             at,
             4 * NANOS_PER_MILLI,
         );
-        assert!(rig.model.ingest(&e));
+        assert_eq!(rig.model.ingest(&e), None);
     }
     assert_eq!(rig.model.synchronise(), Validity::Valid);
 

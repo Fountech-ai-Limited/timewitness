@@ -69,7 +69,11 @@ fn every_captured_round_verifies_with_no_network_at_all() {
         );
         assert_eq!(checked.nonce, None, "a beacon signs nothing of ours");
         assert_eq!(
-            checked.earliest().as_nanos() / NANOS_PER_SEC,
+            checked
+                .earliest()
+                .expect("a round falls at an instant")
+                .as_nanos()
+                / NANOS_PER_SEC,
             i128::from(chain.time_of(r.number).expect("on the schedule"))
         );
     }

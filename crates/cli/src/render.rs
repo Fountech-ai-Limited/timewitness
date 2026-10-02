@@ -18,7 +18,9 @@ use std::collections::BTreeMap;
 
 use timewitness_core::SourceKind;
 use timewitness_receipt::schema::Receipt;
-use timewitness_verify::{cannot_prove, width_in_words, Assessment, Subject};
+use timewitness_verify::{
+    cannot_prove, width_in_words, Assessment, State, Subject, KEPT_LOG_QUESTION, KEY_LOG_QUESTION,
+};
 
 /// The tool's own name, as it appears to a person.
 pub const TOOL_NAME: &str = "timewitness";
@@ -55,8 +57,25 @@ pub fn usage() -> String {
     out.push_str(
         "                          not third-party evidence: what it buys is that a key\n",
     );
-    out.push_str("                          we published is one we cannot quietly unpublish\n");
-    out.push_str("      --quiet             the verdict and the refusal only\n\n");
+    out.push_str("                          we published is one we cannot quietly unpublish.\n");
+    out.push_str(
+        "                          Its head is checked under the key that ships for it,\n",
+    );
+    out.push_str("                          and a head by any other key answers nothing\n");
+    out.push_str(
+        "      --kept-log <file>   the copy of that log you kept from before. Holds the new\n",
+    );
+    out.push_str(
+        "                          log to it: every old entry still there, in order, under\n",
+    );
+    out.push_str("                          a head we signed, or the run says what moved\n");
+    out.push_str(
+        "      --key-log-signer <hex>\n                          the key you hold for our log's head, instead of the\n",
+    );
+    out.push_str("                          one that ships. --anchors replaces it too\n");
+    out.push_str(
+        "      --quiet             the verdict, the line under it and the refusal only\n\n",
+    );
     out.push_str("  timewitness stamp --subject <file> --key <file> --out <file> [options]\n");
     out.push_str("      Take a bounded-time receipt over the hash of a file. This one does use\n");
     out.push_str("      the network, because it has to ask the sources what time it is.\n\n");
@@ -66,12 +85,19 @@ pub fn usage() -> String {
     out.push_str("                          measured: the third round widens the bound, and it\n");
     out.push_str("                          narrows again from there as the rounds pile up.\n");
     out.push_str("                          Measured 2026-09-08 against three public Roughtime\n");
-    out.push_str("                          servers: 6.2 s at one round, 17.4 s at three,\n");
-    out.push_str("                          12.0 s at sixteen, 10.4 s at thirty-two\n");
-    out.push_str("      --max-width <ns>    the widest bound this agent will sign for. With\n");
+    out.push_str("                          servers, before the operator floor that now refuses\n");
+    out.push_str("                          a round of those three alone: 6.2 s at one round,\n");
+    out.push_str("                          17.4 s at three, 12.0 s at sixteen, 10.4 s at\n");
+    out.push_str("                          thirty-two\n");
+    out.push_str("      --max-width <ns>    the widest bound this agent will sign for, 2 s by\n");
+    out.push_str(
+        "                          default, the narrowest corridor Roughtime states. With\n",
+    );
     out.push_str("                          --agent it is the widest this run will accept from\n");
     out.push_str("                          the agent, whatever the agent says its own is\n");
-    out.push_str("      --gap <ns>          how long to wait between polling rounds\n");
+    out.push_str("      --gap <s>           seconds to wait between polling rounds, none by\n");
+    out.push_str("                          default and at most 300. A longer cadence is the\n");
+    out.push_str("                          agent's, `timewitness agent --interval`\n");
     out.push_str("      --sequence <n>      where this receipt sits in a chain\n");
     out.push_str("      --previous <file>   the receipt before it in that chain\n");
     out.push_str(
@@ -131,23 +157,46 @@ pub fn usage() -> String {
         "                          will not stand behind one gets silence, not a guess\n\n",
     );
     out.push_str("  timewitness key-log --log <file> [options]\n");
-    out.push_str(
-        "      Write the public log of agent keys. Appending is the only edit there is:\n",
-    );
+    out.push_str("      Write the public log of our keys. Appending is the only edit there is:\n");
     out.push_str("      a log whose old entries change is not a log, and retiring a key is an\n");
     out.push_str("      entry that says so rather than an edit to the one before it.\n\n");
-    out.push_str("      --add <hex>         a 32-byte agent public key to append\n");
+    out.push_str("      --add <hex>         a 32-byte public key to append\n");
+    out.push_str("      --role <word>       what the key is: agent, which signs receipts, or\n");
+    out.push_str("                          server, a Roughtime server's. Agent by default\n");
     out.push_str("      --label <name>      which deployment that key belongs to. A label a\n");
     out.push_str(
         "                          person chose, and not an identity claim about anybody\n",
     );
     out.push_str("      --from <ns>         when the key started being used. Now by default\n");
-    out.push_str("      --until <ns>        when it stopped, where it has\n");
+    out.push_str("      --until <ns>        when it will stop, where that is known when the\n");
+    out.push_str("                          entry is written. Not how a key is retired\n");
+    out.push_str("      --retire <hex>      append the entry that retires a key already in the\n");
+    out.push_str("                          log, for every moment from --at on. Permanent: a\n");
+    out.push_str("                          retired key is never added again\n");
+    out.push_str("      --at <ns>           the moment the retirement takes effect. Now by\n");
+    out.push_str("                          default\n");
     out.push_str("      --sign <file>       sign the head over what the log now holds\n\n");
     out.push_str("  timewitness cannot-prove\n");
     out.push_str("      What this product cannot prove, in full. It ships with the claim rather\n");
-    out.push_str("      than under it.\n");
+    out.push_str("      than under it.\n\n");
+    out.push_str("  timewitness --version\n");
+    out.push_str("      Which build this is, and the receipt format it reads.\n\n");
+    out.push_str("  timewitness --help\n");
+    out.push_str("      This, which is also what the tool prints with nothing after it.\n");
     out
+}
+
+/// What `timewitness --version` prints: the build, and the one receipt format it reads.
+///
+/// Cargo writes the version from the manifest, which is in the tree the verify-path check reads, so
+/// nothing of the building machine's own environment comes in through it.
+#[must_use]
+pub fn version() -> String {
+    format!(
+        "timewitness {}\nreads receipt format v{}",
+        env!("CARGO_PKG_VERSION"),
+        timewitness_receipt::FORMAT_VERSION
+    )
 }
 
 /// The whole of what a verifier found, as a person reads it.
@@ -161,13 +210,17 @@ pub fn usage() -> String {
 pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
     let mut out = String::new();
 
-    if a.accepted() {
-        out.push_str("This receipt holds up as far as it was checked.\n");
-    } else {
-        out.push_str("REFUSED.\n");
-        if let Some(step) = a.refusal() {
-            out.push_str(&format!("  {}\n  {}\n", step.question, step.state.detail()));
-        }
+    out.push_str(&a.verdict());
+    out.push('\n');
+    // Directly under the verdict, and under `--quiet` too, because this is the line that stops the
+    // one above being read as outside parties vouching for the width. One line, unwrapped like the
+    // verdict, so a script taking the first two lines takes both whole.
+    if let Some(bracket) = a.bracket() {
+        out.push_str(&bracket);
+        out.push('\n');
+    }
+    if let Some(step) = a.refusal() {
+        out.push_str(&format!("  {}\n  {}\n", step.question, step.state.detail()));
     }
 
     if quiet {
@@ -188,7 +241,11 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
             "  The reading is {} ns since the Unix epoch, at nanosecond resolution because it is a\n",
             receipt.utc_estimate.as_nanos()
         ));
-        out.push_str("  local counter read with no network in it.\n");
+        out.push_str(
+            "  local counter read. Through the resident agent no network call is in the read; \
+             through the\n  one-shot command the polling that produced it is part of the same few \
+             seconds.\n",
+        );
         out.push_str(&format!(
             "  UTC was somewhere in an interval {} wide, from {} ns to {} ns. That width is the\n",
             width_in_words(receipt.width()),
@@ -251,9 +308,10 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
     if let Some(evidence) = &a.evidence {
         out.push_str("\nThe evidence, one role at a time\n");
         out.push_str(
-            "  Three roles and none of them does another's job. A corridor makes the bound\n\
-             \x20 checkable by a stranger and does not tighten it. A beacon says not earlier. A\n\
-             \x20 witness says not later. The agent's own bound is a claim and is not on this list.\n",
+            "  Three roles and none of them does another's job. A corridor puts a signed interval\n\
+             \x20 round the moment that a stranger can check, and does not tighten the bound. A\n\
+             \x20 beacon says not earlier. A witness says not later. The agent's own bound is a\n\
+             \x20 claim and is not on this list.\n",
         );
         for reported in evidence.lines() {
             out.push_str(&format!("  {reported}\n"));
@@ -293,6 +351,39 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
     out
 }
 
+/// One `name=value` line of the fields report, with the value held to one line.
+///
+/// Every value in that report goes through here, and that is the point of it. The report is a
+/// format, one field per line, and `scripts/action-stamp.sh` reads it with `sed` and puts what it
+/// finds into a workflow's outputs. A value carrying a newline is two lines, and the second one was
+/// written by whoever wrote the receipt. On 2026-09-19 a signed receipt whose first source had
+/// `kind` set to a string carrying two newlines put `earliest_ns=1` and a width of its own choosing
+/// into this report, above the report's real ones.
+///
+/// `validate` refuses such a receipt outright now, and that is the fix. This is here as well, and
+/// it is not the same job. The refusal is a rule about what a receipt may carry, held in one place
+/// for every surface. This is the format keeping its own promise: a report written a line at a time
+/// stays a line at a time whatever is handed to it, rather than every value having to remember.
+///
+/// **Measured, so that it is not read as more than it is.** On the tree of 2026-09-19 nothing
+/// reaches here that the refusal has not already stopped. A receipt whose strings carry a control
+/// character is refused in `open_with`, and a refused receipt is not attached to the assessment, so
+/// the only values left are this reader's own words and its own numbers. What this stops is the
+/// next value somebody adds.
+///
+/// A control character is replaced rather than dropped, with U+FFFD, the character whose job is to
+/// say that a character could not be represented. Dropping would quietly turn one value into
+/// another that reads as sound; replacing leaves something on the line that is obviously neither a
+/// number nor a word, and keeps every field on the line it belongs to.
+fn write_field(out: &mut String, name: &str, value: impl core::fmt::Display) {
+    let written = value.to_string();
+    let held: String = written
+        .chars()
+        .map(|c| if c.is_control() { '\u{fffd}' } else { c })
+        .collect();
+    out.push_str(&format!("{name}={held}\n"));
+}
+
 /// The result as `name=value` lines, for a shell.
 ///
 /// A workflow step wants five numbers and a verdict, and reaching them through a JSON tool would put
@@ -302,134 +393,91 @@ pub fn assessment(a: &Assessment, subject: Subject<'_>, quiet: bool) -> String {
 #[must_use]
 pub fn fields(a: &Assessment) -> String {
     let mut out = String::new();
-    out.push_str(&format!(
-        "accepted={}
-",
-        a.accepted()
-    ));
+    write_field(&mut out, "accepted", a.accepted());
     if let Some(step) = a.refusal() {
-        out.push_str(&format!(
-            "refused_at={}
-",
-            step.question
-        ));
-        out.push_str(&format!(
-            "refusal={}
-",
-            step.state.detail()
-        ));
+        write_field(&mut out, "refused_at", &step.question);
+        write_field(&mut out, "refusal", step.state.detail());
     }
-    out.push_str(&format!(
-        "receipt_bytes={}
-",
-        a.encoded_bytes
-    ));
-    out.push_str(&format!(
-        "receipt_sha256={}
-",
-        hex(&a.link)
-    ));
-    out.push_str(&format!(
-        "anchors_held={}
-",
-        a.anchors_held
-    ));
+    write_field(&mut out, "receipt_bytes", a.encoded_bytes);
+    write_field(&mut out, "receipt_sha256", hex(&a.link));
+    write_field(&mut out, "anchors_held", a.anchors_held);
+    // The key log, where one was supplied, as the two facts a script wants before it reads the
+    // words: whether the head was checked under a key this reader holds for us, and by which key.
+    // `scripts/key-log.sh` refuses to serve a log on anything less than `checked`.
+    if let Some(log) = &a.key_log {
+        write_field(&mut out, "key_log_entries", log.entries);
+        write_field(&mut out, "key_log_agent_entries", log.agent_entries);
+        write_field(&mut out, "key_log_head", log.head.word());
+        write_field(
+            &mut out,
+            "key_log_head_signed_by",
+            log.head
+                .signed_by()
+                .map_or_else(|| "none".to_string(), |key| hex(&key)),
+        );
+        for (name, question) in [
+            ("key_log_step", KEY_LOG_QUESTION),
+            ("kept_log", KEPT_LOG_QUESTION),
+        ] {
+            if let Some(step) = a.step(question) {
+                write_field(
+                    &mut out,
+                    name,
+                    match step.state {
+                        State::Held(_) => "held",
+                        State::Failed(_) => "failed",
+                        State::NotChecked(_) => "not-checked",
+                    },
+                );
+            }
+        }
+    }
     if let Some(receipt) = &a.receipt {
-        out.push_str(&format!(
-            "earliest_ns={}
-",
-            receipt.claim.earliest.as_nanos()
-        ));
-        out.push_str(&format!(
-            "latest_ns={}
-",
-            receipt.claim.latest.as_nanos()
-        ));
-        out.push_str(&format!(
-            "width_ns={}
-",
-            receipt.width()
-        ));
-        out.push_str(&format!(
-            "reading_ns={}
-",
-            receipt.utc_estimate.as_nanos()
-        ));
-        out.push_str(&format!(
-            "width_in_words={}
-",
-            width_in_words(receipt.width())
-        ));
-        out.push_str(&format!(
-            "sequence={}
-",
-            receipt.sequence
-        ));
-        out.push_str(&format!(
-            "payload_algorithm={}
-",
-            receipt.payload.algorithm
-        ));
-        out.push_str(&format!(
-            "payload_hash={}
-",
-            hex(&receipt.payload.hash)
-        ));
-        out.push_str(&format!(
-            "sources_offered={}
-",
-            receipt.claim.sources_offered
-        ));
-        out.push_str(&format!(
-            "sources_kept={}
-",
-            receipt.claim.sources_kept
-        ));
+        write_field(&mut out, "earliest_ns", receipt.claim.earliest.as_nanos());
+        write_field(&mut out, "latest_ns", receipt.claim.latest.as_nanos());
+        write_field(&mut out, "width_ns", receipt.width());
+        write_field(&mut out, "reading_ns", receipt.utc_estimate.as_nanos());
+        write_field(&mut out, "width_in_words", width_in_words(receipt.width()));
+        write_field(&mut out, "sequence", receipt.sequence);
+        write_field(&mut out, "payload_algorithm", &receipt.payload.algorithm);
+        write_field(&mut out, "payload_hash", hex(&receipt.payload.hash));
+        write_field(&mut out, "sources_offered", receipt.claim.sources_offered);
+        write_field(&mut out, "sources_kept", receipt.claim.sources_kept);
         // The two counts a script needs to tell nine names at one company from nine at nine, and
         // the kinds behind them. Without these a caller reading this output has only the flattering
         // number, which is how several addresses at one company pass for several independent
         // parties.
         let operators = receipt.claim.operators();
-        out.push_str(&format!(
-            "operators_offered={}
-",
-            operators.offered
-        ));
-        out.push_str(&format!(
-            "operators_kept={}
-",
-            operators.kept
-        ));
+        write_field(&mut out, "operators_offered", operators.offered);
+        write_field(&mut out, "operators_kept", operators.kept);
         let mut kinds: BTreeMap<&str, usize> = BTreeMap::new();
         for source in &receipt.claim.sources {
             *kinds.entry(source.kind.as_str()).or_default() += 1;
         }
-        out.push_str(&format!(
-            "source_kinds={}
-",
+        write_field(
+            &mut out,
+            "source_kinds",
             kinds
                 .iter()
                 .map(|(kind, count)| format!("{kind}:{count}"))
                 .collect::<Vec<_>>()
-                .join(",")
-        ));
+                .join(","),
+        );
     }
     if let Some(evidence) = &a.evidence {
-        out.push_str(&format!(
-            "attestations_carried={}
-",
-            evidence.entries.len()
-        ));
-        out.push_str(&format!(
-            "attestations_checked={}
-",
-            evidence.checked()
-        ));
-        out.push_str(&format!(
-            "basis_granted={}
-",
-            evidence.basis_granted
-        ));
+        // The span the checked outside evidence brackets the moment to, or `none` where nothing
+        // checked bounds it on both sides. A whole number or one word, like everything here.
+        write_field(
+            &mut out,
+            "outside_bracket_ns",
+            evidence
+                .bracket()
+                .width()
+                .map_or_else(|| "none".to_string(), |span| span.to_string()),
+        );
+        write_field(&mut out, "attestations_carried", evidence.entries.len());
+        write_field(&mut out, "attestations_checked", evidence.checked());
+        write_field(&mut out, "basis_granted", evidence.basis_granted);
     }
     out
 }

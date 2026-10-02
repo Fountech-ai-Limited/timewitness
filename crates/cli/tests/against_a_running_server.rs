@@ -28,8 +28,10 @@
 //! operator, and it never can be: the server is ours, the exchange is marked first party, and
 //! `crates/clock/tests/our_own_servers.rs` is where that refusal is proved.
 
+use std::net::UdpSocket;
 use std::time::Duration;
 
+use timewitness_core::evidence::roughtime::build_request;
 use timewitness_core::keylog::file::parse;
 use timewitness_core::{MonotonicNanos, SourceKind};
 use timewitness_sources::roughtime::{RoughtimeClient, RoughtimeServer};
@@ -79,6 +81,40 @@ fn every_server_a_key_log_names_answers_under_the_key_it_names() {
         }
     }
     assert!(asked > 0, "the log at {path} names no server to ask");
+}
+
+#[test]
+#[ignore = "needs a Roughtime server of ours running somewhere, named in the environment"]
+fn a_client_that_walks_away_does_not_stop_a_server_of_ours() {
+    // The defect of 2026-09-16, asked of a server that is actually deployed rather than of a socket
+    // in this process. A client asks and closes its socket before the answer arrives, and the
+    // server has to answer the next request from anybody.
+    //
+    // The loopback case is in `crates/roughtime-server/tests/over_a_real_socket.rs` and it is the
+    // one that fails on an unfixed build. This one cannot fail that way and is not meant to: our
+    // servers run on Linux, which does not hand ICMP to an unconnected UDP socket without
+    // `IP_RECVERR`, so the packet that takes a Windows server off the air is harmless to these two.
+    // What this proves is the deployment, not the platform: the fix is on the machine, the machine
+    // is still answering, and a client walking away did not change that.
+    let address = std::env::var(ADDRESS)
+        .unwrap_or_else(|_| panic!("{ADDRESS} says which server to ask, as host:port"));
+    let key = std::env::var(KEY)
+        .unwrap_or_else(|_| panic!("{KEY} says its long-term public key, as 64 hex characters"));
+    let key = from_hex(&key).expect("the key is 64 hex characters");
+
+    {
+        let walker = UdpSocket::bind("0.0.0.0:0").expect("a local port");
+        walker
+            .send_to(&build_request(&[0x61u8; 32], &key), &address)
+            .unwrap_or_else(|e| panic!("the first request could not be sent to {address}: {e}"));
+        // Closed here, before the answer can be read.
+    }
+
+    // Long enough for the answer to reach a port that has gone, and for whatever the host does
+    // about that to reach the server.
+    std::thread::sleep(Duration::from_secs(2));
+
+    ask(&address, key);
 }
 
 /// One request to a server of ours, checked against the key given for it.

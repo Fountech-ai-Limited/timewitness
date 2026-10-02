@@ -65,14 +65,28 @@ if ! cargo audit --version >/dev/null 2>&1; then
 fi
 
 failed=()
+ran=0
 
 step() {
   local name="$1"
   shift
+  ran=$((ran + 1))
   printf '%s ... ' "$name"
-  local out
+  local out notes status
   if out="$("$@" 2>&1)"; then
     printf 'ok\n'
+    # A step that passed and said it could not answer part of its question has not answered it, and
+    # this function threw that away with the rest of a successful step's output until 2026-09-19.
+    # The advisory step is the one that does it: outside CI a database it could not fetch is a note
+    # at exit 0, and nobody saw the note.
+    notes="$(printf '%s\n' "$out" | grep -E 'could not answer')"
+    status=$?
+    if [ "$status" -gt 1 ]; then
+      printf 'before-push: grep could not read what %s printed (exit %s), so a note it made may have been lost\n' "$name" "$status" >&2
+      failed+=("$name")
+    elif [ "$status" -eq 0 ]; then
+      printf '%s\n' "$notes" >&2
+    fi
   else
     printf 'FAILED\n'
     printf '%s\n' "$out" >&2
@@ -88,7 +102,8 @@ if ! command -v rustup >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! rustup target list --installed | grep -qx "$target"; then
+installed="$(rustup target list --installed)" || { echo "before-push: rustup could not list its targets." >&2; exit 2; }
+if ! [[ "$installed" =~ (^|[[:space:]])"$target"($|[[:space:]]) ]]; then
   echo "before-push: the $target target is not installed, and it is the whole reason this runs." >&2
   echo "before-push: rustup target add $target" >&2
   exit 1
@@ -124,6 +139,14 @@ if ! command -v x86_64-linux-gnu-gcc >/dev/null 2>&1 && [ -z "${CC_x86_64_unknow
     echo "before-push: skipping it. Install one: winget install --id zig.zig" >&2
     exit 1
   fi
+  # The wrapper is a cmd file, and cmd cannot run a path spelled the way this shell spells one:
+  # `command -v` under Git Bash answers /c/Users/... and cmd answers "cannot find the path". So
+  # the path is turned into its Windows spelling where the shell has the tool to do it, which
+  # every Git Bash has. Until 2026-09-17 the wrapper was written with the POSIX spelling whenever
+  # zig was on PATH, and the Linux lint failed on every push from such a shell.
+  if command -v cygpath >/dev/null 2>&1; then
+    zig="$(cygpath -w "$zig")"
+  fi
   mkdir -p target
   wrapper="$root/target/linux-cc.cmd"
   {
@@ -155,27 +178,86 @@ step "Build"               cargo build --workspace --all-targets
 step "Tests"               cargo test --workspace
 throwaway_key="$(mktemp)"
 head -c 32 /dev/urandom >"$throwaway_key"
-step "The key log builds from this tree" env TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$throwaway_key" "$throwaway_key.log"
-rm -f "$throwaway_key" "$throwaway_key.log"
+# The throwaway's public half, derived here rather than read off the script's own output, which is
+# the comparison the script's --signer check exists for.
+signer="$({ printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x70\x04\x22\x04\x20'; cat "$throwaway_key"; } | openssl pkey -inform DER -pubout -outform DER | tail -c 32 | od -An -v -tx1 | tr -d ' \n')"
+step "The key log builds from this tree" bash -c "TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh '$throwaway_key' '$throwaway_key.log' --first --signer '$signer' && TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh '$throwaway_key' '$throwaway_key.log' --signer '$signer'"
+# The same four refusals CI drives, so a script that stopped refusing is seen here first.
+key_log_refuses() {
+  local reason="$1"; shift
+  local said
+  if said="$(TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh "$@" 2>&1)"; then
+    printf '%s\n' "$said"; echo "key-log.sh wrote a log it is built to refuse: $reason"; return 1
+  fi
+  case "$said" in
+    *"$reason"*) ;;
+    *) printf '%s\n' "$said"; echo "it refused, and not because $reason"; return 1 ;;
+  esac
+}
+step "  and still refuses a first head where one exists" key_log_refuses "not the first head" "$throwaway_key" "$throwaway_key.log" --first --signer "$signer"
+cp "$throwaway_key.log" "$throwaway_key.longer"
+target/debug/timewitness key-log --log "$throwaway_key.longer" --add "$(printf '09%.0s' $(seq 32))" --role server --label "a third server" --sign "$throwaway_key" >/dev/null
+step "  and a log that does not extend the copy last served" key_log_refuses "not a prefix of the one this would write" "$throwaway_key" "$throwaway_key.longer" --signer "$signer"
+another_key="$(mktemp)"
+head -c 32 /dev/urandom >"$another_key"
+step "  and a head by a key the verifier does not hold" key_log_refuses "not signed by the key the verifier holds for us" "$another_key" "$throwaway_key.log" --signer "$signer"
+step "  and no copy last served without --first" key_log_refuses "no copy last served" "$throwaway_key" "$throwaway_key.nowhere/key-log.txt" --signer "$signer"
+rm -f "$throwaway_key" "$throwaway_key.log" "$throwaway_key.longer" "$another_key"
+step "Verifying needs no account and no call to us" cargo test -p timewitness-architecture --test verify_path_needs_nothing_of_ours
+# The other half of that CI step, `scripts/verify-offline.sh`, takes the network away in a Linux
+# namespace, and this machine has no Linux to make one in. Said out loud rather than skipped quietly,
+# the same as the advisory reader above: the half that reads the sources ran here, the half that
+# unplugs the verifier runs in CI and nowhere else.
+if ! command -v unshare >/dev/null 2>&1; then
+  echo "before-push: no unshare here, so the verifier was not run with the network taken away. CI runs that half." >&2
+else
+  offline_key="$(mktemp)"
+  head -c 32 /dev/urandom >"$offline_key"
+  step "  and with the network taken away" bash -c "TIMEWITNESS_BIN=target/debug/timewitness bash scripts/key-log.sh '$offline_key' '$offline_key.log' --first >/dev/null && TIMEWITNESS_BIN=target/debug/timewitness bash scripts/verify-offline.sh '$offline_key.log'"
+  rm -f "$offline_key" "$offline_key.log"
+fi
+# The verifier page stood outside this script until 2026-09-14 on the reading that it took minutes.
+# Warm, the whole of it takes seconds, and the page half of the check above is read off the page as
+# built, so it cannot run without it.
+step "The verifier page"   bash scripts/build-verifier-page.sh
+step "The verifier page asks for nothing" bash -c "node scripts/verifier-page-offline.mjs && node scripts/verifier-page-offline.mjs --self-test && node scripts/verifier-page-in-a-browser.mjs"
 step "Repository hygiene"  bash scripts/repo-hygiene.sh
+step "Repository hygiene still refuses its seeds" bash scripts/repo-hygiene.sh --self-test
+step "The guards are written to the contract" bash -c "bash scripts/guard-lint.sh --self-test && bash scripts/guard-lint.sh scripts"
+step "The hook's steps are this file's" bash -c "node scripts/steps-match.mjs --self-test && node scripts/steps-match.mjs"
 # CI runs this on the tree route, because it grades a commit and the served page is not in one. Here
 # the sibling checkout is on disk, so the same script compares all three and this machine is the one
 # place that catches a markdown change before it ships without the site copy beside it. Strictly more
 # than CI does, which is the point of the hook rather than a difference to reconcile.
 step "The limitation list, on all three surfaces" bash scripts/three-surfaces.sh
+# Here the site copy is beside this tree, so its sentences are held to the policy as well.
+step "Every sentence agrees with the shipped policy" bash -c "python3 scripts/policy-sentences.py && python3 scripts/policy-sentences.py --self-test"
+# Here the site repository is usually beside this one, so this run also holds the two copies of the
+# rules to each other, which CI cannot.
+step "No surface sells precision or prices a receipt" node scripts/no-price-on-evidence.mjs
+# The check run backwards. The reason it refuses is read from a capture rather than through a pipe,
+# so a refusal for some other reason, or a check that could not run, is not read as the seed caught.
+price_refuses() {
+  local mode="$1" reason="$2" said
+  if said="$(TW_PRICE_PROVE="$mode" node scripts/no-price-on-evidence.mjs 2>&1)"; then
+    printf '%s\n' "$said"; echo "the check passed with TW_PRICE_PROVE=$mode, so it is not connected"; return 1
+  fi
+  case "$said" in
+    *"$reason"*) ;;
+    *) printf '%s\n' "$said"; echo "it refused, and not for $reason"; return 1 ;;
+  esac
+}
+step "  and that check still refuses a precision tier" price_refuses precision "offers a reduced-precision tier"
+step "  and a price per receipt" price_refuses per-receipt "offers a price per receipt"
 step "The guard that reads the served page is still running" bash scripts/wire-guard-is-alive.sh
 step "Dependency advisories" bash scripts/check-advisories.sh
 
-# The verifier page is CI's seventh step and it is not here. It needs the wasm target and a release
-# build of the whole workspace, which is minutes rather than seconds, and it has its own check in
-# `scripts/check-verifier-page.mjs` that whoever touches that page runs. Named rather than dropped
-# quietly, so the two lists still line up.
-
 if [ ${#failed[@]} -ne 0 ]; then
   echo >&2
-  echo "before-push: ${#failed[@]} of 8 failed: ${failed[*]}" >&2
+  echo "before-push: ${#failed[@]} of $ran failed: ${failed[*]}" >&2
   echo "before-push: CI would go red on this. Fix it rather than pushing past it." >&2
   exit 1
 fi
 
-echo "before-push: eight for eight. This is what CI will run."
+# Counted rather than written, because a step was added once and the number beside it was not.
+echo "before-push: $ran for $ran. This is what CI will run."

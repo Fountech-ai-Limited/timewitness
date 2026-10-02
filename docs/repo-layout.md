@@ -29,6 +29,7 @@ change would announce itself.
 
 The selection rule departs from textbook Marzullo, decided 2026-09-09, and `crates/clock/src/marzullo.rs` states the departure at the head of the file. A majority that exists only because of sources that could not have been put in the minority is refused rather than signed. It only ever turns an answer into a refusal; no region moves.
 | `timewitness-receipt` | `crates/receipt` | Receipt format v0: the schema, deterministic CBOR, the COSE envelope, the validator. | `core` |
+| `timewitness-countersign` | `crates/countersign` | The countersign wire form: what travels in an `X-Bounded-Time` header or on an MCP tool call, its encoding, its size ceiling, and why a receiver refuses one. It signs nothing and decides no order. | `core`, `receipt` |
 | `timewitness-verify` | `crates/verify` | The verifier. Ships as a thing that runs with none of our infrastructure and no account. | `core`, `receipt` |
 | `timewitness-verify-web` | `crates/verify-web` | The verifier core as WebAssembly. Converts bytes to bytes across the boundary a page calls through, and checks nothing itself. | `core`, `receipt`, `verify` |
 | `timewitness-cli` | `crates/cli` | The command line. Wires the others together and does no work of its own. | all of the above |
@@ -88,5 +89,7 @@ what does not, so a shape nobody has thought about is refused rather than admitt
 - Anything about how the bound is computed or when it is refused: `crates/clock`.
 - Anything about what a receipt carries: `crates/receipt`, and the schema document beside it.
 - Anything a stranger runs to check a receipt: `crates/verify`.
-- The countersign protocol is phase 2 and has no folder here yet. It gets one when phase 2 opens and
-  not before.
+- The countersign protocol is phase 2, which opened on 2026-09-19. `crates/countersign` holds the
+  wire form and nothing else so far: signing, the receive half, the ordering answer, receiver-only
+  mode, and attacking all of it, are the rest of it and each arrives on its own. The document beside
+  it is `docs/countersign-wire-v0.md`.

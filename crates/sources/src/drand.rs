@@ -56,6 +56,15 @@ impl DrandClient {
         }
     }
 
+    /// The relays this client will ask, in the order it asks them.
+    ///
+    /// Readable so the document listing what a host has to reach is held to the list the client
+    /// actually carries.
+    #[must_use]
+    pub fn relays(&self) -> &[String] {
+        &self.relays
+    }
+
     /// The same client with a different set of relays.
     #[must_use]
     pub fn from_relays(mut self, relays: Vec<String>) -> Self {
@@ -160,11 +169,14 @@ impl DrandClient {
         let checked =
             drand::check(&blob, &self.chain).map_err(|e| SourceError::Malformed(e.to_string()))?;
 
-        Ok(Attestation::at_instant(
-            Vec::new(),
-            blob,
-            checked.earliest(),
-        ))
+        // A round falls at one instant on the chain's published schedule, so a checked round with
+        // no instant in it is malformed rather than a beacon that declined to say.
+        let at = checked.earliest().ok_or_else(|| {
+            SourceError::Malformed(format!(
+                "{url} answered with a round that falls at no moment"
+            ))
+        })?;
+        Ok(Attestation::at_instant(Vec::new(), blob, at))
     }
 
     /// What was checked, in words, for a caller that wants to report it.

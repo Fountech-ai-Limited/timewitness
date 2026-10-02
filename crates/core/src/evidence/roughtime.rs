@@ -1,15 +1,15 @@
 //! Roughtime, checked from the bytes up.
 //!
 //! **Which specification this is.** `draft-ietf-ntp-roughtime-19`, dated 17 March 2026. It is an
-//! Internet-Draft with intended status Experimental, not an RFC, and **it expires on 18 September
-//! 2026**. The draft has been reissued roughly every two months for two years and each revision so
-//! far has kept the wire format, so an expiry is a document going stale rather than a protocol
-//! changing. What breaks when it lapses is the reference, not the code: the public servers keep
-//! answering, this module keeps verifying them, and nothing in a receipt already issued stops being
-//! checkable. What whoever maintains this has to do is read whatever revision replaced it and
-//! compare the four things this file depends on, which are the packet framing, the message
-//! encoding, the two signature context strings, and the Merkle rule. If any of those move, this
-//! file moves with them and the version constant below changes.
+//! Internet-Draft with intended status Experimental, not an RFC. Read off the IETF datatracker on
+//! 17 September 2026, that revision was in the RFC Editor Queue, which is where a draft waits before
+//! it is published as an RFC. The draft was reissued roughly every two months for two years and each
+//! revision kept the wire format, so publication is the likeliest point for anything here to move.
+//! What moves then is the reference, not a receipt already issued: this module keeps the rules it was
+//! signed under. What whoever maintains this has to do is read the published RFC, or whatever
+//! revision replaced this one, and compare the four things this file depends on, which are the
+//! packet framing, the message encoding, the two signature context strings, and the Merkle rule. If
+//! any of those move, this file moves with them and the version constant below changes.
 //!
 //! **The version on the wire is not 1.** The draft carries a note to the RFC editor naming
 //! `0x8000000c` as the version number to use while it is a draft, and that is the number every
@@ -25,7 +25,7 @@
 //! three public servers reachable on 2026-09-07 were reporting one, three and five, so a corridor
 //! is seconds wide. It authenticates the bound. It does not tighten it.
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha512};
 
 use super::{Checked, EvidenceError};
@@ -33,9 +33,6 @@ use crate::time::{UnixNanos, NANOS_PER_SEC};
 
 /// The draft revision this module implements.
 pub const DRAFT_REVISION: u32 = 19;
-
-/// The date that revision expires, as a plain string for anything that reports it.
-pub const DRAFT_EXPIRY: &str = "2026-09-18";
 
 /// The version number to put in a request and to expect in a response.
 ///
@@ -448,21 +445,159 @@ fn signature(bytes: &[u8], whose: &str) -> Result<Signature, EvidenceError> {
     Ok(Signature::from_bytes(&b))
 }
 
-/// Check a stored Roughtime blob against the server's published long-term key.
+/// The hash of the long-term key the stored request asked its answer to be signed under.
 ///
-/// This is every check the draft's own validity section lists, and two more that belong to us
-/// rather than to Roughtime: that the request in the blob carries the nonce it claims, and that a
-/// binding, where there is one, really produces that nonce.
-///
-/// It runs in the agent the moment a response arrives and in a verifier years later on the same
-/// bytes. There is no second, looser path.
-pub fn check(
-    blob: &[u8],
-    long_term_public_key: &[u8; 32],
-    server_name: &str,
-) -> Result<Checked, EvidenceError> {
-    let mut checks: Vec<String> = Vec::new();
+/// This is the one fact about who signed a corridor that needs no key to read, and a reader
+/// compares their own list against it before checking anything. A request names its server by
+/// this hash, so a reader holding no key that hashes to it has nothing to check the response
+/// against, which is a fact about the reader. Until 2026-09-15 the validator had no way to ask
+/// this: it tried every key it held and read a response that fitted none of them as a receipt
+/// contradicting itself, so a reader holding two of the three published keys was told an intact
+/// receipt was a lie.
+pub fn requested_key_hash(blob: &[u8]) -> Result<[u8; 32], EvidenceError> {
+    Ok(inspect(blob)?.requested_key_hash)
+}
 
+/// A stored Roughtime blob, read and held to itself with no key at all.
+///
+/// Everything a reader can establish about a corridor before choosing whose key to check it under.
+/// That is nearly all of it: the framing, the encoding, the nonce and its binding, the delegation
+/// window, the signed part of the response under the key the delegation names, the version, the
+/// radius, and the Merkle path from the stored request to the signed root. Two things are left for
+/// the key, and only two: that the request named that key, and that the delegation is signed by
+/// it.
+///
+/// This type exists because of what happened when those two questions were asked first. The
+/// validator read who signed a corridor off the request, found no key for them, and reported the
+/// entry not checked before reading anything past the outer blob. The name sits in bytes whoever
+/// wrote the receipt controls, so renaming it moved a reply of zeros past every check below. What
+/// runs here runs on every corridor whatever the reader holds, so a name decides only whether the
+/// signature is checked and never whether the bytes are read.
+#[derive(Clone, Copy, Debug)]
+pub struct Inspected<'a> {
+    stored: Stored<'a>,
+    nonce: [u8; 32],
+    requested_key_hash: [u8; 32],
+    delegation: &'a [u8],
+    delegation_signature: &'a [u8],
+    min_time: u64,
+    max_time: u64,
+    midpoint: u64,
+    radius: u32,
+    steps: usize,
+}
+
+impl Inspected<'_> {
+    /// The hash of the long-term key the request asked to be answered under.
+    #[must_use]
+    pub const fn requested_key_hash(&self) -> [u8; 32] {
+        self.requested_key_hash
+    }
+
+    /// The nonce the request carried, which the response echoes and the Merkle leaf covers.
+    #[must_use]
+    pub const fn nonce(&self) -> &[u8; 32] {
+        &self.nonce
+    }
+
+    /// What the nonce was derived from, or empty where it was random.
+    #[must_use]
+    pub const fn binding(&self) -> &[u8] {
+        self.stored.binding
+    }
+
+    /// The moment the response states, in nanoseconds.
+    #[must_use]
+    pub fn midpoint(&self) -> UnixNanos {
+        UnixNanos(i128::from(self.midpoint) * NANOS_PER_SEC)
+    }
+
+    /// The radius the response states, in nanoseconds.
+    #[must_use]
+    pub fn radius(&self) -> crate::time::Nanos {
+        i128::from(self.radius) * NANOS_PER_SEC
+    }
+
+    /// Check what only the server's published long-term key can check.
+    ///
+    /// Two things: that the request asked for this key, and that the delegation inside the
+    /// response is signed by it. Everything else about the blob was established by [`inspect`],
+    /// and the list of checks this returns names all of it in the order a reader would want to
+    /// follow, from the request to the signed root.
+    pub fn under(
+        &self,
+        long_term_public_key: &[u8; 32],
+        server_name: &str,
+    ) -> Result<Checked, EvidenceError> {
+        let mut checks: Vec<String> = Vec::new();
+
+        if self.requested_key_hash != server_key_hash(long_term_public_key) {
+            return Err(EvidenceError::OutsideDelegation(format!(
+                "the request asked {server_name} to answer with a different long-term key from \
+                 the one this check was given, so the response is about somebody else's key"
+            )));
+        }
+        checks.push(format!(
+            "the request names the long-term key of {server_name} and carries a 32 byte nonce"
+        ));
+
+        if self.stored.binding.is_empty() {
+            checks.push("the nonce is random and is bound to no subject".to_string());
+        } else {
+            checks.push(format!(
+                "the nonce is derived from a {} byte binding and the derivation was recomputed",
+                self.stored.binding.len()
+            ));
+        }
+
+        let long_term = verifying_key(long_term_public_key, "long-term")?;
+        let cert_signature = signature(self.delegation_signature, "delegation")?;
+        let mut delegation_signed =
+            Vec::with_capacity(DELEGATION_CONTEXT.len() + self.delegation.len());
+        delegation_signed.extend_from_slice(DELEGATION_CONTEXT);
+        delegation_signed.extend_from_slice(self.delegation);
+        long_term
+            .verify_strict(&delegation_signed, &cert_signature)
+            .map_err(|_| {
+                EvidenceError::BadSignature(format!(
+                    "the delegation in this response was not signed by the published long-term \
+                     key of {server_name}"
+                ))
+            })?;
+        checks.push(format!(
+            "the delegation is signed by the published long-term key of {server_name}"
+        ));
+        checks.push("the signed part of the response checks against the delegated key".to_string());
+        checks.push(format!(
+            "the moment it states, {}, is inside the window {} to {} the delegation allows",
+            self.midpoint, self.min_time, self.max_time
+        ));
+        checks.push(format!(
+            "the path from our own request reaches the signed root in {} steps",
+            self.steps
+        ));
+
+        Checked::over(
+            SCHEME,
+            server_name.to_string(),
+            UnixNanos(self.midpoint().as_nanos() - self.radius()),
+            UnixNanos(self.midpoint().as_nanos() + self.radius()),
+            Some(self.nonce.to_vec()),
+            checks,
+        )
+    }
+}
+
+/// Read a stored Roughtime blob and hold it to itself, with no key.
+///
+/// Every refusal here is one anybody can make from the bytes alone, so a validator makes all of
+/// them before asking whose key to try, and a blob that fails one is refused whatever the reader
+/// holds. The one check that reads a key from the blob rather than from the reader is the response
+/// signature under the delegated key: that key is inside the response, so a forger can write both
+/// halves, and passing it says only that the response agrees with itself. A forger who does that
+/// work gets an entry reported as not checked, which is what an intact attestation by a party the
+/// reader holds no key for is. A forger who does not gets a refusal.
+pub fn inspect(blob: &[u8]) -> Result<Inspected<'_>, EvidenceError> {
     let stored = unpack_blob(blob)?;
     let (binding, request_packet, response_packet) = (stored.binding, stored.request, stored.reply);
 
@@ -476,29 +611,12 @@ pub fn check(
     }
     let nonce = request.need_fixed::<32>(TAG_NONC)?;
     let requested_key_hash = request.need_fixed::<32>(TAG_SRV)?;
-    if requested_key_hash != server_key_hash(long_term_public_key) {
-        return Err(EvidenceError::OutsideDelegation(format!(
-            "the request asked {server_name} to answer with a different long-term key from the one \
-             this check was given, so the response is about somebody else's key"
-        )));
-    }
-    checks.push(format!(
-        "the request names the long-term key of {server_name} and carries a 32 byte nonce"
-    ));
 
-    if binding.is_empty() {
-        checks.push("the nonce is random and is bound to no subject".to_string());
-    } else {
-        if bind_nonce(binding) != nonce {
-            return Err(EvidenceError::WrongNonce(
-                "the stored binding does not produce the nonce in the request, so the response is \
-                 not about this subject"
-                    .to_string(),
-            ));
-        }
-        checks.push(format!(
-            "the nonce is derived from a {} byte binding and the derivation was recomputed",
-            binding.len()
+    if !binding.is_empty() && bind_nonce(binding) != nonce {
+        return Err(EvidenceError::WrongNonce(
+            "the stored binding does not produce the nonce in the request, so the response is \
+             not about this subject"
+                .to_string(),
         ));
     }
 
@@ -514,27 +632,11 @@ pub fn check(
         ));
     }
 
-    // The certificate: the long-term key delegating to an online key for a window of time.
+    // The certificate: the long-term key delegating to an online key for a window of time. The
+    // signature over it is the key's to check and is kept for `under`; the window is read here.
     let cert = Message::parse(response.need(TAG_CERT)?)?;
     let delegation_bytes = cert.need(TAG_DELE)?;
-    let long_term = verifying_key(long_term_public_key, "long-term")?;
-    let cert_signature = signature(cert.need(TAG_SIG)?, "delegation")?;
-    let mut delegation_signed =
-        Vec::with_capacity(DELEGATION_CONTEXT.len() + delegation_bytes.len());
-    delegation_signed.extend_from_slice(DELEGATION_CONTEXT);
-    delegation_signed.extend_from_slice(delegation_bytes);
-    long_term
-        .verify(&delegation_signed, &cert_signature)
-        .map_err(|_| {
-            EvidenceError::BadSignature(format!(
-                "the delegation in this response was not signed by the published long-term key of \
-                 {server_name}"
-            ))
-        })?;
-    checks.push(format!(
-        "the delegation is signed by the published long-term key of {server_name}"
-    ));
-
+    let delegation_signature = cert.need(TAG_SIG)?;
     let delegation = Message::parse(delegation_bytes)?;
     let online_key_bytes = delegation.need_fixed::<32>(TAG_PUBK)?;
     let min_time = delegation.need_u64(TAG_MINT)?;
@@ -545,7 +647,7 @@ pub fn check(
         ));
     }
 
-    // The response itself, signed by the key the certificate just delegated to.
+    // The response itself, signed by the key the certificate delegates to.
     let signed_response_bytes = response.need(TAG_SREP)?;
     let online_key = verifying_key(&online_key_bytes, "delegated")?;
     let response_signature = signature(response.need(TAG_SIG)?, "response")?;
@@ -554,7 +656,7 @@ pub fn check(
     response_signed.extend_from_slice(RESPONSE_CONTEXT);
     response_signed.extend_from_slice(signed_response_bytes);
     online_key
-        .verify(&response_signed, &response_signature)
+        .verify_strict(&response_signed, &response_signature)
         .map_err(|_| {
             EvidenceError::BadSignature(
                 "the signed part of the response does not check against the key the delegation \
@@ -562,7 +664,6 @@ pub fn check(
                     .to_string(),
             )
         })?;
-    checks.push("the signed part of the response checks against the delegated key".to_string());
 
     let signed_response = Message::parse(signed_response_bytes)?;
     let midpoint = signed_response.need_u64(TAG_MIDP)?;
@@ -590,10 +691,6 @@ pub fn check(
              {min_time} to {max_time}"
         )));
     }
-    checks.push(format!(
-        "the moment it states, {midpoint}, is inside the window {min_time} to {max_time} the \
-         delegation allows"
-    ));
 
     // The Merkle proof, which is what ties the signature to our own request rather than to
     // somebody else's that the server batched alongside it.
@@ -633,21 +730,37 @@ pub fn check(
                 .to_string(),
         ));
     }
-    checks.push(format!(
-        "the path from our own request reaches the signed root in {steps} steps"
-    ));
 
-    let midpoint_nanos = i128::from(midpoint) * NANOS_PER_SEC;
-    let radius_nanos = i128::from(radius) * NANOS_PER_SEC;
+    Ok(Inspected {
+        stored,
+        nonce,
+        requested_key_hash,
+        delegation: delegation_bytes,
+        delegation_signature,
+        min_time,
+        max_time,
+        midpoint,
+        radius,
+        steps,
+    })
+}
 
-    Checked::over(
-        SCHEME,
-        server_name.to_string(),
-        UnixNanos(midpoint_nanos - radius_nanos),
-        UnixNanos(midpoint_nanos + radius_nanos),
-        Some(nonce.to_vec()),
-        checks,
-    )
+/// Check a stored Roughtime blob against the server's published long-term key.
+///
+/// This is every check the draft's own validity section lists, and two more that belong to us
+/// rather than to Roughtime: that the request in the blob carries the nonce it claims, and that a
+/// binding, where there is one, really produces that nonce. It is [`inspect`] followed by
+/// [`Inspected::under`], and nothing else, so a validator that runs the two apart runs exactly
+/// what the agent runs together.
+///
+/// It runs in the agent the moment a response arrives and in a verifier years later on the same
+/// bytes. There is no second, looser path.
+pub fn check(
+    blob: &[u8],
+    long_term_public_key: &[u8; 32],
+    server_name: &str,
+) -> Result<Checked, EvidenceError> {
+    inspect(blob)?.under(long_term_public_key, server_name)
 }
 
 // The server half of the same wire format.
@@ -889,6 +1002,25 @@ pub fn build_response(
     let request = Message::parse(message)?;
     let nonce = request.need_fixed::<32>(TAG_NONC)?;
 
+    Ok(respond(
+        request_packet,
+        &nonce,
+        certificate,
+        midpoint,
+        radius,
+        |signed| ed25519_dalek::Signer::sign(online, signed).to_bytes(),
+    ))
+}
+
+/// The response packet, with its signature made by `sign` over the bytes the draft says are signed.
+fn respond(
+    request_packet: &[u8],
+    nonce: &[u8; 32],
+    certificate: &Delegation,
+    midpoint: u64,
+    radius: u32,
+    sign: impl FnOnce(&[u8]) -> [u8; 64],
+) -> Vec<u8> {
     // A tree of one. The leaf is the hash of the whole request packet under the leaf prefix, and
     // that leaf is the root. `check` recomputes exactly this from the request it holds.
     let root = h(&[&[0x00], request_packet]);
@@ -903,20 +1035,20 @@ pub fn build_response(
     let mut signed = Vec::with_capacity(RESPONSE_CONTEXT.len() + signed_response.len());
     signed.extend_from_slice(RESPONSE_CONTEXT);
     signed.extend_from_slice(&signed_response);
-    let signature = ed25519_dalek::Signer::sign(online, &signed);
+    let signature = sign(&signed);
 
     let response = encode(&[
         (TAG_VER, WIRE_VERSION.to_le_bytes().to_vec()),
         (TAG_NONC, nonce.to_vec()),
         (TAG_TYPE, TYPE_RESPONSE.to_le_bytes().to_vec()),
         (TAG_SREP, signed_response),
-        (TAG_SIG, signature.to_bytes().to_vec()),
+        (TAG_SIG, signature.to_vec()),
         (TAG_CERT, certificate.certificate()),
         (TAG_PATH, Vec::new()),
         (TAG_INDX, 0u32.to_le_bytes().to_vec()),
     ]);
 
-    Ok(frame(&response))
+    frame(&response)
 }
 
 const TAG_INDX: u32 = tag(b"INDX");
@@ -1135,9 +1267,10 @@ mod tests {
         // narrowest the wire format can state, so two seconds is the narrowest a Roughtime corridor
         // ever is. This assertion is the one that stops anybody claiming our own servers made the
         // bound tighter.
-        assert_eq!(checked.radius(), NANOS_PER_SEC);
+        assert_eq!(checked.radius(), Some(NANOS_PER_SEC));
         assert_eq!(
-            checked.latest().0 - checked.earliest().0,
+            checked.latest().expect("a corridor states an interval").0
+                - checked.earliest().expect("a corridor states an interval").0,
             2 * NANOS_PER_SEC,
             "a Roughtime corridor is two seconds wide at its narrowest, whoever runs the server"
         );
@@ -1355,5 +1488,281 @@ mod tests {
             response.len(),
             request.len()
         );
+    }
+    // Two signatures are checked on the way to a corridor: the long-term key's over the delegation,
+    // and the online key's over the signed response. Both used `verify` until 2026-09-17, which
+    // accepts a key of small order, and a key of small order has signatures anybody can write. Each
+    // shape below goes at both checks and each is refused.
+
+    use ed25519_dalek::Verifier;
+
+    /// Where an attack is aimed.
+    #[derive(Clone, Copy)]
+    enum Site {
+        /// The long-term key over the delegation. The attacker's key is the one the reader pins.
+        Delegation,
+        /// The online key over the signed response. An honest long-term key delegated to the
+        /// attacker's key.
+        Response,
+    }
+
+    /// The neutral point, `y = 1`, the first of the eight points of small order.
+    const NEUTRAL: [u8; 32] = {
+        let mut b = [0u8; 32];
+        b[0] = 1;
+        b
+    };
+
+    /// The point of order two, `y = p - 1`.
+    const ORDER_TWO: [u8; 32] = {
+        let mut b = [0xffu8; 32];
+        b[0] = 0xec;
+        b[31] = 0x7f;
+        b
+    };
+
+    /// The neutral point again, written with `y = p + 1`, which is not the canonical spelling.
+    const NEUTRAL_WRITTEN_LONG: [u8; 32] = {
+        let mut b = [0xffu8; 32];
+        b[0] = 0xee;
+        b[31] = 0x7f;
+        b
+    };
+
+    /// The base point, compressed.
+    const BASE: [u8; 32] = {
+        let mut b = [0x66u8; 32];
+        b[0] = 0x58;
+        b
+    };
+
+    /// The order of the base point, little-endian.
+    const ORDER: [u8; 32] = [
+        0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde,
+        0x14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+    ];
+
+    fn signature_of(r: [u8; 32], s: [u8; 32]) -> [u8; 64] {
+        let mut out = [0u8; 64];
+        out[..32].copy_from_slice(&r);
+        out[32..].copy_from_slice(&s);
+        out
+    }
+
+    fn one() -> [u8; 32] {
+        let mut b = [0u8; 32];
+        b[0] = 1;
+        b
+    }
+
+    /// A stored response that is honest except at `site`, where the signer's public key is
+    /// `signer` and the signature is whatever `sign` writes over the bytes signed there. `vary`
+    /// moves the signed bytes at that site, so a test can look for bytes a shape needs.
+    ///
+    /// Returns the blob, the long-term key a reader would pin, and the exact bytes signed at the site.
+    fn forged(
+        site: Site,
+        signer: [u8; 32],
+        sign: impl Fn(&[u8]) -> [u8; 64],
+        vary: u64,
+    ) -> (Vec<u8>, [u8; 32], Vec<u8>) {
+        let midpoint = 1_800_000_000u64;
+        let nonce = [0x5a; 32];
+        let online = key(9);
+        match site {
+            Site::Delegation => {
+                let min_time = midpoint - 43_200 - vary;
+                let max_time = midpoint + 43_200;
+                let delegation = encode(&[
+                    (TAG_PUBK, online.verifying_key().to_bytes().to_vec()),
+                    (TAG_MINT, min_time.to_le_bytes().to_vec()),
+                    (TAG_MAXT, max_time.to_le_bytes().to_vec()),
+                ]);
+                let mut signed = DELEGATION_CONTEXT.to_vec();
+                signed.extend_from_slice(&delegation);
+                let certificate = Delegation {
+                    delegation,
+                    signature: sign(&signed),
+                    min_time,
+                    max_time,
+                };
+                let request = build_request(&nonce, &signer);
+                let response = build_response(&request, &online, &certificate, midpoint, 1)
+                    .expect("the response half is honest");
+                (pack_blob(&[], &request, &response), signer, signed)
+            }
+            Site::Response => {
+                let long_term = key(7);
+                let long_term_public = long_term.verifying_key().to_bytes();
+                let certificate =
+                    delegate(&long_term, &signer, midpoint - 43_200, midpoint + 43_200)
+                        .expect("the delegation half is honest");
+                let request = build_request(&nonce, &long_term_public);
+                let mut signed = Vec::new();
+                let response = respond(
+                    &request,
+                    &nonce,
+                    &certificate,
+                    midpoint + vary,
+                    1,
+                    |bytes| {
+                        signed = bytes.to_vec();
+                        sign(bytes)
+                    },
+                );
+                (
+                    pack_blob(&[], &request, &response),
+                    long_term_public,
+                    signed,
+                )
+            }
+        }
+    }
+
+    fn refused(site: Site, blob: &[u8], long_term_public: &[u8; 32], shape: &str) {
+        let outcome = check(blob, long_term_public, "a pinned server");
+        let at = match site {
+            Site::Delegation => "the delegation",
+            Site::Response => "the response",
+        };
+        assert!(
+            matches!(outcome, Err(EvidenceError::BadSignature(_))),
+            "{shape} at {at}: expected a signature refusal, got {outcome:?}"
+        );
+    }
+
+    /// S1. The neutral point as the key, `R = B`, `s = 1`, which checks for every message under the
+    /// equation `verify` uses.
+    fn the_neutral_point_as_the_key(site: Site) {
+        let (blob, pinned, signed) = forged(site, NEUTRAL, |_| signature_of(BASE, one()), 0);
+        assert!(
+            VerifyingKey::from_bytes(&NEUTRAL)
+                .unwrap()
+                .verify(&signed, &Signature::from_bytes(&signature_of(BASE, one())))
+                .is_ok(),
+            "the shape has to be one the lenient check accepts, or this test holds nothing"
+        );
+        refused(site, &blob, &pinned, "S1");
+    }
+
+    /// S2. The point of order two as the key, `R = B`, `s = 1`, with the signed bytes moved until
+    /// the challenge is even, which is when that equation holds.
+    fn a_second_small_order_point_as_the_key(site: Site) {
+        let lenient = VerifyingKey::from_bytes(&ORDER_TWO).expect("a point on the curve");
+        let signature = signature_of(BASE, one());
+        let found = (0..256).find_map(|vary| {
+            let (blob, pinned, signed) = forged(site, ORDER_TWO, |_| signature, vary);
+            lenient
+                .verify(&signed, &Signature::from_bytes(&signature))
+                .is_ok()
+                .then_some((blob, pinned))
+        });
+        let (blob, pinned) = found.expect("half of all challenges are even");
+        refused(site, &blob, &pinned, "S2");
+    }
+
+    /// S3. The neutral point written the long way as `R`, over the neutral point as the key, `s = 0`.
+    fn a_commitment_written_the_long_way(site: Site) {
+        let (blob, pinned, _) = forged(
+            site,
+            NEUTRAL,
+            |_| signature_of(NEUTRAL_WRITTEN_LONG, [0u8; 32]),
+            0,
+        );
+        refused(site, &blob, &pinned, "S3");
+    }
+
+    /// S4. An honest key whose holder signs with `R` the neutral point and `s = h a`. The key is
+    /// sound and the signature is one that key could be made to have twice.
+    fn a_commitment_of_small_order_from_an_honest_key(site: Site) {
+        let holder = key(11);
+        let public = holder.verifying_key().to_bytes();
+        let a = holder.to_scalar();
+        let sign = |message: &[u8]| {
+            let mut hasher = Sha512::new();
+            hasher.update(NEUTRAL);
+            hasher.update(public);
+            hasher.update(message);
+            let challenge =
+                curve25519_dalek::Scalar::from_bytes_mod_order_wide(&hasher.finalize().into());
+            signature_of(NEUTRAL, (challenge * a).to_bytes())
+        };
+        let (blob, pinned, signed) = forged(site, public, sign, 0);
+        assert!(
+            holder
+                .verifying_key()
+                .verify(&signed, &Signature::from_bytes(&sign(&signed)))
+                .is_ok(),
+            "the shape has to be one the lenient check accepts, or this test holds nothing"
+        );
+        refused(site, &blob, &pinned, "S4");
+    }
+
+    /// S5. An honest signature with `s` written as `s + l`, the same scalar spelled out of range.
+    fn a_scalar_written_out_of_range(site: Site) {
+        let holder = key(13);
+        let public = holder.verifying_key().to_bytes();
+        let sign = |message: &[u8]| {
+            let mut bytes = ed25519_dalek::Signer::sign(&holder, message).to_bytes();
+            let mut carry = 0u16;
+            for (i, limb) in ORDER.iter().enumerate() {
+                let sum = u16::from(bytes[32 + i]) + u16::from(*limb) + carry;
+                bytes[32 + i] = (sum & 0xff) as u8;
+                carry = sum >> 8;
+            }
+            bytes
+        };
+        let (blob, pinned, _) = forged(site, public, sign, 0);
+        refused(site, &blob, &pinned, "S5");
+    }
+
+    #[test]
+    fn s1_at_the_delegation() {
+        the_neutral_point_as_the_key(Site::Delegation);
+    }
+
+    #[test]
+    fn s1_at_the_response() {
+        the_neutral_point_as_the_key(Site::Response);
+    }
+
+    #[test]
+    fn s2_at_the_delegation() {
+        a_second_small_order_point_as_the_key(Site::Delegation);
+    }
+
+    #[test]
+    fn s2_at_the_response() {
+        a_second_small_order_point_as_the_key(Site::Response);
+    }
+
+    #[test]
+    fn s3_at_the_delegation() {
+        a_commitment_written_the_long_way(Site::Delegation);
+    }
+
+    #[test]
+    fn s3_at_the_response() {
+        a_commitment_written_the_long_way(Site::Response);
+    }
+
+    #[test]
+    fn s4_at_the_delegation() {
+        a_commitment_of_small_order_from_an_honest_key(Site::Delegation);
+    }
+
+    #[test]
+    fn s4_at_the_response() {
+        a_commitment_of_small_order_from_an_honest_key(Site::Response);
+    }
+
+    #[test]
+    fn s5_at_the_delegation() {
+        a_scalar_written_out_of_range(Site::Delegation);
+    }
+
+    #[test]
+    fn s5_at_the_response() {
+        a_scalar_written_out_of_range(Site::Response);
     }
 }

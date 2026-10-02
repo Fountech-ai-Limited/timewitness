@@ -9,7 +9,7 @@ use std::path::Path;
 
 use timewitness_core::keylog::file::{parse as parse_key_log, KeyLog};
 use timewitness_receipt::anchors::TrustAnchors;
-use timewitness_verify::{anchor_file, verify_with_key_log, Floor, Subject};
+use timewitness_verify::{anchor_file, verify_with_kept_log, verify_with_key_log, Floor, Subject};
 
 use crate::args::Args;
 use crate::{as_json, render};
@@ -60,10 +60,26 @@ pub fn run(args: &Args) -> Outcome {
         _ => Subject::NotSupplied,
     };
 
-    let anchors = match anchors_from(args) {
+    let mut anchors = match anchors_from(args) {
         Ok(a) => a,
         Err(text) => return refuse(&text),
     };
+    // The one anchor that is ours, replaceable on its own because the ordinary reason to replace
+    // it is a build that signed a throwaway log to prove the path, and that reader still wants the
+    // six third-party keys that ship.
+    if let Some(text) = args.value("--key-log-signer") {
+        let key = match unhex(text)
+            .ok()
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+        {
+            Some(key) => key,
+            None => {
+                return refuse("--key-log-signer takes a 32-byte Ed25519 key as 64 hex characters")
+            }
+        };
+        anchors.key_log_signers.clear();
+        anchors = anchors.with_key_log_signer("the key log signer you named", key);
+    }
 
     let mut floor = Floor::default();
     match args.number("--min-width") {
@@ -75,13 +91,24 @@ pub fn run(args: &Args) -> Outcome {
     // The log is read off disk like everything else here. There is no fetch: a verifier that went
     // and got the log would be a verifier that needs us to be reachable, and a reader we can cut
     // off is a reader we can lie to by going quiet.
-    let key_log = match key_log_from(args) {
+    let key_log = match key_log_from(args, "--key-log") {
+        Ok(log) => log,
+        Err(text) => return refuse(&text),
+    };
+    let kept = match key_log_from(args, "--kept-log") {
         Ok(log) => log,
         Err(text) => return refuse(&text),
     };
 
-    let assessment =
-        verify_with_key_log(&receipt_bytes, subject, &anchors, &floor, key_log.as_ref());
+    let assessment = match (&key_log, &kept) {
+        (Some(log), Some(kept)) => {
+            verify_with_kept_log(&receipt_bytes, subject, &anchors, &floor, log, kept)
+        }
+        (None, Some(_)) => return refuse(
+            "--kept-log holds an earlier copy to the log in --key-log, and no --key-log was given",
+        ),
+        (log, None) => verify_with_key_log(&receipt_bytes, subject, &anchors, &floor, log.as_ref()),
+    };
     let code = i32::from(!assessment.accepted());
 
     let text = if args.flag("--fields") {
@@ -100,8 +127,8 @@ pub fn run(args: &Args) -> Outcome {
 /// A file that will not parse refuses the run rather than being read as no log at all. A reader who
 /// supplied a log and got back `nothing here can say` would reasonably think the question had been
 /// asked and answered, and it would not have been.
-fn key_log_from(args: &Args) -> Result<Option<KeyLog>, String> {
-    let Some(path) = args.value("--key-log") else {
+fn key_log_from(args: &Args, option: &str) -> Result<Option<KeyLog>, String> {
+    let Some(path) = args.value(option) else {
         return Ok(None);
     };
     let text = fs::read_to_string(path)

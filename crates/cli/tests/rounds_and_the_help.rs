@@ -323,6 +323,57 @@ fn an_option_that_belongs_to_the_other_path_is_refused_rather_than_ignored() {
     }
 }
 
+/// `--gap` is seconds, the help says so, and a gap past the ceiling is refused before a key exists.
+///
+/// Until 2026-09-15 the help said `--gap <ns>` and the code slept for that many seconds, with no
+/// ceiling: a reader who followed the help and asked for thirty seconds got a run that was still
+/// asleep when it was killed at 502 s. The help, the refusal and the constant now say one unit,
+/// and this is what keeps the three together.
+#[test]
+fn a_gap_is_seconds_and_one_past_the_ceiling_is_refused_before_anything_is_written() {
+    let help = Command::new(env!("CARGO_BIN_EXE_timewitness"))
+        .arg("--help")
+        .output()
+        .expect("the binary runs");
+    let help = String::from_utf8_lossy(&help.stdout).into_owned();
+    assert!(
+        help.contains("--gap <s>") && help.contains("seconds to wait between polling rounds"),
+        "the help has to give --gap in seconds: {help}"
+    );
+    assert!(
+        help.contains("at most 300"),
+        "the help has to state the ceiling beside the option: {help}"
+    );
+
+    let key = std::env::temp_dir().join("no-such-key-for-a-gap");
+    let _ = std::fs::remove_file(&key);
+    let out = Command::new(env!("CARGO_BIN_EXE_timewitness"))
+        .args([
+            "stamp",
+            "--subject",
+            "Cargo.toml",
+            "--key",
+            "no-such-key-for-a-gap",
+            "--out",
+            "no-such-receipt",
+            "--gap",
+            "301",
+        ])
+        .current_dir(std::env::temp_dir())
+        .output()
+        .expect("the binary runs");
+    let said = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(1), "{said}");
+    assert!(
+        said.contains("--gap") && said.contains("at most 300 seconds"),
+        "a gap past the ceiling should be refused by name, in seconds: {said}"
+    );
+    assert!(
+        !key.exists(),
+        "the gap was refused after a key had already been written"
+    );
+}
+
 /// `--max-width` reaches the agent path instead of being turned away at the door.
 ///
 /// What the option means there is checked in `timewitness-agent`, over a real socket, because that

@@ -26,7 +26,8 @@ if ! command -v rustup >/dev/null 2>&1; then
     echo "add the cargo bin directory to PATH, usually ~/.cargo/bin" >&2
     exit 1
 fi
-if ! rustup target list --installed | grep -qx "$target"; then
+installed="$(rustup target list --installed)" || { echo "rustup could not list its targets." >&2; exit 2; }
+if ! [[ "$installed" =~ (^|[[:space:]])"$target"($|[[:space:]]) ]]; then
     echo "the $target target is not installed. rustup target add $target" >&2
     exit 1
 fi
@@ -67,6 +68,11 @@ for marker in ("<!-- BRAND-TOKENS -->", "<!-- BRAND-LOCKUP -->", "<!-- WASM-BASE
 open(out_path, "w", encoding="utf-8", newline="\n").write(page)
 print("wrote", out_path, len(page), "characters")
 PYTHON
+
+# A page that fetches anything cannot be opened years later on a machine with no network, so the page
+# as assembled is read for any way it could ask for something before it is compared with anything.
+echo "checking the page asks for nothing"
+node scripts/verifier-page-offline.mjs
 
 # The comparison is only worth anything if both sides are this working tree. The checker runs
 # `target/release/timewitness`, and that binary is whatever was built last, so a run that changed a

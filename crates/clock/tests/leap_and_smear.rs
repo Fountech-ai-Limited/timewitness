@@ -367,3 +367,44 @@ fn nothing_here_narrows_a_bound() {
         "the leap guard narrowed a bound, {after} against {before}"
     );
 }
+
+/// A source is described by the sample the bound was built from, and not by an older one.
+///
+/// `leap` is per packet. A source can answer soundly, and answer again five minutes later saying its
+/// own clock is not synchronised, with both samples still in its window. The selection uses the
+/// fresher sample, because ageing costs more over five minutes than four milliseconds of round trip
+/// buys. Until 2026-09-19 the receipt described the source by the older, quicker one, so it said
+/// sound about a source that had said the opposite, on the one field a verifier acts on.
+///
+/// The direction is the only one that matters. A rule preferring the narrowest aged interval can
+/// prefer a longer round trip only where that sample is younger, so the sample the receipt showed
+/// was always the stale one.
+#[test]
+fn a_source_is_described_by_the_sample_the_bound_was_built_from() {
+    let world = World::still(0);
+    let (mut model, clock) = model_on(&world);
+    let mut paths = common::four_honest_sources();
+    paths[3] = Path::honest("delta", 6, 1);
+    assert_eq!(round(&mut model, &world, &paths, &clock), Validity::Valid);
+
+    clock.advance(300 * NANOS_PER_SEC as u64);
+    paths[3] = Path::honest("delta", 10, 1);
+    paths[3].leap = LeapIndicator::Unsynchronised;
+    assert_eq!(round(&mut model, &world, &paths, &clock), Validity::Valid);
+
+    let states = model.source_states();
+    let delta = states
+        .iter()
+        .find(|s| s.id.as_str() == "delta")
+        .expect("a source that answered is reported whether it was used or not");
+    assert_eq!(
+        delta.leap,
+        LeapIndicator::Unsynchronised,
+        "the receipt describes a source by the sample the round used, and that sample said its own \
+         clock was not synchronised"
+    );
+    assert!(
+        !delta.kept,
+        "and having said so it cannot be one of the sources the bound rests on"
+    );
+}

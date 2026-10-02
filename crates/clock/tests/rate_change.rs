@@ -24,7 +24,7 @@ use common::{four_honest_sources, Path, World};
 
 use timewitness_clock::monotonic::TestClock;
 use timewitness_clock::{ClockModel, MonotonicClock, Policy};
-use timewitness_core::time::{Nanos, NANOS_PER_MILLI, NANOS_PER_SEC};
+use timewitness_core::time::{Nanos, NANOS_PER_MICRO, NANOS_PER_MILLI, NANOS_PER_SEC};
 use timewitness_core::{MonotonicNanos, UnixNanos, Validity};
 
 use std::sync::Arc;
@@ -184,22 +184,43 @@ fn path_jitter_does_not_rescue_it_and_does_not_have_to() {
 
 #[test]
 fn the_allowance_for_the_rate_moving_is_what_holds_the_truth() {
-    // The same forty parts per million change at two settings of the one policy field. With the
-    // allowance switched off the model misses; with it on, it does not. Sever the field from the
-    // arithmetic and both runs come out the same, so this fails either way round.
-    let without = Policy {
-        frequency_span_ppm: 0.0,
-        frequency_slew_ppm_per_second: 0.0,
-        ..common::arithmetic_policy()
-    };
-    assert!(
-        worst_miss_after(40.0, &SWEEP, without) > 0,
-        "with no allowance for the rate moving, a forty parts per million change has to miss, and \
-         if it does not then this test is measuring nothing"
-    );
+    // The same forty parts per million change, held at the shipped allowance, and the allowance
+    // shown to be the term doing it. Until the evening of 2026-09-17 this switched the two fields
+    // off and watched the model miss; the validator no longer lets a policy state that the rate
+    // cannot move, because a policy that did signed a bound with the truth outside it. So the
+    // proof is in two halves now: the shipped allowance holds the truth over the whole sweep, and
+    // doubling either field widens every reading in holdover, which it cannot do unless the field
+    // reaches the arithmetic. Sever either field and its half fails.
     assert_eq!(
         worst_miss_after(40.0, &SWEEP, common::arithmetic_policy()),
         0
+    );
+    let width_at = |policy: Policy, minutes: u64| -> Nanos {
+        let mut rig = Rig::new(World::drifting(0, 8.0), four_honest_sources(), policy);
+        assert_eq!(rig.run_for(20, 64), Validity::Valid);
+        rig.clock.advance_seconds(minutes * 60);
+        rig.model.read().map(|s| s.bound.width()).unwrap_or(-1)
+    };
+    let faster_slew = Policy {
+        frequency_slew_ppm_per_second: 2.0,
+        ..common::arithmetic_policy()
+    };
+    let wider_band = Policy {
+        frequency_span_ppm: 200.0,
+        max_bound_width: NANOS_PER_SEC,
+        ..common::arithmetic_policy()
+    };
+    let shipped_band = Policy {
+        max_bound_width: NANOS_PER_SEC,
+        ..common::arithmetic_policy()
+    };
+    assert!(
+        width_at(faster_slew, 1) > width_at(common::arithmetic_policy(), 1),
+        "a rate allowed to move twice as fast did not widen the first minute of holdover"
+    );
+    assert!(
+        width_at(wider_band, 10) > width_at(shipped_band, 10),
+        "a band twice as wide did not widen ten minutes of holdover"
     );
 }
 
@@ -209,9 +230,12 @@ fn the_frequency_floor_binds_when_the_regression_is_confident() {
     // out tighter than the hardware can support. Four tight sources over a long baseline give a
     // regression standard error well under the floor, so the floor is what sets the widening.
     //
-    // The two allowances for the rate moving are switched off, because they are much the larger
-    // term and would hide the floor entirely. That isolation is the point: before this test the
-    // floor could be deleted from the source with all 281 tests still passing.
+    // The two allowances for the rate moving are much the larger term and would hide the floor,
+    // and since the evening of 2026-09-17 they cannot be switched off: a policy stating that the
+    // rate cannot move signed a bound with the truth outside it. So they are held equal between
+    // two policies that differ in the floor alone, and the difference in growth is the floor's
+    // own term and nothing else. Before this test the floor could be deleted from the source with
+    // all 281 tests still passing.
     let tight = vec![
         Path::honest("alpha", 1, 0),
         Path::honest("bravo", 1, 0),
@@ -219,8 +243,6 @@ fn the_frequency_floor_binds_when_the_regression_is_confident() {
         Path::honest("delta", 1, 0),
     ];
     let base = Policy {
-        frequency_span_ppm: 0.0,
-        frequency_slew_ppm_per_second: 0.0,
         max_bound_width: NANOS_PER_SEC,
         ..common::arithmetic_policy()
     };
@@ -232,24 +254,30 @@ fn the_frequency_floor_binds_when_the_regression_is_confident() {
         };
         let mut rig = Rig::new(World::drifting(0, 8.0), tight.clone(), policy);
         assert_eq!(rig.run_for(28, 64), Validity::Valid);
+        let fit = rig.model.fit().expect("a settled model has a fit");
+        assert!(
+            fit.frequency_stderr_ppm * policy.coverage_factor < floor_ppm,
+            "the regression is not confident enough for the floor to bind: {} ppm of measured \
+             error against a floor of {floor_ppm}",
+            fit.frequency_stderr_ppm * policy.coverage_factor
+        );
         let settled = rig.model.read().unwrap().bound.width();
         rig.clock.advance_seconds(1_200);
         rig.model.read().unwrap().bound.width() - settled
     };
 
-    let floored = width_at(15.0);
-    let unfloored = width_at(0.0);
-    assert!(
-        floored > unfloored,
-        "the frequency floor changes nothing over twenty minutes of holdover: {floored} ns of \
-         growth against {unfloored} ns, so the regression is already above the floor and this \
-         source set cannot see it"
-    );
-    // Twenty minutes at fifteen parts per million is eighteen milliseconds on each side.
+    let shipped = width_at(15.0);
+    let doubled = width_at(30.0);
+    // Twenty minutes at fifteen parts per million is eighteen milliseconds on each side, and that
+    // is the whole of the difference, because every other term is the same in both policies.
     let expected = 2 * 18 * NANOS_PER_MILLI;
+    // Within the growth over one round trip, because the holdover is measured from the moment the
+    // reply came home and the rig's counter sits at the moment the request went out.
     assert!(
-        floored >= expected,
-        "twenty minutes of holdover grew the bound by {floored} ns and the floor alone is {expected} ns"
+        (doubled - shipped - expected).abs() <= 2 * NANOS_PER_MICRO,
+        "doubling the floor grew twenty minutes of holdover by {} ns and the floor's own term is \
+         {expected} ns",
+        doubled - shipped
     );
 }
 

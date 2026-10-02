@@ -76,6 +76,24 @@ pub struct Authority {
     /// certificate rotates, so a pin goes stale for fetching new tokens; tokens already issued stay
     /// checkable, because the certificate travels inside them.
     pub accepted_certificates: Vec<[u8; 32]>,
+    /// What this reader allows for the authority's own clock, where the token states no accuracy.
+    ///
+    /// Added 2026-09-19. A token that states no accuracy puts no number on how
+    /// wrong the authority's clock could be, so nothing in it supports an edge in UTC. RFC 3161
+    /// section 2.4.2 says where that field is absent "the accuracy may be available through other
+    /// means, e.g., the TSAPolicyId", which is to say from the authority's published practice
+    /// rather than from the token. That is a thing a reader decides in advance about an authority,
+    /// exactly as a pin is, so it sits on the anchor and never in the bytes.
+    ///
+    /// `None` on both authorities that ship, because this product has not read either one's
+    /// practice statement and will not write a figure it cannot source. A reader who has read one
+    /// sets it here, and the verifier prints the number as that reader's rather than as the
+    /// authority's.
+    ///
+    /// It is never applied where the token does state an accuracy. The authority's own statement
+    /// wins, and a reader who thinks a stated accuracy is optimistic is asking a different
+    /// question from the one this answers.
+    pub accuracy_where_the_token_states_none: Option<Nanos>,
 }
 
 /// The eight bytes a stored token starts with.
@@ -191,11 +209,19 @@ pub fn build_request(hash_oid_sha256: &[u8; 32], nonce: &[u8; 16]) -> Vec<u8> {
 }
 
 /// What one token said, once it has been checked.
+#[derive(Clone, Debug)]
 struct Token<'a> {
     hashed_message: &'a [u8],
     hash: HashFunction,
     generated_at: UnixNanos,
-    accuracy: Nanos,
+    /// What the authority states about its own error, where it states anything at all.
+    ///
+    /// `None` is an authority that stated no accuracy, and it is a different fact from a stated
+    /// zero. The field is optional in the specification and an authority leaving it out has said
+    /// nothing about how wrong its own clock could be. Carrying that as zero and printing "0 ns"
+    /// reads as the authority vouching for a perfect time, which is the opposite of what happened;
+    /// a tester read it exactly that way on 2026-09-15 and was right to.
+    accuracy: Option<Nanos>,
     /// How finely the token wrote that time, in nanoseconds.
     ///
     /// A second where the authority wrote whole seconds, a millisecond where it wrote three digits
@@ -208,48 +234,145 @@ struct Token<'a> {
     serial: Vec<u8>,
 }
 
-/// Check a stored timestamp token against a pinned certificate and the hash it should be about.
+/// The SHA-256 of every certificate the stored reply carries, in the order it carries them.
 ///
-/// `subject_hash` is what the caller believes the token is about. It is compared against the imprint
-/// the token itself carries, because a token about somebody else's document is perfectly valid and
-/// perfectly useless as evidence for this one.
-pub fn check(
-    blob: &[u8],
-    authority: &Authority,
-    subject_hash: &[u8],
-) -> Result<Checked, EvidenceError> {
-    let mut checks: Vec<String> = Vec::new();
+/// A pin is matched against these, so a reader whose pins name none of them holds nothing this
+/// token can be checked against. That is read here, before any signature is looked at, so the
+/// validator can say so rather than trying every authority it holds and reading a token that fits
+/// none of them as a fault in the receipt, which is what it did until 2026-09-15. A reply carrying
+/// no certificate at all comes back as an empty list for the same reason: there is nothing in it a
+/// pin could name.
+pub fn certificate_digests(blob: &[u8]) -> Result<Vec<[u8; 32]>, EvidenceError> {
     let stored = unpack_blob(blob)?;
-
-    // What we asked, so that what came back can be held to it.
-    let asked = read_request(stored.request)?;
-    if asked.0 != subject_hash {
-        return Err(EvidenceError::Inconsistent(
-            "the stored request asked about a different hash from the one this check was given"
-                .to_string(),
-        ));
-    }
-
     let reply = read_reply(stored.reply)?;
-    let (token_bytes, certificates, signer) = (reply.token, reply.certificates, reply.signer);
-    let token = read_token(token_bytes)?;
+    Ok(digests_of(&reply.certificates))
+}
 
-    if token.hashed_message != subject_hash {
-        return Err(EvidenceError::Inconsistent(format!(
-            "the token is about a {} byte hash that is not the one asked about, so it is evidence \
-             for a different document",
-            token.hashed_message.len()
-        )));
+/// The SHA-256 of each certificate, in the order they are carried.
+fn digests_of(certificates: &[&[u8]]) -> Vec<[u8; 32]> {
+    certificates
+        .iter()
+        .map(|c| {
+            let mut digest = [0u8; 32];
+            digest.copy_from_slice(&Sha256::digest(c));
+            digest
+        })
+        .collect()
+}
+
+/// A stored token, read and held to itself and to the subject with no pin at all.
+///
+/// Nearly the whole of a token can be checked by somebody holding no certificate: that the reply is
+/// a granted timestamp response, that the token is about the hash it was asked about and that hash
+/// is this receipt's subject, that the request and the token carry the same nonce, that the signed
+/// attributes carry the digest of the token they are attached to, and what moment the token states
+/// and how finely. What the pin decides is which of the carried certificates the signature is
+/// checked under, and that check is the one thing left for [`Inspected::under`].
+///
+/// A token for another document behind a renamed certificate was accepted, exit 0, until
+/// 2026-09-15, because the validator matched pins first and read nothing where none matched.
+#[derive(Clone, Debug)]
+pub struct Inspected<'a> {
+    reply: Reply<'a>,
+    token: Token<'a>,
+}
+
+impl Inspected<'_> {
+    /// The SHA-256 of every certificate the reply carries, which is what a pin is matched against.
+    #[must_use]
+    pub fn certificate_digests(&self) -> Vec<[u8; 32]> {
+        digests_of(&self.reply.certificates)
     }
-    checks.push(format!(
-        "the token's own imprint is the {} byte hash this check was given, byte for byte, and the \
-         {} the token names produces a hash of that length",
-        token.hashed_message.len(),
-        token.hash.name()
-    ));
 
-    match (&token.nonce, &asked.1) {
-        (Some(returned), Some(sent)) if returned == sent => {
+    /// The latest instant the time this token writes can name.
+    ///
+    /// **This is what the token states, not what it supports about UTC.** The two were one number
+    /// until 2026-09-19 and they answer different questions. A token writes a time to some
+    /// resolution: whole seconds, or three digits of fraction, or nine. Nothing in it says whether
+    /// the authority truncated or rounded, so the moment it names is somewhere inside that
+    /// resolution either way, and the last instant it can name is the written time plus the
+    /// resolution.
+    ///
+    /// Every part of that comes off the token's own signed bytes. It is the same for every reader
+    /// whatever trust material they hold, and nothing a receipt writer controls can move it, which
+    /// is why it is the value a receipt prints beside a witness entry and the value the verifier
+    /// ties that entry to before it has looked at a key.
+    ///
+    /// What it is not is an instant in UTC. The authority's clock could be wrong by any amount the
+    /// authority has not told us about, and [`Inspected::supports`] is where that is answered.
+    #[must_use]
+    pub fn stated_instant(&self) -> UnixNanos {
+        UnixNanos(self.token.generated_at.as_nanos() + self.token.resolution)
+    }
+
+    /// The interval in UTC this token supports, where it supports one at all.
+    ///
+    /// Two widths added rather than one taken for the other. The resolution says how finely the
+    /// time was written, per [`Inspected::stated_instant`]. The accuracy is the authority's own
+    /// account of how wrong its clock could be, and it is the half that turns a reading of that
+    /// authority's clock into a statement about UTC.
+    ///
+    /// **An authority that states no accuracy has put no number on its own error, so there is no
+    /// edge to compute and this answers `None`.** Until 2026-09-19 it answered as though the
+    /// authority had said zero, which is the narrowest reading the token could possibly bear and
+    /// is the tightening direction. Both authorities that ship state no accuracy, read that day
+    /// off the two captured tokens, so this was every not-later-than edge the product produced.
+    /// RFC 3161 section 2.4.2 is explicit about both halves of it: a missing sub-field of a
+    /// present accuracy is taken as zero, and where the field itself is absent "the accuracy may
+    /// be available through other means, e.g., the TSAPolicyId". The same section refuses the
+    /// other shortcut, that the accuracy "is not to be inferred from the syntax", so the
+    /// resolution is not an accuracy either.
+    ///
+    /// `allowance` is what the reader has decided to allow for this authority's clock where the
+    /// token says nothing, per [`Authority::accuracy_where_the_token_states_none`]. It is the
+    /// reader's number and it is used only where the token states none.
+    ///
+    /// **This was a live fault rather than a tidying, and the resolution half of it is why.** Both
+    /// edges were once taken as though the stated time were exact. While the agent's own bound was
+    /// seconds wide that was invisible, because a second of truncation sat well inside it. On
+    /// 2026-09-09 the bound came down to about 240 ms on a build runner, and the same free
+    /// authority, writing whole seconds as it always had, produced a token dated 437.345 ms before
+    /// the earliest time the receipt claimed. The Action refused its own receipt on a real
+    /// repository. Neither the token nor the receipt was wrong; the comparison was.
+    #[must_use]
+    pub fn supports(&self, allowance: Option<Nanos>) -> Option<(UnixNanos, UnixNanos)> {
+        let accuracy = self.token.accuracy.or(allowance)?;
+        let width = accuracy + self.token.resolution;
+        Some((
+            UnixNanos(self.token.generated_at.as_nanos() - width),
+            UnixNanos(self.token.generated_at.as_nanos() + width),
+        ))
+    }
+
+    /// Whether the authority put a number on its own error inside the token.
+    #[must_use]
+    pub const fn states_an_accuracy(&self) -> bool {
+        self.token.accuracy.is_some()
+    }
+
+    /// The nonce inside the signed token, as a value.
+    #[must_use]
+    pub fn nonce(&self) -> Option<&[u8]> {
+        self.token.nonce.as_deref()
+    }
+
+    /// Check the token's signature under the certificate the reader pinned for an authority.
+    ///
+    /// The certificate is found by the pin rather than by anything the token says about itself.
+    /// Everything else about the token was established by [`inspect`], and the list of checks
+    /// this returns names all of it in the order a reader would want to follow.
+    pub fn under(&self, authority: &Authority) -> Result<Checked, EvidenceError> {
+        let mut checks: Vec<String> = Vec::new();
+        let token = &self.token;
+        let signer = &self.reply.signer;
+
+        checks.push(format!(
+            "the token's own imprint is the {} byte hash this check was given, byte for byte, and \
+             the {} the token names produces a hash of that length",
+            token.hashed_message.len(),
+            token.hash.name()
+        ));
+        if let Some(returned) = &token.nonce {
             // What this holds and what it does not. The token's nonce is inside the signature, so
             // the authority did answer a request carrying it. The stored request is signed by
             // nobody, so a holder writes both sides of this comparison and it cannot show that the
@@ -262,6 +385,130 @@ pub fn check(
                 returned.len()
             ));
         }
+
+        let certificate = self
+            .reply
+            .certificates
+            .iter()
+            .find(|c| {
+                let digest = Sha256::digest(c);
+                authority
+                    .accepted_certificates
+                    .iter()
+                    .any(|pin| pin == digest.as_slice())
+            })
+            .ok_or_else(|| {
+                EvidenceError::BadSignature(format!(
+                    "none of the {} certificates in this token is one of the {} pinned for {}",
+                    self.reply.certificates.len(),
+                    authority.accepted_certificates.len(),
+                    authority.name
+                ))
+            })?;
+        checks.push(format!(
+            "the token carries a certificate pinned for {}, matched by its SHA-256",
+            authority.name
+        ));
+        checks.push(format!(
+            "the digest inside the signed attributes is the {} hash of the token itself",
+            signer.digest.name()
+        ));
+
+        verify_with(certificate, signer).map_err(|_| {
+            EvidenceError::BadSignature(format!(
+                "the token's signature does not check against the key in the certificate pinned \
+                 for {}",
+                authority.name
+            ))
+        })?;
+        checks.push(format!(
+            "the signature over those attributes checks against that certificate's key, {} with \
+             RSA",
+            signer.signature_hash.name()
+        ));
+
+        checks.push(what_the_token_states(
+            &authority.name,
+            token.generated_at.as_nanos() / NANOS_PER_SEC,
+            token.accuracy,
+            token.resolution,
+            authority.accuracy_where_the_token_states_none,
+        ));
+
+        // The ordering flag, which this product has more reason to read than most. The claim here
+        // is unbroken order, and the flag is an authority speaking to exactly that. Neither line
+        // below is worth more than it says: the strong one is the authority's own account of its
+        // own practice, it covers only tokens this same authority issued, and no verifier can test
+        // it. The weak one is the ordinary case and is not a fault.
+        if token.ordering {
+            checks.push(format!(
+                "{} states that its own tokens are ordered by the times they state, whatever \
+                 accuracy each one states. That is the authority's account of its own practice, \
+                 it holds only between tokens {} issued, and nothing here can check it",
+                authority.name, authority.name
+            ));
+        } else {
+            checks.push(format!(
+                "the token makes no claim that the time it states is enough to order it, so two \
+                 tokens from {} are in a known order only where their stated times differ by \
+                 more than the two stated accuracies added together",
+                authority.name
+            ));
+        }
+
+        let signer = format!("{} serial {}", authority.name, hex(&token.serial));
+        match self.supports(authority.accuracy_where_the_token_states_none) {
+            Some((earliest, latest)) => Checked::over(
+                SCHEME,
+                signer,
+                earliest,
+                latest,
+                token.nonce.clone(),
+                checks,
+            ),
+            // The signature holds and the authority has still put no number on its own clock, so
+            // there is no edge in UTC to hand back. Answering with the stated time would say the
+            // authority vouched for a perfect clock, which is the one thing it declined to do.
+            None => Ok(Checked::with_no_interval(
+                SCHEME,
+                signer,
+                token.nonce.clone(),
+                checks,
+            )),
+        }
+    }
+}
+
+/// Read a stored token and hold it to itself and to the subject, with no pin.
+///
+/// `subject_hash` is what the caller believes the token is about. It is compared against the
+/// imprint the token itself carries, because a token about somebody else's document is perfectly
+/// valid and perfectly useless as evidence for this one.
+pub fn inspect<'a>(blob: &'a [u8], subject_hash: &[u8]) -> Result<Inspected<'a>, EvidenceError> {
+    let stored = unpack_blob(blob)?;
+
+    // What we asked, so that what came back can be held to it.
+    let (asked_hash, sent_nonce) = read_request(stored.request)?;
+    if asked_hash != subject_hash {
+        return Err(EvidenceError::Inconsistent(
+            "the stored request asked about a different hash from the one this check was given"
+                .to_string(),
+        ));
+    }
+
+    let reply = read_reply(stored.reply)?;
+    let token = read_token(reply.token)?;
+
+    if token.hashed_message != subject_hash {
+        return Err(EvidenceError::Inconsistent(format!(
+            "the token is about a {} byte hash that is not the one asked about, so it is evidence \
+             for a different document",
+            token.hashed_message.len()
+        )));
+    }
+
+    match (&token.nonce, &sent_nonce) {
+        (Some(returned), Some(sent)) if returned == sent => {}
         (Some(_), Some(_)) => {
             return Err(EvidenceError::WrongNonce(
                 "the token carries a different nonce from the one the request sent, so it was not \
@@ -278,118 +525,33 @@ pub fn check(
         }
     }
 
-    // The certificate, found by the pin rather than by anything the token says about itself.
-    let certificate = certificates
-        .iter()
-        .find(|c| {
-            let digest = Sha256::digest(c);
-            authority
-                .accepted_certificates
-                .iter()
-                .any(|pin| pin == digest.as_slice())
-        })
-        .ok_or_else(|| {
-            EvidenceError::BadSignature(format!(
-                "none of the {} certificates in this token is one of the {} pinned for {}",
-                certificates.len(),
-                authority.accepted_certificates.len(),
-                authority.name
-            ))
-        })?;
-    checks.push(format!(
-        "the token carries a certificate pinned for {}, matched by its SHA-256",
-        authority.name
-    ));
-
-    let expected_digest = signer.digest.digest(token_bytes);
-    if signer.message_digest != expected_digest {
+    let expected_digest = reply.signer.digest.digest(reply.token);
+    if reply.signer.message_digest != expected_digest {
         return Err(EvidenceError::Inconsistent(
             "the signed attributes carry a digest that is not the digest of the token they are \
              attached to"
                 .to_string(),
         ));
     }
-    checks.push(format!(
-        "the digest inside the signed attributes is the {} hash of the token itself",
-        signer.digest.name()
-    ));
-
-    if signer.content_type != OID_TST_INFO {
+    if reply.signer.content_type != OID_TST_INFO {
         return Err(EvidenceError::Inconsistent(
             "the signed attributes say this is not a timestamp token".to_string(),
         ));
     }
 
-    verify_with(certificate, &signer).map_err(|_| {
-        EvidenceError::BadSignature(format!(
-            "the token's signature does not check against the key in the certificate pinned for {}",
-            authority.name
-        ))
-    })?;
-    checks.push(format!(
-        "the signature over those attributes checks against that certificate's key, {} with RSA",
-        signer.signature_hash.name()
-    ));
+    Ok(Inspected { reply, token })
+}
 
-    // Two widths, added rather than one taken for the other. The accuracy is what the authority
-    // says about its own error, and an authority that states none is refusing to put a number on
-    // it, which is answered with zero. The resolution is how finely the token wrote the time at
-    // all: a token written to whole seconds names a second and not an instant, and nothing in it
-    // says whether the authority truncated or rounded, so the moment it names is somewhere inside
-    // that second either way.
-    //
-    // **This was a live fault rather than a tidying.** Both edges were taken as though the stated
-    // time were exact. While the agent's own bound was seconds wide that was invisible, because a
-    // second of truncation sat well inside it. On 2026-09-09 the bound came down to about 240 ms
-    // on a build runner, and the same free authority, writing whole seconds as it always had,
-    // produced a token dated 437.345 ms before the earliest time the receipt claimed. The Action
-    // refused its own receipt on a real repository. Neither the token nor the receipt was wrong;
-    // the comparison was.
-    //
-    // Adding the resolution only ever moves the not-later-than edge later, which weakens what the
-    // token proves. That is the direction the rules on evidence require, because an edge computed
-    // from a time nobody wrote is the tightening direction.
-    let stated_width = token.accuracy + token.resolution;
-    let earliest = UnixNanos(token.generated_at.as_nanos() - stated_width);
-    let latest = UnixNanos(token.generated_at.as_nanos() + stated_width);
-    checks.push(format!(
-        "{} states it saw this hash at {} s, to a stated accuracy of {} ns and written to the \
-         nearest {} ns, so the document existed no later than that",
-        authority.name,
-        token.generated_at.as_nanos() / NANOS_PER_SEC,
-        token.accuracy,
-        token.resolution
-    ));
-
-    // The ordering flag, which this product has more reason to read than most. The claim here is
-    // unbroken order, and the flag is an authority speaking to exactly that. Neither line below is
-    // worth more than it says: the strong one is the authority's own account of its own practice,
-    // it covers only tokens this same authority issued, and no verifier can test it. The weak one
-    // is the ordinary case and is not a fault.
-    if token.ordering {
-        checks.push(format!(
-            "{} states that its own tokens are ordered by the times they state, whatever accuracy \
-             each one states. That is the authority's account of its own practice, it holds only \
-             between tokens {} issued, and nothing here can check it",
-            authority.name, authority.name
-        ));
-    } else {
-        checks.push(format!(
-            "the token makes no claim that the time it states is enough to order it, so two \
-             tokens from {} are in a known order only where their stated times differ by more \
-             than the two stated accuracies added together",
-            authority.name
-        ));
-    }
-
-    Checked::over(
-        SCHEME,
-        format!("{} serial {}", authority.name, hex(&token.serial)),
-        earliest,
-        latest,
-        token.nonce,
-        checks,
-    )
+/// Check a stored timestamp token against a pinned certificate and the hash it should be about.
+///
+/// [`inspect`] followed by [`Inspected::under`], and nothing else, so a validator that runs the two
+/// apart runs exactly what the agent runs together.
+pub fn check(
+    blob: &[u8],
+    authority: &Authority,
+    subject_hash: &[u8],
+) -> Result<Checked, EvidenceError> {
+    inspect(blob, subject_hash)?.under(authority)
 }
 
 /// Check one signature against one certificate's key.
@@ -491,6 +653,7 @@ fn read_request(bytes: &[u8]) -> Result<(Vec<u8>, Option<Vec<u8>>), EvidenceErro
 const TAG_REQUEST_EXTENSIONS: u8 = 0xa0;
 
 /// A reply, split into the three parts a check needs from it.
+#[derive(Clone, Debug)]
 struct Reply<'a> {
     /// The signed content, which is the token's own information.
     token: &'a [u8],
@@ -501,6 +664,7 @@ struct Reply<'a> {
 }
 
 /// What a signer info says, once read.
+#[derive(Clone, Debug)]
 struct Signer<'a> {
     signed_attributes: &'a [u8],
     message_digest: Vec<u8>,
@@ -641,6 +805,40 @@ fn read_signer(mut info: Reader<'_>) -> Result<Signer<'_>, EvidenceError> {
     })
 }
 
+/// The line a reader is shown about what the token states of itself.
+///
+/// Two sentences rather than one with a number spliced into it, and its own function because the
+/// one thing it has to get right is the difference between a figure the authority wrote and a
+/// figure nobody wrote. Until 2026-09-19 an unstated accuracy was printed as "0 ns", which reads
+/// as an authority vouching for a perfect time when what it did was decline to say anything.
+fn what_the_token_states(
+    authority: &str,
+    saw_it_at: i128,
+    accuracy: Option<Nanos>,
+    resolution: Nanos,
+    allowance: Option<Nanos>,
+) -> String {
+    match (accuracy, allowance) {
+        (Some(stated), _) => format!(
+            "{authority} states it saw this hash at {saw_it_at} s, to a stated accuracy of \
+             {stated} ns and written to the nearest {resolution} ns, so the document existed no \
+             later than that"
+        ),
+        (None, Some(allowed)) => format!(
+            "{authority} states it saw this hash at {saw_it_at} s, written to the nearest \
+             {resolution} ns, and states no accuracy of its own, so the {allowed} ns allowed for \
+             its clock here is this reader's figure from the authority's published practice and \
+             is not anything the authority signed"
+        ),
+        (None, None) => format!(
+            "{authority} states it saw this hash at {saw_it_at} s, written to the nearest \
+             {resolution} ns, with its accuracy not stated, so the token puts the document no \
+             later than that on the authority's own clock, and nothing here puts a number on how \
+             wrong that clock could be, so it bounds nothing in UTC"
+        ),
+    }
+}
+
 /// Read a token's own information, holding it to the field order the specification fixes.
 ///
 /// The order after the time it was made is accuracy, then the ordering flag, then the nonce, then
@@ -684,7 +882,9 @@ fn read_token(bytes: &[u8]) -> Result<Token<'_>, EvidenceError> {
         let stated = token.expect(der::TAG_SEQUENCE, "the stated accuracy")?;
         read_accuracy(&token, stated.value)?
     } else {
-        0
+        // The field is absent, so the authority said nothing about its own error. That is not the
+        // same statement as an accuracy of zero and it is no longer carried as one.
+        None
     };
     let ordering = if token.peek_tag() == Some(der::TAG_BOOLEAN) {
         let flag = token.expect(der::TAG_BOOLEAN, "the ordering flag")?;
@@ -761,9 +961,11 @@ pub fn orders_by_stated_time(blob: &[u8]) -> Result<bool, EvidenceError> {
 /// The accuracy an authority states, in nanoseconds, taken as the whole of it.
 ///
 /// Three optional fields, seconds, milliseconds and microseconds, and an authority that states none
-/// of them is saying it will not put a number on its own error. That is answered with zero rather
-/// than with a guess, and the caller is told the figure so it can decide what an unstated accuracy
-/// is worth.
+/// of them is saying it will not put a number on its own error. That comes back as `None`, which is
+/// the absence itself rather than a guess at what it is worth, so a caller printing the figure has
+/// something to print other than a zero nobody wrote. An authority that does write a zero into one
+/// of the three fields has stated a figure, and it comes back as `Some(0)`: it is a strange thing
+/// for an authority to say, and it said it.
 ///
 /// Two things here are refusals rather than corrections, and both are because this figure only ever
 /// moves the not-later-than edge inwards.
@@ -775,9 +977,13 @@ pub fn orders_by_stated_time(blob: &[u8]) -> Result<bool, EvidenceError> {
 ///
 /// An accuracy too large for the arithmetic is refused rather than saturated, for the same reason
 /// in reverse: a saturated figure is a number nobody wrote, presented as one the authority signed.
-fn read_accuracy(parent: &Reader<'_>, bytes: &[u8]) -> Result<Nanos, EvidenceError> {
+fn read_accuracy(parent: &Reader<'_>, bytes: &[u8]) -> Result<Option<Nanos>, EvidenceError> {
     let mut reader = parent.inner(bytes);
     let mut total: Nanos = 0;
+    // Whether any of the three fields was there at all. An empty sequence, and a sequence holding
+    // only tags this code does not read, are both an authority stating no accuracy, and they are
+    // answered the same way as the field being absent altogether.
+    let mut stated = false;
     while !reader.is_empty() {
         let element = reader.take()?;
         let scale: Nanos = match element.tag {
@@ -796,8 +1002,9 @@ fn read_accuracy(parent: &Reader<'_>, bytes: &[u8]) -> Result<Nanos, EvidenceErr
             .checked_mul(scale)
             .and_then(|scaled| total.checked_add(scaled))
             .ok_or_else(|| malformed("a stated accuracy too large for any arithmetic to hold"))?;
+        stated = true;
     }
-    Ok(total)
+    Ok(stated.then_some(total))
 }
 
 /// A generalized time, in the one form the specification allows for a token, and how finely it was
@@ -958,6 +1165,7 @@ pub fn published_authorities() -> Vec<Authority> {
                 0xc9, 0x65, 0x67, 0x55, 0xaf, 0x04, 0x3f, 0x1e, 0xa7, 0x42, 0xcc, 0x0d, 0x21, 0x20,
                 0xe1, 0x41, 0xeb, 0xfc,
             ]],
+            accuracy_where_the_token_states_none: None,
         },
         Authority {
             name: "Sectigo".to_string(),
@@ -967,6 +1175,7 @@ pub fn published_authorities() -> Vec<Authority> {
                 0x62, 0xcd, 0x22, 0x9a, 0x5f, 0xe9, 0x1e, 0x30, 0x8d, 0x30, 0x19, 0x76, 0xfe, 0xb2,
                 0x3e, 0xa9, 0x01, 0x56,
             ]],
+            accuracy_where_the_token_states_none: None,
         },
     ]
 }
@@ -1147,11 +1356,17 @@ mod tests {
         token_with(accuracy, &[])
     }
 
-    /// The same token, with whatever the caller wants written after the accuracy.
-    ///
-    /// The specification fixes what may follow and in what order, so this is where a token that
-    /// breaks the order, repeats a field or carries a tag nobody expected gets built.
-    fn token_with(accuracy: &[u8], trailing: &[u8]) -> Vec<u8> {
+    /// The same token with the optional accuracy field left out altogether, which is what an
+    /// authority that will not put a number on its own error actually sends.
+    fn token_with_no_accuracy_field() -> Vec<u8> {
+        let mut info = token_head();
+        info.extend(der::encode(der::TAG_INTEGER, &[0x2a]));
+        info.extend(der::encode(der::TAG_GENERALIZED_TIME, b"20260907174532Z"));
+        der::encode(der::TAG_SEQUENCE, &info)
+    }
+
+    /// Everything a token carries before its serial number, which the two builders share.
+    fn token_head() -> Vec<u8> {
         let algorithm = der::encode(der::TAG_SEQUENCE, &der::encode(der::TAG_OID, OID_SHA256));
         let mut imprint = algorithm;
         imprint.extend(der::encode(der::TAG_OCTET_STRING, &[7u8; 32]));
@@ -1160,6 +1375,15 @@ mod tests {
         // Any policy identifier will do; the reader carries it and does not look at it.
         info.extend(der::encode(der::TAG_OID, OID_SHA256));
         info.extend(der::encode(der::TAG_SEQUENCE, &imprint));
+        info
+    }
+
+    /// The same token, with whatever the caller wants written after the accuracy.
+    ///
+    /// The specification fixes what may follow and in what order, so this is where a token that
+    /// breaks the order, repeats a field or carries a tag nobody expected gets built.
+    fn token_with(accuracy: &[u8], trailing: &[u8]) -> Vec<u8> {
+        let mut info = token_head();
         info.extend(der::encode(der::TAG_INTEGER, &[0x2a]));
         info.extend(der::encode(der::TAG_GENERALIZED_TIME, b"20260907174532Z"));
         info.extend(der::encode(der::TAG_SEQUENCE, accuracy));
@@ -1311,14 +1535,69 @@ mod tests {
         stated.extend(der::encode(der::context_primitive(1), &[100]));
         let bytes = token_stating_accuracy(&stated);
         let token = read_token(&bytes).expect("an honest accuracy");
-        assert_eq!(token.accuracy, NANOS_PER_SEC + 250_000_000 + 100_000);
+        assert_eq!(token.accuracy, Some(NANOS_PER_SEC + 250_000_000 + 100_000));
     }
 
     #[test]
-    fn an_authority_stating_no_accuracy_at_all_is_answered_with_zero() {
+    fn an_authority_stating_no_accuracy_at_all_is_not_answered_with_zero() {
+        // The field is there and says nothing. Until 2026-09-19 this read as an accuracy of zero,
+        // and zero is a figure: a reader was shown "0 ns" where the authority had put no number on
+        // its own error at all. The absence is carried as itself now.
         let bytes = token_stating_accuracy(&[]);
         let token = read_token(&bytes).expect("no accuracy stated");
-        assert_eq!(token.accuracy, 0);
+        assert_eq!(token.accuracy, None);
+    }
+
+    #[test]
+    fn a_token_with_no_accuracy_field_at_all_reads_the_same_way() {
+        // The other spelling of the same statement, and the one a real authority uses: the optional
+        // field is simply not written. Both come back as nothing stated, because both are.
+        let bytes = token_with_no_accuracy_field();
+        let token = read_token(&bytes).expect("no accuracy field");
+        assert_eq!(token.accuracy, None);
+    }
+
+    #[test]
+    fn an_unstated_accuracy_is_printed_as_words_and_never_as_a_figure() {
+        let line = what_the_token_states("DigiCert", 1_788_979_279, None, NANOS_PER_SEC, None);
+        assert!(
+            line.contains("accuracy not stated"),
+            "the line should say the accuracy was not stated and it says {line:?}"
+        );
+        assert!(
+            !line.contains("accuracy of 0 ns"),
+            "a figure nobody wrote is still in the line: {line:?}"
+        );
+    }
+
+    #[test]
+    fn a_stated_accuracy_is_still_printed_as_the_figure_the_authority_wrote() {
+        let line = what_the_token_states(
+            "DigiCert",
+            1_788_979_279,
+            Some(250_000_000),
+            1_000_000,
+            None,
+        );
+        assert!(
+            line.contains("to a stated accuracy of 250000000 ns"),
+            "the stated figure should be shown and the line says {line:?}"
+        );
+        assert!(
+            !line.contains("not stated"),
+            "an authority that stated a figure is not shown as silent: {line:?}"
+        );
+    }
+
+    #[test]
+    fn an_authority_writing_a_zero_into_a_field_has_stated_a_figure() {
+        // The one case the two states have to be told apart on. An authority that writes seconds
+        // of zero has said something, strange as it is, and it comes back as the figure it wrote
+        // rather than as silence.
+        let stated = der::encode(der::TAG_INTEGER, &[0]);
+        let bytes = token_stating_accuracy(&stated);
+        let token = read_token(&bytes).expect("a stated zero");
+        assert_eq!(token.accuracy, Some(0));
     }
 
     #[test]
@@ -1335,6 +1614,7 @@ mod tests {
             name: "nobody".to_string(),
             url: "http://127.0.0.1:1".to_string(),
             accepted_certificates: vec![[0u8; 32]],
+            accuracy_where_the_token_states_none: None,
         };
         let mut seed = 0x2026_0907_u64;
         let mut next = || {

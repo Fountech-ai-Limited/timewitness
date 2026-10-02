@@ -57,6 +57,7 @@ use timewitness_clock::monotonic::SystemMonotonic;
 use timewitness_clock::{
     Applied, ClockModel, Discipline, MonotonicClock, Policy, ShadowDiscipline,
 };
+use timewitness_core::evidence::roughtime::MIN_RADIUS_SECONDS;
 use timewitness_core::time::{Nanos, NANOS_PER_SEC};
 use timewitness_core::{Attestation, UnixNanos};
 use timewitness_platform::EnvironmentWatch;
@@ -75,30 +76,26 @@ use crate::verify_cmd::Outcome;
 
 /// How wide a bound this will sign for when nothing else is said.
 ///
-/// Thirty seconds, and the size of that number is the honest cost of having no time source but three
-/// public Roughtime servers.
+/// Two seconds, which is the narrowest interval a Roughtime corridor can state: a radius is a whole
+/// number of seconds and zero is forbidden, so a corridor is a second either side at best. A bound
+/// wider than that says less about the moment than one signed corridor already tells a stranger, so
+/// it is refused rather than signed.
 ///
-/// Measured from this machine on 2026-09-08, four rounds against the three servers: the interval
-/// came out 16.399 s wide, of which 3.073 s of half width was the sources overlapping and 5.126 s
-/// of half width was the regression's own standard error. Doubled, that second term is 10.3 s of
-/// the 16.4 s, so it is the largest single part by some way.
+/// It was thirty seconds until 2026-09-15, sized for the only time source this code had on
+/// 2026-09-08: four rounds against three public Roughtime servers came out 16.399 s wide from this
+/// machine that day, and a GitHub runner reached 16.219 s. From 2026-09-09 a round of those three
+/// alone is three operators, which the floor of four refuses before any width is looked at, so
+/// nothing this ceiling was sized for can reach it any more. What does reach it is a round with
+/// plain NTP and NTS in it, and every one measured since has been a few hundred milliseconds: 211.3
+/// ms from a GitHub runner on 2026-09-09 at sixteen rounds, 287.147 ms from another on 2026-09-14,
+/// and 140 to 177 ms from an ordinary desktop. Two seconds is about seven times the widest of those,
+/// so an honest run clears it with room, and a model that has gone wrong by that much is refused.
 ///
-/// The two terms have different causes and the difference matters. The first is the sources: a
-/// Roughtime server states its uncertainty as a radius in whole seconds, so the intervals going
-/// into the intersection are seconds wide and nothing this code does can narrow them. The second is
-/// this code, fitting a line through four points taken inside two seconds whose midpoints move by
-/// seconds. That one is arithmetic on a baseline too short to support it, and it does shrink on a
-/// resident agent with a baseline of minutes, which the product has from 2026-09-09: measured on an
-/// ordinary desktop that day, 24.3 to 25.0 ms of half width through an agent at thirty-six minutes
-/// of uptime against 39.3 to 45.6 ms from this path twelve minutes earlier. What it does not do is
-/// change the case this constant is for. A build runner is a machine that has existed for ninety
-/// seconds, so there is nothing for an agent to be resident on, and the ceiling here still has to
-/// cover a model built from nothing.
-///
-/// Thirty leaves room for a slower path and still refuses a receipt that says nothing. It is a
-/// ceiling and not a target: what a particular run actually achieved is the interval in the receipt,
-/// and the shipped agent policy, for a machine with real time sources, is 250 milliseconds.
-const CI_MAX_BOUND_WIDTH: Nanos = 30 * NANOS_PER_SEC;
+/// It is still wider than the agent's own 250 ms, because a build runner is a machine that has
+/// existed for ninety seconds and its model is built from nothing, and the 287.147 ms runner is
+/// already past the agent's ceiling. It is a ceiling and not a target: what a run achieved is the
+/// interval in its receipt.
+const CI_MAX_BOUND_WIDTH: Nanos = 2 * MIN_RADIUS_SECONDS as Nanos * NANOS_PER_SEC;
 
 /// How many times to poll before reading, when nothing else is said.
 ///
@@ -159,6 +156,30 @@ const DEFAULT_ROUNDS: usize = 16;
 /// rounds a minute apart bought.
 const DEFAULT_GAP_SECONDS: u64 = 0;
 
+/// The longest `--gap` this command takes, in seconds.
+///
+/// A gap is read in whole seconds and the help says so from 2026-09-15. Until then the help said
+/// nanoseconds while the code slept for seconds, so a reader asking for thirty seconds between
+/// rounds with `30000000000` got a run that was still asleep when it was killed at 502 s, and
+/// nothing bounded it. Five minutes is the ceiling because sixteen rounds that far apart is over an
+/// hour of a build's time, and a cadence longer than that is what `timewitness agent --interval`
+/// is written for.
+const MAX_GAP_SECONDS: u64 = 300;
+
+/// The seconds to wait between polling rounds, or the sentence that refuses the number given.
+fn a_gap_between_rounds(args: &Args) -> Result<u64, String> {
+    match args.number("--gap") {
+        Ok(Some(n)) if n < 0 => Err("--gap is a number of seconds and is not negative".into()),
+        Ok(Some(n)) if n > i128::from(MAX_GAP_SECONDS) => Err(format!(
+            "--gap is at most {MAX_GAP_SECONDS} seconds between rounds. A longer cadence is the \
+             agent's: `timewitness agent --interval`"
+        )),
+        Ok(Some(n)) => Ok(u64::try_from(n).unwrap_or(DEFAULT_GAP_SECONDS)),
+        Ok(None) => Ok(DEFAULT_GAP_SECONDS),
+        Err(e) => Err(e.0),
+    }
+}
+
 /// How far a beacon round may sit from where the model thinks the present is.
 ///
 /// Two minutes. A drand relay can lag by a few rounds of three seconds, and a value further out than
@@ -193,6 +214,9 @@ pub fn run(args: &Args) -> Outcome {
         if let Err(text) = a_ceiling_of_our_own(args) {
             return fail(&text);
         }
+    } else if let Err(text) = a_gap_between_rounds(args) {
+        // The same reason: a gap past the ceiling is turned down before a key exists for it.
+        return fail(&text);
     }
 
     let subject_path = match args.required("--subject") {
@@ -278,7 +302,7 @@ pub fn run(args: &Args) -> Outcome {
         text.push_str(&format!("  {note}\n"));
     }
     text.push_str(&format!(
-        "  The agent's public key is {}. Nothing links it to anybody yet; there is no public key\n  log, and the verifier says so rather than implying otherwise.\n",
+        "  The agent's public key is {}. Nothing links it to anybody yet. A log of our keys is\n  served at timewitness.dev/key-log.txt and names our two Roughtime servers and no agent\n  key, and the verifier says so rather than implying otherwise.\n",
         render::hex(&receipt.agent_public_key)
     ));
 
@@ -452,12 +476,7 @@ fn from_a_model_of_our_own(args: &Args) -> Result<Reading, String> {
     }
     let polls_per_round = disciplining.len();
 
-    let gap = match args.number("--gap") {
-        Ok(Some(n)) if n >= 0 => u64::try_from(n).unwrap_or(DEFAULT_GAP_SECONDS),
-        Ok(Some(_)) => return Err("--gap is not negative".into()),
-        Ok(None) => DEFAULT_GAP_SECONDS,
-        Err(e) => return Err(e.0),
-    };
+    let gap = a_gap_between_rounds(args)?;
 
     // What the model cannot see for itself: the machine going to sleep, and another time service
     // moving the clock underneath it. Both are read from the operating system's own counters and
@@ -753,6 +772,8 @@ mod tests {
         // And it stays well under the width at which a verifier stops believing an interval at
         // all, so a receipt from a build runner is read rather than refused on its width.
         assert!(CI_MAX_BOUND_WIDTH < timewitness_verify::Floor::default().max_interval_width / 100);
+        // And it is the narrowest corridor a Roughtime server can state, which is the reason for it.
+        assert_eq!(CI_MAX_BOUND_WIDTH, 2 * NANOS_PER_SEC);
     }
 
     /// A folder of this test's own, in the machine's temporary space, removed at the end.

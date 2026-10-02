@@ -20,10 +20,19 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
+    // A command line that cannot be read gets the usage beside the refusal, the same as one naming
+    // an option its subcommand does not have. Refused bare, the reader was told what was wrong and
+    // not what would have been right.
     let parsed = match args::parse(&argv) {
         Ok(parsed) => parsed,
         Err(e) => {
-            eprintln!("{}", render::failure(&e.0));
+            eprintln!(
+                "{}
+
+{}",
+                render::failure(&e.0),
+                render::usage()
+            );
             return ExitCode::from(2);
         }
     };
@@ -43,6 +52,11 @@ fn main() -> ExitCode {
 
     if parsed.wants_help() {
         println!("{}", render::usage());
+        return ExitCode::SUCCESS;
+    }
+
+    if parsed.wants_version() {
+        println!("{}", render::version());
         return ExitCode::SUCCESS;
     }
 

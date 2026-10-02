@@ -33,7 +33,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -46,9 +46,13 @@ use timewitness_core::evidence::EvidenceError;
 /// The largest packet this server will read off the socket.
 ///
 /// A Roughtime request is at least 1024 bytes of message and a little framing, and nothing in the
-/// draft makes one usefully larger. Reading into a fixed buffer means an oversized datagram is
-/// truncated and then fails the encoding check, which is the same silence any other bad packet
-/// gets.
+/// draft makes one usefully larger. What happens to a datagram larger than this depends on the
+/// platform, and until 2026-09-16 this comment described one of them as though it were both.
+/// Linux cuts the datagram down to the buffer and hands it over, so it fails the encoding check
+/// and gets the same silence any other bad packet gets. Windows throws the whole datagram away and
+/// returns os error 10040 from the receive in its place, so the loop sees an error and no
+/// datagram. [`serve`] treats that error as the datagram it stands for; see
+/// [`a_failed_receive`].
 pub const MAX_DATAGRAM: usize = 1500;
 
 /// How long a delegation is made for by default.
@@ -115,22 +119,86 @@ impl Reading {
 pub enum Dropped {
     /// The packet was not a request this server should answer.
     NotOurs(String),
-    /// The address has sent more than its share lately.
+    /// The network it is on has sent more than its share lately.
     RateLimited,
     /// The server has no usable statement about its own clock, so it will not date anything.
     NoReading(String),
     /// The response could not be built, which is a fault in this server rather than in the request.
     CouldNotAnswer(String),
+    /// A datagram was lost on the way in, and the socket said why.
+    ///
+    /// There is no address on this one because a receive that failed did not bring one. See the
+    /// note on [`serve`] about what a failed receive is and is not evidence of.
+    CouldNotReceive(String),
+    /// A datagram arrived that was larger than any request, and the platform threw it away
+    /// rather than hand it over.
+    ///
+    /// Windows reports one of those as an error on the receive, os error 10040, in place of the
+    /// datagram; the address went with it, which is why there is none here. Linux cuts the
+    /// datagram down to the buffer and hands it over, where it fails the encoding check and is
+    /// [`Dropped::NotOurs`] like any other bad packet. Added 2026-09-16, the evening the first
+    /// fix to `serve` shipped, because that fix counted one of these as a fault of the socket.
+    Oversize(String),
+    /// The response was built and the socket would not send it to that address.
+    ///
+    /// Dropped and counted rather than returned, from 2026-09-15. Until then one failed send ended
+    /// `serve`, the process exited, and the host started it again cold, which on a platform that
+    /// disciplines its own clock before answering was two to three minutes of no answers for
+    /// whatever made one send fail. A send to one address failing says nothing about the socket
+    /// for the next address.
+    CouldNotSend(String),
 }
 
 impl core::fmt::Display for Dropped {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Dropped::NotOurs(d) => write!(f, "not a request for this server: {d}"),
-            Dropped::RateLimited => write!(f, "over this address's share of the socket"),
+            Dropped::RateLimited => write!(f, "over this network's share of the socket"),
             Dropped::NoReading(d) => write!(f, "this server will not date a response: {d}"),
             Dropped::CouldNotAnswer(d) => write!(f, "this server could not build a response: {d}"),
+            Dropped::CouldNotSend(d) => write!(f, "the socket would not send the response: {d}"),
+            Dropped::CouldNotReceive(d) => {
+                write!(f, "a datagram was lost before it could be read: {d}")
+            }
+            Dropped::Oversize(d) => {
+                write!(
+                    f,
+                    "a datagram larger than any request was thrown away unread: {d}"
+                )
+            }
         }
+    }
+}
+
+/// What the serve loop needs of a socket, so that a test can hand it one whose sends fail.
+///
+/// `UdpSocket` is the one that runs. The trait exists because a real socket cannot be made to
+/// refuse a send to an address it just received from, and the one path this loop has to survive
+/// is exactly that.
+pub trait Datagrams {
+    /// One packet, and where it came from.
+    fn recv_from(&mut self, buffer: &mut [u8]) -> io::Result<(usize, SocketAddr)>;
+    /// One packet, to there.
+    fn send_to(&mut self, response: &[u8], to: SocketAddr) -> io::Result<usize>;
+}
+
+impl Datagrams for &UdpSocket {
+    fn recv_from(&mut self, buffer: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+        UdpSocket::recv_from(self, buffer)
+    }
+
+    fn send_to(&mut self, response: &[u8], to: SocketAddr) -> io::Result<usize> {
+        UdpSocket::send_to(self, response, to)
+    }
+}
+
+impl<D: Datagrams + ?Sized> Datagrams for &mut D {
+    fn recv_from(&mut self, buffer: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+        (**self).recv_from(buffer)
+    }
+
+    fn send_to(&mut self, response: &[u8], to: SocketAddr) -> io::Result<usize> {
+        (**self).send_to(response, to)
     }
 }
 
@@ -376,12 +444,44 @@ fn delegation_from(
 /// The counts are cleared wholesale at the end of each window rather than decayed, which is coarse
 /// and is chosen for it: a decaying counter is one allocation per address that never goes away, and
 /// a map that is emptied cannot be grown without bound by an attacker picking new addresses.
+///
+/// Keyed on the network and not the port, and not on the address either.
+///
+/// The port went first, on 2026-09-15: until then the key was the whole `SocketAddr`, so a client
+/// varying its source port was never limited and the map grew by one entry per port it chose. The
+/// address followed on 2026-09-20, because an IPv6 client is handed a whole /64 and picks any
+/// address inside it at no cost, so an allowance per address is no allowance at all. Measured that
+/// day: one /64 filled a 65,536 entry map in under nine milliseconds, sustained at 419 kbit/s, and
+/// every packet sat inside its own fresh allowance. So IPv6 counts on the /64 and IPv4 on the
+/// address, which is the one host it names.
+///
+/// The map still has a ceiling of distinct networks per window, because a map keyed on anything is
+/// a map somebody can try to fill. **What is past the ceiling is answered and not counted, out of
+/// one shared allowance.** Until 2026-09-20 it was refused, and the comment here said that this was
+/// "what the emptied map already does for everybody". An emptied map refuses nobody; it gives
+/// everybody a fresh allowance. The two are opposites, and the sentence saying they were the same
+/// is the part that stopped anybody looking for five days. Refusing there hands an attacker a
+/// switch: fill the map and every client not already in it is turned away, which is every agent
+/// synchronising for the first time and every agent after a reboot.
+///
+/// The shared allowance is what stops the other direction. Answering everything past the ceiling
+/// would make this a server that signs on demand for anyone willing to send it 65,536 packets
+/// first. One allowance the size of one network's bounds the work at the ceiling's share plus one,
+/// and it is emptied with the map.
 pub struct RateLimit {
     per_window: u32,
     window: Duration,
     started: Instant,
-    seen: HashMap<SocketAddr, u32>,
+    seen: HashMap<IpAddr, u32>,
+    address_ceiling: usize,
+    past_the_ceiling: u32,
 }
+
+/// How many distinct addresses one window will count before a new one is refused.
+///
+/// At a few tens of bytes an entry this is under three megabytes, which is the most the map can
+/// ever hold, and it is far above what two servers of ours see in a minute.
+pub const DEFAULT_ADDRESS_CEILING: usize = 65_536;
 
 impl RateLimit {
     /// A limit of `per_window` packets from one address per `window`.
@@ -392,18 +492,58 @@ impl RateLimit {
             window,
             started: Instant::now(),
             seen: HashMap::new(),
+            address_ceiling: DEFAULT_ADDRESS_CEILING,
+            past_the_ceiling: 0,
         }
+    }
+
+    /// The same, counting no more than this many addresses in one window.
+    #[must_use]
+    pub fn with_address_ceiling(mut self, addresses: usize) -> Self {
+        self.address_ceiling = addresses;
+        self
+    }
+
+    /// How many addresses this window has counted so far.
+    #[must_use]
+    pub fn addresses(&self) -> usize {
+        self.seen.len()
     }
 
     /// Whether this address may send another packet now, counting this one.
     pub fn allows(&mut self, from: SocketAddr, now: Instant) -> bool {
         if now.duration_since(self.started) >= self.window {
             self.seen.clear();
+            self.past_the_ceiling = 0;
             self.started = now;
         }
-        let count = self.seen.entry(from).or_insert(0);
+        let network = Self::network_of(from.ip());
+        if !self.seen.contains_key(&network) && self.seen.len() >= self.address_ceiling {
+            // Answered rather than refused, and out of one allowance rather than its own, so the
+            // map stays bounded and so does the work. See the note on this type for why refusing
+            // here is the switch an attacker was being handed.
+            self.past_the_ceiling = self.past_the_ceiling.saturating_add(1);
+            return self.past_the_ceiling <= self.per_window;
+        }
+        let count = self.seen.entry(network).or_insert(0);
         *count += 1;
         *count <= self.per_window
+    }
+
+    /// The network one allowance is counted against: the /64 for IPv6, the address itself for IPv4.
+    ///
+    /// A /64 is what an IPv6 client is given, so every address in it is the same client and the low
+    /// 64 bits are free for it to vary. An IPv4 address names one host, so it is its own network
+    /// and grouping it further would put unrelated clients on one allowance.
+    fn network_of(address: IpAddr) -> IpAddr {
+        match address {
+            IpAddr::V4(v4) => IpAddr::V4(v4),
+            IpAddr::V6(v6) => {
+                let mut octets = v6.octets();
+                octets[8..].fill(0);
+                IpAddr::V6(Ipv6Addr::from(octets))
+            }
+        }
     }
 }
 
@@ -419,6 +559,152 @@ impl Default for RateLimit {
     }
 }
 
+/// After how many receive faults in a row the loop starts waiting between receives.
+///
+/// Eight. No honest burst reaches it, because a fault on the way in means a datagram was lost and
+/// the next receive normally finds either the next datagram or the read timeout, and both of those
+/// put the run back to nought. Eight in a row with neither means the socket is answering
+/// instantly and answering nothing, which is a spin rather than traffic.
+const FAULTS_BEFORE_WAITING: u32 = 8;
+
+/// How long to wait between receives once faults are arriving with nothing in between.
+///
+/// Twenty milliseconds. It is short enough to be invisible to a client that is being answered and
+/// long enough that a socket failing instantly costs a sleeping thread rather than a core. It also
+/// sets the clock on [`FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT`], which is the part that matters.
+const FAULT_WAIT: Duration = Duration::from_millis(20);
+
+/// After how many receive faults in a row the loop stops calling them datagrams and returns.
+///
+/// A thousand and twenty-four, and the count is doing less work here than [`FAULT_WAIT`] beside
+/// it. From the eighth fault on, every one of them costs a wait, so a run this long takes over
+/// twenty seconds in which the socket produced no datagram and not one timeout. That is the real
+/// test: not how many faults, but that the socket gave back nothing else for that long.
+///
+/// The number is chosen to be out of reach of anything a client can do, which is the whole point.
+/// Every fault a remote client can cause needs a packet from that client, and a packet arriving
+/// during the wait is a datagram waiting on the next receive, which puts the run back to nought.
+/// Reaching this by sending would mean a flood sustained for twenty seconds that never once let a
+/// datagram through, and the answer to a flood is not in this function. One packet must never
+/// reach it, and before 2026-09-16 one packet did.
+///
+/// That argument has one exception and it was found the same evening: a packet the platform
+/// throws away before the loop sees it is a packet that never becomes a datagram. On Windows an
+/// oversize datagram is exactly that, and a flood of nothing else reached this ceiling in 20.8 s
+/// on the real command. [`a_failed_receive`] is where each error kind is asked whether it is a
+/// datagram in disguise, and that is the function to read before touching this number.
+const FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT: u32 = 1024;
+
+/// The Windows error for a datagram larger than the buffer it was to be read into.
+///
+/// WSAEMSGSIZE. The platform discards the datagram and returns this in its place, so the datagram
+/// is consumed and the loop is told about it by an error rather than by a length. The standard
+/// library files it under no kind of its own, which is why it is matched on the number.
+#[cfg(windows)]
+const A_DATAGRAM_TOO_BIG_FOR_THE_BUFFER: i32 = 10040;
+
+/// What a failed receive is evidence of.
+///
+/// Three answers, and the second is the one that was missing until 2026-09-16.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FailedReceive {
+    /// Nothing was waiting: the read timeout expired or a signal arrived. The socket is working.
+    NothingWaiting,
+    /// A datagram arrived and the platform threw it away rather than hand it over. It counts as a
+    /// datagram received, because it is one, and it is refused as [`Dropped::Oversize`].
+    DatagramThrownAway,
+    /// No datagram reached this loop. Counted towards the give-up ceiling.
+    Fault,
+}
+
+/// Ask a failed receive what it is evidence of.
+///
+/// # Every kind that ends in the fault counter, and whether a remote sender can put it there
+///
+/// The give-up ceiling is safe only while every fault a remote sender can cause is followed by a
+/// datagram that resets the run. So each kind that reaches [`FailedReceive::Fault`] is asked one
+/// question here: can somebody on the network cause it once per packet with no datagram reaching
+/// this loop? Written beside the kind, because the first fix to this loop argued the answer was
+/// no for all of them and one of them was yes.
+///
+/// - `WouldBlock`, `TimedOut`, `Interrupted`: not faults at all. The read timeout expiring is how
+///   [`serve`] gets to look at `keep_going`, and a signal arriving mid-receive is the process's
+///   own business. Both put the run back to nought.
+/// - os error 10040 on Windows, the datagram too big for the buffer: **yes, and that is this
+///   row.** The sender's packet arrived, Windows discarded it and returned the error in its place,
+///   so the loop saw a fault and never a datagram, and a flood of nothing else walked the counter
+///   to the ceiling at the loop's own pace. It is now [`FailedReceive::DatagramThrownAway`],
+///   which resets the run exactly as the datagram would have. Linux never raises it on a receive,
+///   because POSIX truncates and hands the datagram over.
+/// - `ConnectionReset`, os error 10054 on Windows, and its relations `NetworkUnreachable`,
+///   `HostUnreachable`, `ConnectionRefused` and `NetworkDown`, os errors 10051, 10065, 10061 and
+///   10050: **not by a UDP sender.** Each is the host passing on an ICMP message about a datagram
+///   this server sent, delivered on the next receive, and this server sends only in answer to a
+///   datagram it received, so each ordinarily follows the receive that reset the run. Windows
+///   does not check that the ICMP message answers a datagram this socket actually sent, so a
+///   forged ICMP unreachable naming this socket's port would raise one with no datagram behind
+///   it. That takes a raw socket and the port rather than a UDP packet, it is the one kind left
+///   that could walk the counter, and it is recorded rather than defended against here.
+///   Linux does not surface ICMP on an unconnected UDP socket without `IP_RECVERR`, which this
+///   socket does not set.
+/// - `InvalidInput`, `NotConnected`, `Unsupported` and the bad-descriptor family: **no.** These
+///   are about how the socket was made or called, they cannot be caused from the network, and
+///   they are the socket faults the ceiling exists for, because they fail instantly for ever.
+/// - `OutOfMemory`, os error 10055 on Windows: **not per packet.** Buffer exhaustion on the
+///   host, which a flood can contribute to and which clears on its own; it is counted and it is
+///   waited out at [`FAULT_WAIT`] a time.
+/// - Anything else the platform invents: counted, and it is the kind nobody thought of, which is
+///   why the ceiling is a length of time and not a list.
+fn a_failed_receive(error: &io::Error) -> FailedReceive {
+    match error.kind() {
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted => {
+            FailedReceive::NothingWaiting
+        }
+        _ if a_datagram_was_thrown_away(error) => FailedReceive::DatagramThrownAway,
+        _ => FailedReceive::Fault,
+    }
+}
+
+/// Whether this receive error stands for a datagram the platform discarded as too big.
+///
+/// Only Windows reports one. Everywhere else an oversize datagram is cut down to the buffer and
+/// handed over as an ordinary receive, so the answer is no before the error is looked at.
+#[cfg(windows)]
+fn a_datagram_was_thrown_away(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(A_DATAGRAM_TOO_BIG_FOR_THE_BUFFER)
+}
+
+#[cfg(not(windows))]
+fn a_datagram_was_thrown_away(_error: &io::Error) -> bool {
+    false
+}
+
+/// What [`serve`] does about the `n`th receive fault in a row.
+///
+/// Split out from the loop so the policy can be read and tested on its own, because the loop
+/// having this policy written as a list of error kinds inline is what made the fault of
+/// 2026-09-16 possible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AfterAFault {
+    /// Count the lost datagram and receive again straight away.
+    CarryOn,
+    /// Count it, then wait before receiving again, so a socket failing instantly does not spin.
+    WaitFirst,
+    /// The socket has given back nothing but faults for long enough that it is the socket.
+    GiveUp,
+}
+
+/// The policy in one place: carry on, wait, or give up, by how long the run of faults is.
+fn after_a_fault(consecutive: u32) -> AfterAFault {
+    if consecutive >= FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT {
+        AfterAFault::GiveUp
+    } else if consecutive >= FAULTS_BEFORE_WAITING {
+        AfterAFault::WaitFirst
+    } else {
+        AfterAFault::CarryOn
+    }
+}
+
 /// Serve until `keep_going` says otherwise.
 ///
 /// `clock` is asked for a reading per request rather than once, because a server that cached its
@@ -429,12 +715,54 @@ impl Default for RateLimit {
 /// `watch` is handed every drop, so whatever is running this can count them. It is not a logger and
 /// nothing here writes to a stream.
 ///
+/// # A fault on the way in is about one datagram, and almost never about the socket
+///
+/// This is the part to read before changing anything here, because getting it wrong once already
+/// cost us a server.
+///
+/// Until 2026-09-16 this loop tolerated two error kinds on `recv_from` and returned on every other
+/// one. On Windows a client that asks and then closes its socket has the answer arrive at a port
+/// nobody is listening on, the host answers ICMP port-unreachable, and the next receive on this
+/// server's own unconnected socket returns `ConnectionReset`, os error 10054. Neither of the two
+/// tolerated kinds, so the loop returned and the server answered nobody while the process stayed
+/// up. One packet and a close, from anybody, with no authentication. Linux does not surface ICMP
+/// on an unconnected UDP socket without `IP_RECVERR`, which is why CI never saw it and why only a
+/// desktop run went red.
+///
+/// A list of tolerated kinds is the wrong shape for this and lengthening it would only push the
+/// same fault into whichever kind nobody thought of. What a receive error actually says is that
+/// this datagram, or the answer to the last one, did not arrive. It says nothing about whether the
+/// socket still works, and the great majority of the kinds that can appear here are the platform
+/// passing on news about somebody else's socket. So **no error kind ends this loop**. Every one of
+/// them costs one datagram, is handed to `watch` as [`Dropped::CouldNotReceive`], and the loop
+/// receives again.
+///
+/// The one thing left worth defending against is a socket that has genuinely stopped working and
+/// so fails instantly for ever, which would be a hot loop burning a core and answering nobody in
+/// silence. That is answered by the length of the run rather than by the kind: from
+/// [`FAULTS_BEFORE_WAITING`] faults in a row the loop waits [`FAULT_WAIT`] between receives, and
+/// at [`FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT`] it gives up and returns, which lets whatever runs
+/// this start it again. A single datagram, a single timeout, or a signal puts the run back to
+/// nought, and the wait is what keeps that ceiling out of a remote client's reach; see the note on
+/// the constant.
+///
+/// **A datagram the platform throws away is still a datagram.** The paragraph above was written on
+/// the morning of 2026-09-16 and was wrong by the evening: on Windows a datagram larger than
+/// [`MAX_DATAGRAM`] is discarded and the receive returns os error 10040 instead of it, so the
+/// packet arrived and the loop saw only a fault. A flood of nothing else took the real command
+/// off the air in 20.8 s. [`a_failed_receive`] now asks every error kind whether it is a datagram
+/// in disguise, and that one is: it resets the run and is watched as [`Dropped::Oversize`].
+///
 /// # Errors
 ///
-/// Anything the socket says other than a timeout. A timeout is how `keep_going` gets looked at, so
-/// the socket wants a read timeout set before this is called.
-pub fn serve<C, K, W>(
-    socket: &UdpSocket,
+/// Only what [`FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT`] describes: the socket gave back nothing but
+/// faults for over twenty seconds, so the last of them is returned. A failed send is not an error
+/// here and neither is a single failed receive: both are drops, handed to `watch` as
+/// [`Dropped::CouldNotSend`] and [`Dropped::CouldNotReceive`], and the loop carries on to the next
+/// packet. A read timeout is how `keep_going` gets looked at, so the socket wants one set before
+/// this is called.
+pub fn serve<D, C, K, W>(
+    mut socket: D,
     server: &mut Server,
     limit: &mut RateLimit,
     mut clock: C,
@@ -442,30 +770,58 @@ pub fn serve<C, K, W>(
     mut watch: W,
 ) -> Result<(), io::Error>
 where
+    D: Datagrams,
     C: FnMut() -> Option<Reading>,
     K: FnMut() -> bool,
-    W: FnMut(SocketAddr, &Dropped),
+    W: FnMut(Option<SocketAddr>, &Dropped),
 {
     let mut buffer = [0u8; MAX_DATAGRAM];
+    // How many receives in a row have come back a fault, with no datagram and no timeout between
+    // them. Nought almost always, and the only thing that can end this loop from the inside.
+    let mut faults: u32 = 0;
     while keep_going() {
         let (len, from) = match socket.recv_from(&mut buffer) {
-            Ok(got) => got,
-            Err(e)
-                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
-            {
-                continue
+            Ok(got) => {
+                faults = 0;
+                got
             }
-            Err(e) => return Err(e),
+            Err(e) if a_failed_receive(&e) == FailedReceive::NothingWaiting => {
+                faults = 0;
+                continue;
+            }
+            Err(e) if a_failed_receive(&e) == FailedReceive::DatagramThrownAway => {
+                // A datagram arrived and was too big to be a request. That is a received datagram
+                // refused, so it resets the run the way any datagram does, and it is watched under
+                // its own name rather than as a fault of the socket.
+                faults = 0;
+                watch(None, &Dropped::Oversize(e.to_string()));
+                continue;
+            }
+            Err(e) => {
+                faults += 1;
+                match after_a_fault(faults) {
+                    AfterAFault::GiveUp => return Err(e),
+                    AfterAFault::WaitFirst => {
+                        watch(None, &Dropped::CouldNotReceive(e.to_string()));
+                        std::thread::sleep(FAULT_WAIT);
+                        continue;
+                    }
+                    AfterAFault::CarryOn => {
+                        watch(None, &Dropped::CouldNotReceive(e.to_string()));
+                        continue;
+                    }
+                }
+            }
         };
 
         if !limit.allows(from, Instant::now()) {
-            watch(from, &Dropped::RateLimited);
+            watch(Some(from), &Dropped::RateLimited);
             continue;
         }
 
         let Some(reading) = clock() else {
             watch(
-                from,
+                Some(from),
                 &Dropped::NoReading(
                     "the clock this server runs on has no usable bound, so it will not date a \
                      response"
@@ -478,15 +834,17 @@ where
         // Before answering rather than on a timer, so a server that has been idle for a day does
         // not answer its first request under an expired delegation.
         if let Err(e) = server.renew_if_due(reading.seconds) {
-            watch(from, &Dropped::CouldNotAnswer(e.to_string()));
+            watch(Some(from), &Dropped::CouldNotAnswer(e.to_string()));
             continue;
         }
 
         match server.answer(&buffer[..len], reading) {
             Ok(response) => {
-                socket.send_to(&response, from)?;
+                if let Err(e) = socket.send_to(&response, from) {
+                    watch(Some(from), &Dropped::CouldNotSend(e.to_string()));
+                }
             }
-            Err(dropped) => watch(from, &dropped),
+            Err(dropped) => watch(Some(from), &dropped),
         }
     }
     Ok(())
@@ -525,7 +883,7 @@ mod tests {
             "a server of ours",
         )
         .expect("the response checks against the published long-term key");
-        assert_eq!(checked.radius(), 1_000_000_000);
+        assert_eq!(checked.radius(), Some(1_000_000_000));
     }
 
     #[test]
@@ -657,6 +1015,461 @@ mod tests {
         assert!(
             limit.allows(from, start + Duration::from_secs(61)),
             "the window ends and the counts go with it"
+        );
+    }
+
+    #[test]
+    fn one_address_is_one_address_whatever_port_it_sends_from() {
+        // The fault of 2026-09-15: the limit was keyed on address and port, so a client varying
+        // its source port was never limited and the map grew by one entry per port.
+        let mut limit = RateLimit::new(3, Duration::from_secs(60));
+        let start = Instant::now();
+        for port in 1..=3u16 {
+            let from: SocketAddr = format!("203.0.113.7:{port}").parse().unwrap();
+            assert!(limit.allows(from, start), "port {port} is inside the share");
+        }
+        let fourth: SocketAddr = "203.0.113.7:4".parse().unwrap();
+        assert!(
+            !limit.allows(fourth, start),
+            "the fourth packet is over the address's share whichever port it came from"
+        );
+        let other: SocketAddr = "203.0.113.8:4".parse().unwrap();
+        assert!(
+            limit.allows(other, start),
+            "another address has its own share"
+        );
+    }
+
+    #[test]
+    fn the_map_of_addresses_has_a_ceiling_per_window() {
+        // The map has a ceiling, because a limit keyed on who is asking is a map an attacker fills
+        // by being lots of people. What the ceiling may never do is turn the server off for
+        // everybody who is not already in it.
+        let mut limit = RateLimit::new(3, Duration::from_secs(60)).with_address_ceiling(2);
+        let start = Instant::now();
+        let a: SocketAddr = "203.0.113.1:2002".parse().unwrap();
+        let b: SocketAddr = "203.0.113.2:2002".parse().unwrap();
+        let c: SocketAddr = "203.0.113.3:2002".parse().unwrap();
+        assert!(limit.allows(a, start));
+        assert!(limit.allows(b, start));
+        assert!(
+            limit.allows(c, start),
+            "a first-ever honest client is answered with the map at its ceiling"
+        );
+        assert_eq!(limit.addresses(), 2, "and it was not added to the map");
+        assert!(
+            limit.allows(a, start),
+            "the two already counted keep their share"
+        );
+        assert!(limit.allows(a, start), "which is three packets");
+        assert!(
+            !limit.allows(a, start),
+            "and no more than their share: that was the fourth from a"
+        );
+        assert!(
+            limit.allows(c, start + Duration::from_secs(61)),
+            "the window ends and the map is emptied"
+        );
+    }
+
+    #[test]
+    fn past_the_ceiling_the_work_is_still_bounded() {
+        // Answering everybody past the ceiling would be a server that signs on demand for anyone
+        // who first sends it 65,536 packets. So what is past the ceiling shares one allowance, and
+        // the total work in a window stays the ceiling's share plus that one.
+        let mut limit = RateLimit::new(3, Duration::from_secs(60)).with_address_ceiling(1);
+        let start = Instant::now();
+        let inside: SocketAddr = "203.0.113.1:2002".parse().unwrap();
+        assert!(limit.allows(inside, start));
+        let mut answered = 0;
+        for n in 0..50u32 {
+            let from: SocketAddr = format!("198.51.100.{}:2002", n % 256).parse().unwrap();
+            if limit.allows(from, start) {
+                answered += 1;
+            }
+        }
+        assert_eq!(
+            answered, 3,
+            "everything past the ceiling shares one address's allowance"
+        );
+        assert_eq!(limit.addresses(), 1, "and none of it grew the map");
+        assert!(
+            limit.allows(inside, start),
+            "the one inside the ceiling still has its own share"
+        );
+        // The shared allowance is emptied with the map, or the first window's attacker would shut
+        // the overflow path for every window after it.
+        let later = start + Duration::from_secs(61);
+        let fresh: SocketAddr = "198.51.100.200:2002".parse().unwrap();
+        assert!(
+            limit.allows(fresh, later),
+            "the window ends and so does that"
+        );
+    }
+
+    #[test]
+    fn one_network_of_addresses_fills_one_entry_and_not_the_map() {
+        // An IPv6 client is handed a whole /64 and picks any address inside it at no cost. Counting
+        // addresses there counts nothing: on 2026-09-20 one /64 filled a 65,536 entry map in under
+        // nine milliseconds for 419 kbit/s, and every packet was inside its own fresh allowance.
+        let mut limit = RateLimit::new(3, Duration::from_secs(60)).with_address_ceiling(1_000);
+        let start = Instant::now();
+        let mut answered = 0;
+        for n in 0..50u32 {
+            let from: SocketAddr = format!("[2001:db8::{n:x}]:2002").parse().unwrap();
+            if limit.allows(from, start) {
+                answered += 1;
+            }
+        }
+        assert_eq!(
+            limit.addresses(),
+            1,
+            "fifty addresses in one /64 are one network and one entry"
+        );
+        assert_eq!(answered, 3, "and they share one network's allowance");
+        // A different /64 is a different client and is counted separately.
+        let elsewhere: SocketAddr = "[2001:db8:0:1::1]:2002".parse().unwrap();
+        assert!(limit.allows(elsewhere, start));
+        assert_eq!(limit.addresses(), 2);
+    }
+
+    /// A transport whose sends fail as often as it is told to, and which hands the serve loop the
+    /// requests it was given, in order.
+    struct Flaky {
+        requests: Vec<(Vec<u8>, SocketAddr)>,
+        failed_sends_left: u32,
+        sent: Vec<SocketAddr>,
+    }
+
+    impl Datagrams for Flaky {
+        fn recv_from(&mut self, buffer: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+            if self.requests.is_empty() {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "nothing more"));
+            }
+            let (packet, from) = self.requests.remove(0);
+            buffer[..packet.len()].copy_from_slice(&packet);
+            Ok((packet.len(), from))
+        }
+
+        fn send_to(&mut self, _response: &[u8], to: SocketAddr) -> io::Result<usize> {
+            if self.failed_sends_left > 0 {
+                self.failed_sends_left -= 1;
+                return Err(io::Error::other("no route to that address"));
+            }
+            self.sent.push(to);
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn a_send_that_fails_is_dropped_and_counted_and_the_server_carries_on() {
+        // The fault of 2026-09-15: one failed send_to returned out of serve, the process exited,
+        // and the host restarted it cold, two to three minutes of no answers for whatever made one
+        // send fail. Here the first send fails and the second request still gets its answer.
+        let mut server = a_server();
+        let request = build_request(&[0x33u8; 32], &server.public_key());
+        let first: SocketAddr = "203.0.113.7:2002".parse().unwrap();
+        let second: SocketAddr = "203.0.113.8:2002".parse().unwrap();
+        let mut transport = Flaky {
+            requests: vec![(request.clone(), first), (request, second)],
+            failed_sends_left: 1,
+            sent: Vec::new(),
+        };
+        let mut dropped = Vec::new();
+        let mut left = 3;
+        let outcome = serve(
+            &mut transport,
+            &mut server,
+            &mut RateLimit::default(),
+            || {
+                Some(Reading {
+                    seconds: NOW,
+                    radius_seconds: 1,
+                })
+            },
+            || {
+                left -= 1;
+                left > 0
+            },
+            |from, why| dropped.push((from, why.clone())),
+        );
+        assert!(
+            outcome.is_ok(),
+            "a failed send is not a socket fault: {outcome:?}"
+        );
+        assert_eq!(
+            transport.sent,
+            vec![second],
+            "the second request was answered"
+        );
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].0, Some(first));
+        assert!(
+            matches!(dropped[0].1, Dropped::CouldNotSend(_)),
+            "{:?}",
+            dropped[0].1
+        );
+    }
+
+    /// A transport reading from a script, so a receive can be made to fail on demand.
+    ///
+    /// A real socket cannot be asked for `ConnectionReset` on a platform that does not produce it,
+    /// and the fault of 2026-09-16 only appears on Windows. This is how the loop's answer to a
+    /// failed receive gets tested everywhere rather than on one platform.
+    struct Scripted {
+        script: Vec<io::Result<(Vec<u8>, SocketAddr)>>,
+        sent: Vec<SocketAddr>,
+    }
+
+    impl Datagrams for Scripted {
+        fn recv_from(&mut self, buffer: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+            if self.script.is_empty() {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "nothing more"));
+            }
+            match self.script.remove(0) {
+                Ok((packet, from)) => {
+                    buffer[..packet.len()].copy_from_slice(&packet);
+                    Ok((packet.len(), from))
+                }
+                Err(e) => Err(e),
+            }
+        }
+
+        fn send_to(&mut self, _response: &[u8], to: SocketAddr) -> io::Result<usize> {
+            self.sent.push(to);
+            Ok(0)
+        }
+    }
+
+    /// Run the scripted transport for `rounds` turns of the loop.
+    #[allow(clippy::type_complexity)]
+    fn serve_script(
+        script: Vec<io::Result<(Vec<u8>, SocketAddr)>>,
+        rounds: i32,
+    ) -> (
+        Result<(), io::Error>,
+        Vec<SocketAddr>,
+        Vec<(Option<SocketAddr>, Dropped)>,
+    ) {
+        let mut server = a_server();
+        let mut transport = Scripted {
+            script,
+            sent: Vec::new(),
+        };
+        let mut dropped = Vec::new();
+        let mut left = rounds;
+        let outcome = serve(
+            &mut transport,
+            &mut server,
+            &mut RateLimit::default(),
+            || {
+                Some(Reading {
+                    seconds: NOW,
+                    radius_seconds: 1,
+                })
+            },
+            || {
+                left -= 1;
+                left > 0
+            },
+            |from, why| dropped.push((from, why.clone())),
+        );
+        (outcome, transport.sent, dropped)
+    }
+
+    #[test]
+    fn a_client_that_walks_away_costs_one_datagram_and_not_the_server() {
+        // The fault of 2026-09-16. A client asks and closes its socket, the answer reaches a port
+        // nobody is listening on, the host answers ICMP port-unreachable, and Windows hands that
+        // to the next receive on this server's own socket as ConnectionReset, os error 10054.
+        // Until this was fixed the loop returned on it and the server answered nobody afterwards.
+        let server = a_server();
+        let request = build_request(&[0x51u8; 32], &server.public_key());
+        let next: SocketAddr = "203.0.113.9:2002".parse().unwrap();
+        let (outcome, sent, dropped) = serve_script(
+            vec![
+                Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "os error 10054",
+                )),
+                Ok((request, next)),
+            ],
+            4,
+        );
+
+        assert!(
+            outcome.is_ok(),
+            "one lost datagram is not a socket fault: {outcome:?}"
+        );
+        assert_eq!(sent, vec![next], "the next request was answered");
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].0, None, "a failed receive brings no address");
+        assert!(
+            matches!(dropped[0].1, Dropped::CouldNotReceive(_)),
+            "{:?}",
+            dropped[0].1
+        );
+    }
+
+    #[test]
+    fn an_error_nobody_anticipated_does_not_end_the_loop_either() {
+        // The point of the fix, and the reason it is not a longer list of tolerated kinds: the
+        // kind nobody thought of is the one that takes the server off the air.
+        let server = a_server();
+        let request = build_request(&[0x52u8; 32], &server.public_key());
+        let next: SocketAddr = "203.0.113.10:2002".parse().unwrap();
+        let (outcome, sent, dropped) = serve_script(
+            vec![
+                Err(io::Error::other("a kind this loop was never told about")),
+                Ok((request, next)),
+            ],
+            4,
+        );
+
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert_eq!(sent, vec![next]);
+        assert_eq!(dropped.len(), 1);
+        assert!(matches!(dropped[0].1, Dropped::CouldNotReceive(_)));
+    }
+
+    #[test]
+    fn a_datagram_between_the_faults_puts_the_run_back_to_nought() {
+        // Which is what keeps the give-up ceiling out of a client's reach: every fault a client
+        // can cause needs a packet from that client, and that packet is a datagram.
+        let server = a_server();
+        let request = build_request(&[0x53u8; 32], &server.public_key());
+        let one: SocketAddr = "203.0.113.11:2002".parse().unwrap();
+        let two: SocketAddr = "203.0.113.12:2002".parse().unwrap();
+        let fault = || {
+            Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "os error 10054",
+            ))
+        };
+        let (outcome, sent, dropped) = serve_script(
+            vec![
+                fault(),
+                Ok((request.clone(), one)),
+                fault(),
+                Ok((request, two)),
+            ],
+            6,
+        );
+
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert_eq!(sent, vec![one, two], "both requests were answered");
+        assert_eq!(dropped.len(), 2, "and both lost datagrams were counted");
+    }
+
+    #[test]
+    fn the_policy_on_a_run_of_faults_is_carry_on_then_wait_then_give_up() {
+        assert_eq!(after_a_fault(1), AfterAFault::CarryOn);
+        assert_eq!(
+            after_a_fault(FAULTS_BEFORE_WAITING - 1),
+            AfterAFault::CarryOn
+        );
+        assert_eq!(after_a_fault(FAULTS_BEFORE_WAITING), AfterAFault::WaitFirst);
+        assert_eq!(
+            after_a_fault(FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT - 1),
+            AfterAFault::WaitFirst
+        );
+        assert_eq!(
+            after_a_fault(FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT),
+            AfterAFault::GiveUp,
+            "a socket answering nothing but faults is a socket, not a datagram"
+        );
+    }
+
+    #[test]
+    fn the_give_up_ceiling_cannot_be_reached_in_under_twenty_seconds() {
+        // The property that makes the ceiling safe to have at all. It is arithmetic rather than a
+        // measurement, and it is a test because the two constants are edited separately and either
+        // one moving alone would take the property away with nothing saying so.
+        let waiting = FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT - FAULTS_BEFORE_WAITING;
+        let shortest = FAULT_WAIT * waiting;
+        assert!(
+            shortest >= Duration::from_secs(20),
+            "a run of faults reaching the ceiling takes {shortest:?}, which is short enough for a \
+             client to sit through"
+        );
+    }
+
+    #[test]
+    fn the_three_kinds_that_mean_nothing_was_waiting_are_not_faults() {
+        let reset = io::Error::new(io::ErrorKind::ConnectionReset, "os error 10054");
+        assert_eq!(
+            a_failed_receive(&reset),
+            FailedReceive::Fault,
+            "a reset is a lost datagram rather than a quiet socket, so it is counted"
+        );
+        for kind in [
+            io::ErrorKind::TimedOut,
+            io::ErrorKind::WouldBlock,
+            io::ErrorKind::Interrupted,
+        ] {
+            assert_eq!(
+                a_failed_receive(&io::Error::new(kind, "quiet")),
+                FailedReceive::NothingWaiting
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_datagram_too_big_for_the_buffer_is_a_datagram_and_not_a_fault() {
+        let too_big = io::Error::from_raw_os_error(A_DATAGRAM_TOO_BIG_FOR_THE_BUFFER);
+        assert_eq!(
+            a_failed_receive(&too_big),
+            FailedReceive::DatagramThrownAway,
+            "Windows threw the datagram away and reported it; the datagram still arrived"
+        );
+        assert_eq!(
+            a_failed_receive(&io::Error::from_raw_os_error(10054)),
+            FailedReceive::Fault,
+            "and a reset by number is still a fault"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_run_of_oversize_datagrams_longer_than_the_ceiling_does_not_end_the_loop() {
+        // The fault of the evening of 2026-09-16, as arithmetic rather than a minute on a socket:
+        // more thrown-away datagrams in a row than the ceiling allows faults, and then an honest
+        // request. Before the fix the loop returned at the ceiling and the request was never read.
+        let server = a_server();
+        let request = build_request(&[0x54u8; 32], &server.public_key());
+        let next: SocketAddr = "203.0.113.13:2002".parse().unwrap();
+        let rounds = FAULTS_BEFORE_THE_SOCKET_IS_THE_FAULT + 8;
+        let mut script: Vec<io::Result<(Vec<u8>, SocketAddr)>> = (0..rounds)
+            .map(|_| {
+                Err(io::Error::from_raw_os_error(
+                    A_DATAGRAM_TOO_BIG_FOR_THE_BUFFER,
+                ))
+            })
+            .collect();
+        script.push(Ok((request, next)));
+        let (outcome, sent, dropped) = serve_script(script, i32::try_from(rounds).unwrap() + 4);
+
+        assert!(
+            outcome.is_ok(),
+            "a thousand oversize datagrams are a thousand datagrams, not a socket fault: {outcome:?}"
+        );
+        assert_eq!(
+            sent,
+            vec![next],
+            "and the honest request after them was answered"
+        );
+        assert_eq!(
+            dropped.len() as u32,
+            rounds,
+            "every one of them was counted"
+        );
+        assert!(
+            dropped
+                .iter()
+                .all(|(from, why)| from.is_none() && matches!(why, Dropped::Oversize(_))),
+            "each under its own name, with no address, because Windows kept the address with the \
+             datagram"
         );
     }
 

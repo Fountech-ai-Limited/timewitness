@@ -43,10 +43,20 @@ pub struct Checked {
     pub scheme: &'static str,
     /// Who signed it, as the blob and the key together identify them.
     pub signer: String,
-    /// The earliest instant the signed content supports.
-    earliest: UnixNanos,
+    /// The earliest instant the signed content supports, where it supports one at all.
+    ///
+    /// `None` is a scheme that checked out and put no number on where the moment sits. It is not
+    /// the same fact as an interval of zero width and it may never be read as one. An RFC 3161
+    /// token whose authority left the accuracy field out is the case this exists for: the
+    /// signature holds, the hash matches, and the authority has said nothing about how wrong its
+    /// own clock could be, so there is no edge to compute. Carrying that as an instant is the
+    /// tightening direction and it is what this field was until 2026-09-19.
+    earliest: Option<UnixNanos>,
     /// The latest instant the signed content supports, never before `earliest`.
-    latest: UnixNanos,
+    ///
+    /// Absent under the same rule as `earliest`, and absent together with it: a scheme either says
+    /// where the moment sits or it does not.
+    latest: Option<UnixNanos>,
     /// The nonce the signature was made over, where the scheme signs over one.
     pub nonce: Option<Vec<u8>>,
     /// What was checked, one line each, in the order it was checked.
@@ -77,11 +87,34 @@ impl Checked {
         Ok(Self {
             scheme,
             signer,
-            earliest,
-            latest,
+            earliest: Some(earliest),
+            latest: Some(latest),
             nonce,
             checks,
         })
+    }
+
+    /// What checking a blob established where the blob says nothing about where the moment sits.
+    ///
+    /// Added 2026-09-19. The signature checked out and the content is what it
+    /// claims to be, and the scheme still put no number on the interval. That is a different
+    /// answer from an interval and a different answer from an unchecked entry, and a reader who
+    /// cannot tell the three apart will read the wrong one as the strongest.
+    #[must_use]
+    pub fn with_no_interval(
+        scheme: &'static str,
+        signer: String,
+        nonce: Option<Vec<u8>>,
+        checks: Vec<String>,
+    ) -> Self {
+        Self {
+            scheme,
+            signer,
+            earliest: None,
+            latest: None,
+            nonce,
+            checks,
+        }
     }
 
     /// What checking a blob established about a single instant.
@@ -98,35 +131,37 @@ impl Checked {
         Self {
             scheme,
             signer,
-            earliest: at,
-            latest: at,
+            earliest: Some(at),
+            latest: Some(at),
             nonce,
             checks,
         }
     }
 
-    /// The earliest instant the signed content supports.
+    /// The earliest instant the signed content supports, where it supports one.
     #[must_use]
-    pub const fn earliest(&self) -> UnixNanos {
+    pub const fn earliest(&self) -> Option<UnixNanos> {
         self.earliest
     }
 
-    /// The latest instant the signed content supports.
+    /// The latest instant the signed content supports, where it supports one.
     #[must_use]
-    pub const fn latest(&self) -> UnixNanos {
+    pub const fn latest(&self) -> Option<UnixNanos> {
         self.latest
     }
 
-    /// The midpoint of the interval the blob supports.
+    /// The midpoint of the interval the blob supports, where it supports one.
     #[must_use]
-    pub fn midpoint(&self) -> UnixNanos {
-        UnixNanos((self.earliest.as_nanos() + self.latest.as_nanos()) / 2)
+    pub fn midpoint(&self) -> Option<UnixNanos> {
+        let (earliest, latest) = (self.earliest?, self.latest?);
+        Some(UnixNanos((earliest.as_nanos() + latest.as_nanos()) / 2))
     }
 
-    /// Half the width of that interval.
+    /// Half the width of that interval, where there is one.
     #[must_use]
-    pub fn radius(&self) -> crate::time::Nanos {
-        (self.latest.as_nanos() - self.earliest.as_nanos()) / 2
+    pub fn radius(&self) -> Option<crate::time::Nanos> {
+        let (earliest, latest) = (self.earliest?, self.latest?);
+        Some((latest.as_nanos() - earliest.as_nanos()) / 2)
     }
 }
 
@@ -193,9 +228,9 @@ mod tests {
     fn an_interval_that_is_a_single_instant_is_fine() {
         let at = UnixNanos(1_757_000_000_000_000_000);
         let checked = Checked::at_instant("drand", "quicknet".to_string(), at, None, Vec::new());
-        assert_eq!(checked.earliest(), at);
-        assert_eq!(checked.latest(), at);
-        assert_eq!(checked.radius(), 0);
+        assert_eq!(checked.earliest(), Some(at));
+        assert_eq!(checked.latest(), Some(at));
+        assert_eq!(checked.radius(), Some(0));
         assert!(Checked::over("drand", String::new(), at, at, None, Vec::new()).is_ok());
     }
 }

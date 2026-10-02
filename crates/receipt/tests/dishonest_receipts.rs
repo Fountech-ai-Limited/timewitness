@@ -14,7 +14,6 @@
 //! Every one of these was built, signed correctly, and watched being accepted by `open()` before
 //! the check that now refuses it went in.
 
-use timewitness_core::evidence::roughtime;
 use timewitness_core::{
     Bound, BoundBreakdown, EpsilonBasis, FusionRule, Generations, LeapIndicator, MonotonicNanos,
     Operator, Reading, SmearPolicy, SourceId, SourceKind, SourceState, Stamp, Timescale, UnixNanos,
@@ -523,23 +522,45 @@ fn a_corridor_that_does_not_say_how_wide_it_is_is_refused() {
 #[test]
 fn a_corridor_that_overlaps_the_interval_is_accepted() {
     // The honest case, so the checks above are refusing something specific rather than everything.
+    //
+    // A real corridor, captured from roughtime.se on 2026-09-07 about a subject of thirty-two 0x5a
+    // bytes, and the receipt moved to sit inside it. Until 2026-09-15 this was a blob of the right
+    // outer shape with rubbish inside, which reported as not checked under no key; from that date a
+    // stored response that is not a Roughtime exchange is refused whatever the reader holds, and so
+    // is a printed moment the response does not state. The reader here still holds no key, so the
+    // entry still reports as not checked, and what this test is about is still the interval
+    // arithmetic around it rather than the signature.
+    let corridor_at = 1_788_806_207 * 1_000 * MS;
     let mut r = receipt();
+    r.payload.hash = vec![0x5a; 32];
+    r.utc_estimate = UnixNanos(corridor_at - 4 * MS);
+    r.claim.earliest = UnixNanos(corridor_at - 10 * MS);
+    r.claim.latest = UnixNanos(corridor_at + 2 * MS);
     r.evidence = vec![Evidence {
         role: Role::AuthenticatedUtcCorridor,
         scheme: Scheme::new("roughtime"),
-        at: UnixNanos(NOW - 4 * MS),
-        radius: Some(10 * MS),
-        // Packed the way the scheme stores a response, because from 2026-09-08 a blob that is not
-        // even that shape is refused with no key held. What is inside it still verifies under
-        // nothing, which is the point: this test is about the interval arithmetic and not about
-        // cryptography, and the entry reports as not checked.
-        blob: roughtime::pack_blob(&[], &[], &[0xa1; 96]),
-        nonce: Some(vec![0x5a; 32]),
+        at: UnixNanos(corridor_at),
+        radius: Some(1_000 * MS),
+        blob: unhex(include_str!("data/sandwich/roughtime.hex")),
+        nonce: Some(unhex(include_str!("data/sandwich/roughtime-nonce.hex"))),
         detail: None,
     }];
 
     let back = sign_and_open(&r).expect("an honest corridor entry is evidence");
-    assert_eq!(back.evidence[0].radius, Some(10 * MS));
+    assert_eq!(back.evidence[0].radius, Some(1_000 * MS));
+}
+
+fn unhex(text: &str) -> Vec<u8> {
+    let digits: Vec<u8> = text
+        .bytes()
+        .filter(|b| b.is_ascii_hexdigit())
+        .map(|b| match b {
+            b'0'..=b'9' => b - b'0',
+            b'a'..=b'f' => b - b'a' + 10,
+            _ => b - b'A' + 10,
+        })
+        .collect();
+    digits.chunks(2).map(|c| (c[0] << 4) | c[1]).collect()
 }
 
 #[test]
@@ -630,4 +651,317 @@ fn a_receipt_that_states_no_holdover_ceiling_is_read_as_stating_none() {
         opened.claim.policy.max_holdover, None,
         "an absent ceiling reads back absent and never as nought"
     );
+}
+
+/// A leap value this format does not know is refused, and every spelling of it.
+///
+/// `was_a_candidate` was an exact string match against the one value that refuses, so anything
+/// else answered as a source whose own clock it believed was right. The receipt below is the one
+/// that was built by hand and accepted: nine sources that had all declared their clocks
+/// unsynchronised, spelled with a capital letter, counted as nine sound ones on the CLI and on the
+/// served page alike.
+#[test]
+fn a_leap_value_this_format_does_not_know_is_refused() {
+    for spelling in [
+        "Unsynchronised",
+        "UNSYNCHRONISED",
+        "unsynchronized",
+        "unsynchronised ",
+        "",
+        "sound",
+    ] {
+        let mut r = receipt();
+        r.claim.sources = vec![
+            SourceRecord {
+                leap: spelling.to_string(),
+                ..record("a-1", "a.example", true)
+            },
+            record("b-1", "b.example", true),
+            record("c-1", "c.example", true),
+        ];
+        r.claim.sources_offered = 3;
+        r.claim.sources_kept = 3;
+
+        let refusal = sign_and_open(&r)
+            .expect_err("a leap value nothing here can read is not a value to decide from");
+        assert!(
+            matches!(refusal, ReceiptError::Field(_)),
+            "on {spelling:?} got {refusal}"
+        );
+        assert!(
+            refusal.to_string().contains("leap indicator"),
+            "on {spelling:?} got {refusal}"
+        );
+    }
+}
+
+/// The four values it does know still read as they always did.
+///
+/// The three that describe a clock the source believed was right are candidates, and
+/// `unsynchronised` is not. This is the other half of the allow-list: a rule that refuses
+/// everything is as wrong as one that permits everything, and only running both says which this is.
+#[test]
+fn the_four_leap_values_this_format_knows_are_read_as_before() {
+    for sound in ["none", "add-second", "delete-second"] {
+        let mut r = receipt();
+        r.claim.sources = vec![
+            SourceRecord {
+                leap: sound.to_string(),
+                ..record("a-1", "a.example", true)
+            },
+            record("b-1", "b.example", true),
+            record("c-1", "c.example", true),
+        ];
+        r.claim.sources_offered = 3;
+        r.claim.sources_kept = 3;
+        sign_and_open(&r).unwrap_or_else(|e| panic!("{sound} is a sound source and got {e}"));
+    }
+
+    // And the one that refuses still refuses, on the same shape, so the test above is not passing
+    // because every receipt in it was malformed for some other reason.
+    let mut r = receipt();
+    r.claim.sources = vec![
+        unsynchronised("a-1", "a.example"),
+        record("b-1", "b.example", true),
+        record("c-1", "c.example", true),
+    ];
+    r.claim.sources_offered = 3;
+    r.claim.sources_kept = 2;
+    let refusal = sign_and_open(&r).expect_err("unsynchronised still refuses this receipt");
+    assert!(
+        matches!(refusal, ReceiptError::Inconsistent(_)),
+        "got {refusal}"
+    );
+    assert!(
+        !refusal.to_string().contains("leap indicator"),
+        "it should refuse on what the source said and not on being unable to read it, got {refusal}"
+    );
+}
+
+/// Put a string into the receipt at the place `Receipt::strings` gave that name to.
+///
+/// Written against the names rather than against field numbers so the test below reads as what it
+/// is doing, and so a string added to the format arrives here as a name nothing handles rather than
+/// as a case that is quietly skipped.
+fn plant(r: &mut Receipt, at: &str, value: &str) {
+    if at == "payload.algorithm" {
+        r.payload.algorithm = value.to_string();
+        return;
+    }
+    if at == "claim.fusion" {
+        r.claim.fusion = value.to_string();
+        return;
+    }
+    let (which, field) = at
+        .strip_prefix("claim.sources[")
+        .and_then(|rest| rest.split_once("]."))
+        .unwrap_or_else(|| panic!("nothing here knows how to plant a string at {at}"));
+    let source = &mut r.claim.sources[which.parse::<usize>().expect("a source number")];
+    match field {
+        "id" => source.id = value.to_string(),
+        "kind" => source.kind = value.to_string(),
+        "timescale" => source.timescale = value.to_string(),
+        "smear" => source.smear = value.to_string(),
+        "leap" => source.leap = value.to_string(),
+        "operator" => source.operator = Some(value.to_string()),
+        _ => panic!("nothing here knows how to plant a string at {at}"),
+    }
+}
+
+/// A receipt cannot write its own lines into a report that is one field per line.
+///
+/// Measured 2026-09-19: a correctly signed receipt whose first source had `kind` set to `ntp`, a
+/// newline, `earliest_ns=1`, a newline, `width_ns=1` verified clean, and `timewitness verify
+/// --fields` carried `earliest_ns=1` and a width of the receipt's own choosing above the report's
+/// real ones. `scripts/action-stamp.sh` reads that report with `sed -n 's/^name=//p'`, which takes
+/// every matching line, so two intended outputs became four with attacker-chosen content on two.
+///
+/// Every string the receipt carries is tested, not the one that was found, because each of them
+/// reaches a `name=value` line on some surface. The places come from `Receipt::strings`, which is
+/// the list `validate` walks, so a string added to the format later arrives in this test as a name
+/// `plant` does not know and stops the run.
+#[test]
+fn no_string_in_a_receipt_may_carry_a_control_character() {
+    let planted = "ntp\nearliest_ns=1";
+
+    let mut every = receipt();
+    every.claim.sources = vec![
+        record("a-1", "a.example", true),
+        record("b-1", "b.example", true),
+        record("c-1", "c.example", true),
+    ];
+    every.claim.sources_offered = 3;
+    every.claim.sources_kept = 3;
+    let places: Vec<String> = every.strings().iter().map(|(at, _)| at.clone()).collect();
+    assert!(
+        places.len() >= 18,
+        "three sources carry six strings each beside the payload and the fusion rule, got {}",
+        places.len()
+    );
+
+    // One at a time, so a refusal cannot be coming from some other field being wrong at the same
+    // moment as the one under test.
+    for at in &places {
+        let mut r = every.clone();
+        plant(&mut r, at, planted);
+        let refusal = sign_and_open(&r)
+            .err()
+            .unwrap_or_else(|| panic!("{at} carries a newline and the receipt was accepted"));
+        assert!(
+            matches!(refusal, ReceiptError::Field(_)),
+            "on {at} got {refusal}"
+        );
+        let said = refusal.to_string();
+        assert!(
+            said.contains(at.as_str()),
+            "on {at} the refusal does not name it: {said}"
+        );
+        assert!(
+            !said.contains(planted),
+            "on {at} the refusal plants the lines it is refusing: {said}"
+        );
+    }
+
+    // And the same receipt with nothing planted still holds up, so the loop above is not passing
+    // because every receipt in it was malformed for some other reason.
+    sign_and_open(&every).expect("the same receipt with no control character in it holds up");
+}
+
+/// Every control character, not only the newline that was found.
+///
+/// A carriage return splits a line for a reader on Windows, a form feed and a vertical tab do on
+/// some terminals, and a NUL truncates the value for anything reading it as a C string. None of
+/// them is a character an agent writes into the name of a source, so the rule is the class rather
+/// than the one member of it that was demonstrated.
+#[test]
+fn the_rule_is_every_control_character_and_not_the_newline_alone() {
+    for bad in ['\r', '\u{0}', '\u{b}', '\u{c}', '\u{1b}', '\u{7f}'] {
+        let mut r = receipt();
+        r.claim.sources = vec![
+            SourceRecord {
+                id: format!("ntp.example{bad}"),
+                ..record("a-1", "a.example", true)
+            },
+            record("b-1", "b.example", true),
+            record("c-1", "c.example", true),
+        ];
+        r.claim.sources_offered = 3;
+        r.claim.sources_kept = 3;
+        let refusal = sign_and_open(&r).err().unwrap_or_else(|| {
+            panic!("{bad:?} is a control character and the receipt was accepted")
+        });
+        assert!(
+            matches!(refusal, ReceiptError::Field(_)),
+            "on {bad:?} got {refusal}"
+        );
+    }
+
+    // A character outside ASCII is not a control character and is not refused. An operator name in
+    // a language that needs one is a name, and a rule refusing it would be refusing honest receipts
+    // to answer an attack that is about where a line ends.
+    let mut fine = receipt();
+    fine.claim.sources = vec![
+        SourceRecord {
+            operator: Some("\u{c5}lesund Tid".to_string()),
+            ..record("a-1", "a.example", true)
+        },
+        record("b-1", "b.example", true),
+        record("c-1", "c.example", true),
+    ];
+    fine.claim.sources_offered = 3;
+    fine.claim.sources_kept = 3;
+    sign_and_open(&fine).expect("a name outside ASCII is a name");
+}
+
+/// Exactly half of the sources that could disagree is not a majority of them.
+///
+/// The boundary the test draws, rather than a case well inside it. Every other test here sits
+/// comfortably on one side: four kept of four candidates passes, one of three refuses, and both
+/// answer the same whether the comparison is `<=` or `<`. Only a receipt sitting exactly on the
+/// line tells the two apart, and until 2026-09-19 nothing in this repository did: the whole suite
+/// stayed at its own count with that one character changed, and a binary built from it accepted a
+/// receipt the shipped one refuses.
+///
+/// Half is not a majority for the reason the whole test exists. Marzullo's guarantee is that a
+/// majority of the sources agreeing bounds the truth, and four against four is two answers with
+/// nothing to choose between them.
+#[test]
+fn exactly_half_of_the_sources_that_could_disagree_is_not_a_majority() {
+    let half = |kept: u32| {
+        let mut r = receipt();
+        r.claim.sources = (0..8)
+            .map(|n| {
+                record(
+                    &format!("s-{n}"),
+                    &format!("operator-{n}.example"),
+                    (n as u32) < kept,
+                )
+            })
+            .collect();
+        r.claim.sources_offered = 8;
+        r.claim.sources_kept = kept;
+        r
+    };
+
+    // Eight answered, all eight could have disagreed, four agreed.
+    let refusal = sign_and_open(&half(4)).expect_err("four of eight is not a majority of eight");
+    assert!(
+        matches!(refusal, ReceiptError::Inconsistent(_)),
+        "got {refusal}"
+    );
+    assert!(
+        refusal
+            .to_string()
+            .contains("4 of 8 sources that could disagree"),
+        "the refusal should be the source majority and name both numbers, got {refusal}"
+    );
+
+    // And one more agreeing is a majority, so the refusal above is about the arithmetic and not
+    // about something else being wrong with a receipt carrying eight sources.
+    sign_and_open(&half(5)).expect("five of eight is a majority of eight");
+}
+
+/// A source the issuer runs itself is not one of the parties standing behind the bound.
+///
+/// `AgentClaim::operators` counts the parties that are not the issuer, which is what makes the
+/// operator majority a test about somebody else having agreed. A receipt whose sources are all run
+/// by the issuer names no such party, so it is nought of nought and it is refused.
+///
+/// The exclusion had no test that failed when it was taken out. Measured 2026-09-19: with
+/// `.filter(independent)` removed from both counts, the whole suite stayed at its own count and a
+/// binary built from it accepted a receipt on which the only parties that agreed were the issuer.
+/// That is the one claim this product cannot allow a receipt to make, because it is our own word
+/// dressed as several parties'.
+#[test]
+fn a_source_the_issuer_runs_itself_is_not_one_of_the_operators_behind_the_bound() {
+    let issuer_runs_them = |ours: bool| {
+        let mut r = receipt();
+        r.claim.sources = (0..3)
+            .map(|n| SourceRecord {
+                first_party: ours,
+                ..record(&format!("s-{n}"), &format!("operator-{n}.example"), true)
+            })
+            .collect();
+        r.claim.sources_offered = 3;
+        r.claim.sources_kept = 3;
+        r
+    };
+
+    let refusal = sign_and_open(&issuer_runs_them(true))
+        .expect_err("a bound behind which only the issuer stands is not a bound anybody agreed");
+    assert!(
+        matches!(refusal, ReceiptError::Inconsistent(_)),
+        "got {refusal}"
+    );
+    assert!(
+        refusal
+            .to_string()
+            .contains("run by 0 of the 0 operators that answered"),
+        "the refusal should say that nobody outside the issuer answered, got {refusal}"
+    );
+
+    // The same three sources run by anybody else hold up, so the refusal above is the exclusion and
+    // not the shape of the receipt.
+    sign_and_open(&issuer_runs_them(false))
+        .expect("three sources run by three other parties is three operators");
 }

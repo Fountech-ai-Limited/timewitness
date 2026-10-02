@@ -123,8 +123,18 @@ for (const { what, file } of subjects) {
   ran += 1;
 
   agree(`${what}, the verdict`, fromPage.accepted, fromCommandLine.accepted);
-  agree(`${what}, the interval`, fromPage.claim.width_ns, fromCommandLine.claim.width_ns);
-  agree(`${what}, the reading`, fromPage.claim.reading_ns, fromCommandLine.claim.reading_ns);
+  // The sentence as well as the boolean, because the sentence now carries how many attestations
+  // were checked and a page saying "all 3" beside a command line saying "none" is the drift this
+  // script exists to catch.
+  agree(`${what}, the verdict line`, fromPage.verdict, fromCommandLine.verdict);
+  // And the line under it, which says how wide the checked outside evidence brackets the moment and
+  // whose the width is. It is the line that stops the one above reading as a third party vouching
+  // for the width, so a page printing it differently, or not at all, is a page telling a reader less.
+  agree(`${what}, the line under the verdict`, fromPage.bracket, fromCommandLine.bracket);
+  // A receipt refused before it was read carries no claim on either side, and the case most likely
+  // to disagree is a refused one, so the two are compared as absent rather than thrown on.
+  agree(`${what}, the interval`, fromPage.claim?.width_ns, fromCommandLine.claim?.width_ns);
+  agree(`${what}, the reading`, fromPage.claim?.reading_ns, fromCommandLine.claim?.reading_ns);
   agree(`${what}, the receipt digest`, fromPage.receipt_sha256, fromCommandLine.receipt_sha256);
   // Every step in full, sentence included. The sentence is where the digest of what the reader
   // supplied is printed, so comparing only the state is what let the two shells disagree about the
@@ -132,9 +142,42 @@ for (const { what, file } of subjects) {
   agree(`${what}, what was checked`, fromPage.steps, fromCommandLine.steps);
   agree(
     `${what}, the evidence`,
-    fromPage.evidence.map((e) => [e.role, e.checked]),
-    fromCommandLine.evidence.map((e) => [e.role, e.checked]),
+    (fromPage.evidence || []).map((e) => [e.role, e.checked]),
+    (fromCommandLine.evidence || []).map((e) => [e.role, e.checked]),
   );
+}
+
+// A receipt backdated three years on genuine evidence, which both shells accept and both have to
+// say is bracketed to years rather than to seconds. Only when this script chose its own receipt,
+// since a receipt handed in on the command line is the one being asked about.
+if (!process.argv[2]) {
+  // Kept as hex, since the tree holds one binary file and holds it on purpose.
+  const hex = readFileSync(join(root, "crates", "verify", "tests", "data", "a-backdated-receipt", "receipt.hex"), "utf8");
+  const backdated = Buffer.from(hex.replace(/[^0-9a-fA-F]/g, ""), "hex");
+  const backdatedFile = join(scratch, "backdated.cbor");
+  writeFileSync(backdatedFile, backdated);
+  const receiptAt = put(backdated);
+  const fromPage = take(instance.tw_verify(receiptAt, 0, 0));
+  instance.tw_free(receiptAt);
+  let fromCommandLine;
+  try {
+    fromCommandLine = JSON.parse(execFileSync(binary, ["verify", backdatedFile, "--json"], { encoding: "utf8" }));
+  } catch (e) {
+    fromCommandLine = JSON.parse(e.stdout || e.stderr || "null");
+  }
+  agree("the backdated receipt, the verdict", fromPage?.accepted, fromCommandLine?.accepted);
+  agree("the backdated receipt, the verdict line", fromPage?.verdict, fromCommandLine?.verdict);
+  agree("the backdated receipt, the line under the verdict", fromPage?.bracket, fromCommandLine?.bracket);
+  // "about 2.95 years" until 2026-09-19. The width was the 2023 beacon against a
+  // 2026 token whose authority states no accuracy, so one of its edges was an assumption of ours
+  // rather than anything a third party signed. The token bounds nothing from above and the page
+  // says so, which is the plainer warning and the true one.
+  for (const [what, words] of [["nothing above it", "nothing outside bounds the moment from above."], ["no corridor", "It carries no Roughtime corridor."], ["whose the width is", "is the signer's own claim."]]) {
+    if (!String(fromPage?.bracket).includes(words)) {
+      problems.push(`the backdated receipt: the page's line under the verdict does not say ${what}: ${JSON.stringify(fromPage?.bracket)}`);
+    }
+  }
+  ran += 1;
 }
 
 // And the receipt with one byte changed has to be refused by the page, not only by the binary.

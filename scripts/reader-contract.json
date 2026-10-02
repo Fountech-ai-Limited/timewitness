@@ -1,0 +1,64 @@
+{
+  "what": "What counts as reaching a reader, written once. Read by scripts/policy-sentences.py here, by scripts/pictures-say.mjs in the site repository, and by tests/check-messaging-figures.py at the product root, which is the only place that can see both repositories and is where the three are held to each other.",
+  "why": "Three checks read the public surfaces and each had its own answer to what a reader is given. The picture reader read aria-description and the served-page reader did not, on the same rule, so a rule-breaking sentence in that one attribute was refused inside a picture and passed on the page around it. Each list was maintained by hand, so the next attribute added to one of them diverged again and nothing anywhere failed when they disagreed. The extraction is one question and it is answered here; the judging is three different questions and stays three.",
+  "how": "Each check builds its own matcher from the lists below rather than writing them out, and applies the ones its medium can carry: a page has all of them, an SVG has the elements and the attributes but no meta tag. Adding an attribute is one line here and every check gets it in the same act. The agreement is watched rather than assumed: tests/check-messaging-figures.py builds a page and a picture carrying every line below exactly once and fails where a check does not hand back what it put in. An attribute value is read in single quotes as well as double: Next.js emits double, so a check right only about that is a check about one generator rather than about markup.",
+  "attributes": [
+    "alt",
+    "title",
+    "aria-label",
+    "aria-description",
+    "aria-roledescription"
+  ],
+  "metaNames": [
+    "description",
+    "og:description",
+    "twitter:description"
+  ],
+  "pageTitle": true,
+  "svgElements": [
+    "title",
+    "desc",
+    "text"
+  ],
+  "blockElements": [
+    "p",
+    "li",
+    "ul",
+    "ol",
+    "dl",
+    "dt",
+    "dd",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "div",
+    "section",
+    "article",
+    "header",
+    "footer",
+    "nav",
+    "aside",
+    "main",
+    "table",
+    "tr",
+    "td",
+    "th",
+    "blockquote",
+    "figure",
+    "figcaption",
+    "pre",
+    "br",
+    "hr"
+  ],
+  "quotes": [
+    "double",
+    "single"
+  ],
+  "notRead": {
+    "aria-labelledby": "It names another element by id rather than carrying words of its own, so reading it means resolving the reference. The words it points at are in an element this already reads, and where they are not, that element is the gap rather than this attribute.",
+    "content declarations in CSS": "Words a stylesheet inserts are drawn by the browser and sit in no markup. Nothing here reads a stylesheet, and saying so is the point of this field."
+  }
+}

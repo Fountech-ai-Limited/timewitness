@@ -7,6 +7,7 @@ members = [
     "crates/platform",
     "crates/agent",
     "crates/receipt",
+    "crates/countersign",
     "crates/verify",
     "crates/verify-web",
     "crates/cli",
@@ -34,6 +35,7 @@ timewitness-clock = { path = "crates/clock" }
 timewitness-platform = { path = "crates/platform" }
 timewitness-agent = { path = "crates/agent" }
 timewitness-receipt = { path = "crates/receipt" }
+timewitness-countersign = { path = "crates/countersign" }
 timewitness-verify = { path = "crates/verify" }
 timewitness-verify-web = { path = "crates/verify-web" }
 timewitness-roughtime-server = { path = "crates/roughtime-server" }

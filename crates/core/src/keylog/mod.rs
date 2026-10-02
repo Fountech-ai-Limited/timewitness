@@ -1,4 +1,4 @@
-//! The public log of agent keys, and the proofs a stranger checks it with.
+//! The public log of our keys, and the proofs a stranger checks it with.
 //!
 //! # The problem it exists for
 //!
@@ -9,7 +9,15 @@
 //!
 //! The answer is a log: every agent key we issue, appended, publicly readable, and shaped so that
 //! removing or reordering an entry is something a reader can catch rather than something they have
-//! to trust us not to do.
+//! to trust us not to do. The same log carries the long-term keys of our Roughtime servers, under a
+//! role of their own, so one file says which keys are ours and what each is for.
+//!
+//! # Whose log it is
+//!
+//! A head is signed, and the key that signs it is trust material the reader chose: a published
+//! default ships with the verifier and a reader can replace it. A head signed by any other key
+//! answers nothing, because whatever that list says, it is not us saying it. Until 2026-09-15 the
+//! head was checked against the key the head itself named, so a log anybody made read as ours.
 //!
 //! # What a log of ours can and cannot prove, said before the code rather than after it
 //!
@@ -52,7 +60,68 @@ const LEAF_PREFIX: u8 = 0x00;
 /// The prefix an interior node is hashed under.
 const NODE_PREFIX: u8 = 0x01;
 
-/// One agent key, as the log records it.
+/// The version of the leaf encoding, and it is the first byte of every leaf.
+///
+/// A served head freezes the leaves under it: every proof anybody keeps is over these bytes, so the
+/// layout cannot change once a head is out. What can change is what comes after this byte under a
+/// later version, and a reader who meets a version they do not know stops rather than reading it as
+/// this one. Written once, before the first head was served, and not to be moved.
+pub const LEAF_VERSION: u8 = 0x01;
+
+/// What an entry says about its key.
+///
+/// The one question the verifier asks a log is whether an agent key was ours at a moment, and a
+/// log that also carries our server keys has to be able to say which entries that question is
+/// asked of. Until 2026-09-15 it could not: one entry type held both, so the log of our two
+/// server keys refused every receipt this product had issued, because no server key had signed one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// A key an agent of ours signs receipts with.
+    Agent,
+    /// A long-term key a Roughtime server of ours signs with. Never asked about a receipt.
+    Server,
+    /// The key stopped being ours at `valid_from`, whatever any window above says.
+    ///
+    /// A retirement is permanent. Keys are cheap and a retired one is never reissued, so a reader
+    /// who finds this entry needs to read nothing else about the key for any later moment.
+    Retired,
+}
+
+impl Role {
+    /// The byte a role is encoded as in a leaf. Distinct for every role, so two entries that differ
+    /// only in role never hash alike.
+    #[must_use]
+    pub const fn byte(self) -> u8 {
+        match self {
+            Role::Agent => 0x01,
+            Role::Server => 0x02,
+            Role::Retired => 0x03,
+        }
+    }
+
+    /// The word a role is written as in a file.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Role::Agent => "agent",
+            Role::Server => "server",
+            Role::Retired => "retired",
+        }
+    }
+
+    /// The role a word names, where it names one.
+    #[must_use]
+    pub fn from_word(word: &str) -> Option<Self> {
+        match word {
+            "agent" => Some(Role::Agent),
+            "server" => Some(Role::Server),
+            "retired" => Some(Role::Retired),
+            _ => None,
+        }
+    }
+}
+
+/// One key of ours, as the log records it.
 ///
 /// # Why a window and not just a date
 ///
@@ -63,20 +132,25 @@ const NODE_PREFIX: u8 = 0x01;
 /// nothing about a receipt signed after the key was retired.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyEntry {
-    /// The agent's public key, as it appears in a receipt.
+    /// The public key, as it appears in a receipt or in a server's published list.
     pub public_key: [u8; 32],
-    /// Which deployment this key belonged to, as a name a person reads.
+    /// What this entry says about the key.
+    pub role: Role,
+    /// Which deployment this key belonged to, as a name a person reads. For a retirement, a note
+    /// on why.
     ///
     /// Not an identity claim about a person or a company. It is a label, it is chosen by whoever
     /// runs the agent, and two deployments may choose the same one. A reader who needs to know
     /// whose machine signed something needs more than a log, and this field is not it.
     pub deployment: String,
-    /// The first moment a receipt signed by this key should be believed to be ours.
+    /// The first moment a receipt signed by this key should be believed to be ours. For a
+    /// retirement, the moment the key stopped being ours.
     pub valid_from: UnixNanos,
-    /// The last such moment, where the key has been retired.
+    /// The last such moment, where the entry was written with an end in sight.
     ///
     /// `None` means still in use at the moment the entry was written. It is never edited in place:
-    /// retiring a key appends a new entry, because a log whose old entries change is not a log.
+    /// retiring a key appends a [`Role::Retired`] entry, because a log whose old entries change is
+    /// not a log. A retirement carries no end of its own.
     pub valid_until: Option<UnixNanos>,
 }
 
@@ -87,10 +161,14 @@ impl KeyEntry {
     /// is what every proof is built on: a change in how this is laid out silently invalidates every
     /// proof anybody has ever been given. Each field is length-prefixed so that no two different
     /// entries can produce the same bytes by moving a boundary, which is the classic way a log is
-    /// made to hold two entries that hash alike.
+    /// made to hold two entries that hash alike. The version and the role come first and are one
+    /// byte each, so a leaf of a later version or another role differs from this one before any
+    /// field is read.
     #[must_use]
     pub fn canonical(&self) -> Vec<u8> {
         let mut out = Vec::new();
+        out.push(LEAF_VERSION);
+        out.push(self.role.byte());
         out.extend_from_slice(&self.public_key);
         let name = self.deployment.as_bytes();
         out.extend_from_slice(&(name.len() as u64).to_le_bytes());
@@ -448,36 +526,66 @@ pub fn check_consistency(
     Ok(())
 }
 
-/// What a reader concluded about one key, from the log.
+/// What a reader concluded about one agent key, from the log.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Standing {
     /// The log vouches for this key at that moment.
     Published,
-    /// The key is in the log and the moment is outside every window it names.
+    /// The key was retired at the moment carried, and the moment asked about is not before it.
+    Retired(UnixNanos),
+    /// The key is in the log as an agent key and the moment is outside every window it names.
     OutsideItsWindow,
+    /// The key is in the log only as a server key, which signs no receipt.
+    AServerKey,
     /// The key is not in this log.
     NotInTheLog,
 }
 
-/// Whether these entries vouch for a key at a moment.
+/// Whether these entries vouch for an agent key at a moment.
+///
+/// Only [`Role::Agent`] entries can say yes, because the question is about the key that signed a
+/// receipt and a server key signs none. A [`Role::Retired`] entry for the key answers first, for
+/// every moment from its own onwards, whatever window any agent entry names: retiring a key is an
+/// entry appended below the one it retires, and until 2026-09-15 that entry was read as one more
+/// window in a union, so the open entry above it went on covering every later moment and nothing
+/// was ever retired.
 ///
 /// A reader with the whole log calls this. A reader with only a receipt and one entry checks the
 /// entry's inclusion proof first and then asks this of the one entry, which is the same answer by a
-/// cheaper route.
+/// cheaper route for every answer except a retirement, which lives in an entry of its own.
 #[must_use]
 pub fn standing(entries: &[KeyEntry], key: &[u8; 32], at: UnixNanos) -> Standing {
-    let mut found = false;
-    for entry in entries {
-        if entry.public_key != *key {
-            continue;
-        }
-        found = true;
-        if entry.covers(at) {
-            return Standing::Published;
+    let about_this_key = entries.iter().filter(|entry| entry.public_key == *key);
+
+    if let Some(retired) = about_this_key
+        .clone()
+        .filter(|entry| entry.role == Role::Retired)
+        .map(|entry| entry.valid_from)
+        .min()
+    {
+        if at >= retired {
+            return Standing::Retired(retired);
         }
     }
-    if found {
+
+    let mut as_agent = false;
+    let mut as_server = false;
+    for entry in about_this_key {
+        match entry.role {
+            Role::Agent => {
+                as_agent = true;
+                if entry.covers(at) {
+                    return Standing::Published;
+                }
+            }
+            Role::Server => as_server = true,
+            Role::Retired => {}
+        }
+    }
+    if as_agent {
         Standing::OutsideItsWindow
+    } else if as_server {
+        Standing::AServerKey
     } else {
         Standing::NotInTheLog
     }
@@ -490,10 +598,153 @@ mod tests {
     fn entry(key: u8, from: i128, until: Option<i128>) -> KeyEntry {
         KeyEntry {
             public_key: [key; 32],
+            role: Role::Agent,
             deployment: format!("deployment-{key}"),
             valid_from: UnixNanos(from),
             valid_until: until.map(UnixNanos),
         }
+    }
+
+    fn retired(key: u8, at: i128) -> KeyEntry {
+        KeyEntry {
+            public_key: [key; 32],
+            role: Role::Retired,
+            deployment: "retired".to_string(),
+            valid_from: UnixNanos(at),
+            valid_until: None,
+        }
+    }
+
+    #[test]
+    fn a_leaf_begins_with_its_version_and_its_role_and_its_bytes_are_pinned() {
+        // The first served head freezes this layout, so it is pinned to a value rather than to a
+        // description of itself. A change here that leaves every other test green is the change
+        // this one exists to catch: once a head is served the proof a reader kept is over exactly these
+        // bytes, and a new layout that hashes the same entries differently orphans every one of
+        // them.
+        let e = KeyEntry {
+            public_key: [5u8; 32],
+            role: Role::Agent,
+            deployment: "a".to_string(),
+            valid_from: UnixNanos(100),
+            valid_until: None,
+        };
+        let bytes = e.canonical();
+        assert_eq!(bytes[0], LEAF_VERSION);
+        assert_eq!(
+            bytes[0], 0x01,
+            "the version byte was written once and is not to move"
+        );
+        assert_eq!(bytes[1], Role::Agent.byte());
+        assert_eq!(&bytes[2..34], &[5u8; 32]);
+        assert_eq!(bytes.len(), 1 + 1 + 32 + 8 + 1 + 16 + 1);
+
+        let pinned = "d51f0fdc3fd542f6fb45339b7b4be97f43acf08241450bedb701499ca8af6d39";
+        let got: String = e.leaf_hash().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(got, pinned, "the leaf hash of a fixed entry moved");
+    }
+
+    #[test]
+    fn two_entries_that_differ_only_in_role_never_encode_alike() {
+        // The same key, name and window as an agent key, a server key and a retirement. Every
+        // field a person reads is equal, the lengths are equal, and the bytes are not, because the
+        // role is a byte of the leaf and not a matter of which file the entry sits in.
+        let agent = entry(1, 100, None);
+        let server = KeyEntry {
+            role: Role::Server,
+            ..agent.clone()
+        };
+        let retired = KeyEntry {
+            role: Role::Retired,
+            ..agent.clone()
+        };
+        for (a, b) in [(&agent, &server), (&agent, &retired), (&server, &retired)] {
+            assert_eq!(a.canonical().len(), b.canonical().len());
+            assert_ne!(a.canonical(), b.canonical());
+            assert_ne!(a.leaf_hash(), b.leaf_hash());
+        }
+        assert_eq!(Role::from_word("agent"), Some(Role::Agent));
+        assert_eq!(Role::from_word("server"), Some(Role::Server));
+        assert_eq!(Role::from_word("retired"), Some(Role::Retired));
+        assert_eq!(Role::from_word("Agent"), None);
+        for role in [Role::Agent, Role::Server, Role::Retired] {
+            assert_eq!(Role::from_word(role.word()), Some(role));
+        }
+    }
+
+    #[test]
+    fn a_retirement_closes_every_window_from_its_moment_on() {
+        // The fault of 2026-09-15: the entry that retires a key was one more window in a union, so
+        // the open entry above it covered every later moment. Here the key is open from 100, a
+        // second window says 300 to 400, and a retirement at 250 ends all of it.
+        let entries = vec![
+            entry(1, 100, None),
+            retired(1, 250),
+            entry(1, 300, Some(400)),
+        ];
+
+        assert_eq!(
+            standing(&entries, &[1; 32], UnixNanos(200)),
+            Standing::Published,
+            "before the retirement the open window holds"
+        );
+        assert_eq!(
+            standing(&entries, &[1; 32], UnixNanos(250)),
+            Standing::Retired(UnixNanos(250)),
+            "at the moment of retirement the key is retired"
+        );
+        assert_eq!(
+            standing(&entries, &[1; 32], UnixNanos(350)),
+            Standing::Retired(UnixNanos(250)),
+            "a window added below the retirement does not reopen the key"
+        );
+        assert_eq!(
+            standing(&entries, &[1; 32], UnixNanos(10_000)),
+            Standing::Retired(UnixNanos(250))
+        );
+
+        // The order of the entries in the log does not change the answer: a retirement written
+        // above the window it closes still closes it.
+        let reversed = vec![retired(1, 250), entry(1, 100, None)];
+        assert_eq!(
+            standing(&reversed, &[1; 32], UnixNanos(300)),
+            Standing::Retired(UnixNanos(250))
+        );
+        assert_eq!(
+            standing(&reversed, &[1; 32], UnixNanos(200)),
+            Standing::Published
+        );
+
+        // Two retirements: the earlier one is the moment.
+        let twice = vec![entry(1, 100, None), retired(1, 500), retired(1, 250)];
+        assert_eq!(
+            standing(&twice, &[1; 32], UnixNanos(300)),
+            Standing::Retired(UnixNanos(250))
+        );
+    }
+
+    #[test]
+    fn the_agent_key_question_is_asked_only_of_agent_entries() {
+        // The log we serve first holds two server keys. Asked whether an agent key is ours, it has
+        // to answer that it does not hold the key, and asked about a server key it has to say the
+        // key is a server's rather than vouch for it, because no server key signs a receipt.
+        let server = KeyEntry {
+            role: Role::Server,
+            ..entry(2, 0, None)
+        };
+        let entries = vec![server, entry(1, 100, None)];
+        assert_eq!(
+            standing(&entries, &[2; 32], UnixNanos(500)),
+            Standing::AServerKey
+        );
+        assert_eq!(
+            standing(&entries, &[1; 32], UnixNanos(500)),
+            Standing::Published
+        );
+        assert_eq!(
+            standing(&entries, &[3; 32], UnixNanos(500)),
+            Standing::NotInTheLog
+        );
     }
 
     fn leaves(n: usize) -> Vec<[u8; 32]> {
@@ -545,6 +796,7 @@ mod tests {
         }
         let a = KeyEntry {
             public_key: key,
+            role: Role::Agent,
             deployment: String::from_utf8(long_name.to_vec()).unwrap(),
             valid_from: UnixNanos(i128::from_le_bytes(from_a)),
             valid_until: None,
@@ -558,6 +810,7 @@ mod tests {
         until_b[..15].copy_from_slice(&from_a[1..16]);
         let b = KeyEntry {
             public_key: key,
+            role: Role::Agent,
             deployment: String::from_utf8(long_name[..1].to_vec()).unwrap(),
             valid_from: UnixNanos(i128::from_le_bytes(from_b)),
             valid_until: Some(UnixNanos(i128::from_le_bytes(until_b))),
@@ -772,18 +1025,26 @@ mod tests {
     #[test]
     fn a_retired_key_is_a_new_entry_rather_than_an_edit() {
         // Stated as a test because it is the rule that makes the log a log. Retiring key 1 appends
-        // an entry with an end on it; the original entry is untouched, so every proof anybody was
-        // given for it still holds.
+        // a retirement below it; the original entry is untouched, so every proof anybody was given
+        // for it still holds, and the key is no longer vouched for from the retirement on. Until
+        // 2026-09-15 this test asserted the hashing and never asked `standing`, which is how the
+        // retirement went on retiring nothing.
         let original = entry(1, 100, None);
-        let retired = KeyEntry {
-            valid_until: Some(UnixNanos(200)),
-            ..original.clone()
-        };
+        let retired = retired(1, 200);
         assert_ne!(original.leaf_hash(), retired.leaf_hash());
 
         let l = vec![original.leaf_hash()];
         let before = root(&l);
+        let after = vec![original.clone(), retired.clone()];
         let after_leaves = vec![original.leaf_hash(), retired.leaf_hash()];
+        assert_eq!(
+            standing(&after, &[1; 32], UnixNanos(150)),
+            Standing::Published
+        );
+        assert_eq!(
+            standing(&after, &[1; 32], UnixNanos(200)),
+            Standing::Retired(UnixNanos(200))
+        );
 
         check_inclusion(
             &original.leaf_hash(),

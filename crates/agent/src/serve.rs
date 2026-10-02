@@ -62,6 +62,12 @@ pub struct Cadence {
     /// signature as the agent having settled.** The second run signed at 6 s, straight after these
     /// rounds and before the first full gap had to be extrapolated across, and then refused every
     /// reading from 11 s to 69 s. The first run refused at 0 s and 5 s and did not sign until 73 s.
+    /// Measured again on 2026-09-18 on the same desktop at the same settings, after the ageing of a
+    /// source's interval was bounded by the band, on two agents started in the same minute: the
+    /// last refusal was at 102 s of uptime on the run asked every five seconds for forty minutes
+    /// and at 101 s on the run asked every ten seconds for seven minutes, with 13 of the first 34
+    /// and 8 of the first 17 readings refused. The first of those signed at 3 s, refused from 9 s
+    /// to 37 s, signed once at 43 s and refused again from 48 s to 67 s, so the warning above stands.
     /// The whole curve is written down for a reader in `docs/what-timewitness-cannot-prove.md`
     /// rather than only here, because a refusal nobody was told about is a surprise, and every
     /// claim this product makes ships beside what it cannot prove to stop those.
@@ -77,7 +83,21 @@ pub struct Cadence {
     /// moved, which is a rate per second, so the cost grows with the square of the gap. Fifteen
     /// parts per million plus one per second, over the gap: 0.5 ms at sixteen seconds, 1.5 ms at
     /// thirty-two, 5.1 ms at sixty-four. Against a residual this whole crate exists to bring down
-    /// from 36.4 ms, five milliseconds of it back is not free.
+    /// from 36.4 ms, five milliseconds of it back is not free. Each source's interval is aged
+    /// across the same gap before the next round selects, at no more than half the band the
+    /// policy states for the counter, which is 0.8 ms of half width at sixteen seconds, 1.6 ms at
+    /// thirty-two and 3.2 ms at sixty-four. The cadence and that ageing are one trade: on
+    /// 2026-09-18 an ageing term that carried a fresh fit's own error bar, tens of thousands of
+    /// parts per million on a sub-second baseline, stopped the agent converging at this cadence at
+    /// all, and what was changed was the ageing rather than the gap.
+    ///
+    /// **Two things changed that evening and only one of them is why the agent comes back**,
+    /// measured 2026-09-19 over twenty minutes against a control on one desktop. A window picks
+    /// the sample a round is built from by narrowest aged interval, and that is what closes the
+    /// loop; bounding the widening by the band is what keeps it inside the assumption the rest of
+    /// the arithmetic rests on. A binary with the bound removed and nothing else changed is
+    /// indistinguishable from the head over those twenty minutes. This comment credited the cap
+    /// with the recovery until the two were separated.
     ///
     /// Shorter costs somebody else's servers. The sources are three public NTP servers and three
     /// public Roughtime servers, run by other people at their own expense. RFC 5905 sets sixteen

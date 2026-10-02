@@ -123,25 +123,40 @@ pub extern "C" fn tw_verify(receipt: usize, subject: usize, has_subject: u32) ->
     let text = held(|buffers| {
         let receipt_bytes = find(buffers, receipt)?;
         let subject = if has_subject == 0 {
-            Subject::NotSupplied
+            None
         } else {
             match find(buffers, subject) {
-                Some(bytes) => Subject::Bytes(bytes),
+                Some(bytes) => Some(bytes),
                 None => return None,
             }
         };
-        Some(as_json(&verify(
-            receipt_bytes,
-            subject,
-            &anchor_file::published(),
-            &Floor::default(),
-        )))
+        Some(json_for(receipt_bytes, subject))
     });
 
     match text {
         Some(text) => answer(&text),
         None => 0,
     }
+}
+
+/// Check a receipt and answer with the JSON the page reads, with no addresses in the way.
+///
+/// [`tw_verify`] is this function plus the buffer bookkeeping the boundary needs, so the two say
+/// the same thing by construction. They are apart because the JSON a reader is shown can then be
+/// held to by a test that writes to no address, which is what this crate's own rule about pointers
+/// asks for: see [`BUFFERS`].
+#[must_use]
+pub fn json_for(receipt: &[u8], subject: Option<&[u8]>) -> String {
+    let subject = match subject {
+        Some(bytes) => Subject::Bytes(bytes),
+        None => Subject::NotSupplied,
+    };
+    as_json(&verify(
+        receipt,
+        subject,
+        &anchor_file::published(),
+        &Floor::default(),
+    ))
 }
 
 /// The list of what this product cannot prove, as JSON.
@@ -195,6 +210,12 @@ fn answer(text: &str) -> usize {
 fn as_json(a: &timewitness_verify::Assessment) -> String {
     let mut top: Vec<(&'static str, Value)> = vec![
         ("accepted", Value::Bool(a.accepted())),
+        // The one line a person reads. The page prints it as given rather than composing its own,
+        // so a reader of the page and a reader of the command line are told the same thing.
+        ("verdict", Value::text(a.verdict())),
+        // The line under it, with how wide the checked outside evidence brackets the moment and
+        // whose the width is. Null where the receipt was refused.
+        ("bracket", a.bracket().map_or(Value::Null, Value::text)),
         (
             "steps",
             Value::Array(

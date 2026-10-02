@@ -38,7 +38,8 @@ pub const CLAIM_KIND: &str = "agent-bound";
 /// Three roles, and they do different jobs. Nothing in this format lets one stand in for another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Role {
-    /// An authenticated corridor of UTC, which is what gives the bound its outside support.
+    /// An authenticated corridor of UTC. It pins the moment from outside and never narrows the
+    /// bound, which is the signer's own claim whatever the corridor says.
     AuthenticatedUtcCorridor,
     /// Proof the receipt cannot have been made before some public moment.
     NotEarlierThan,
@@ -266,6 +267,19 @@ pub struct AgentClaim {
     pub policy: PolicyRecord,
 }
 
+/// Every leap value this format knows how to read.
+///
+/// A receipt carrying anything else is refused by `validate`, because `leap` is a field a reader's
+/// decision turns on and a value nothing here can read is not a value a decision may be taken from.
+pub const LEAP_VALUES: [&str; 4] = ["none", "add-second", "delete-second", "unsynchronised"];
+
+/// The leap values that describe a source whose own clock it believed was right.
+///
+/// A source announcing a second being added or removed still believes its clock, so it could have
+/// disagreed with the others and it is a candidate for the intersection. Only `unsynchronised` says
+/// otherwise.
+const SOUND_LEAP: [&str; 3] = ["none", "add-second", "delete-second"];
+
 impl AgentClaim {
     /// Whether one listed source was a candidate for the intersection.
     ///
@@ -278,9 +292,28 @@ impl AgentClaim {
     /// which sources could have disagreed with anybody, and a rule written three times is a rule
     /// that drifts. That has happened once already, when one of them counted every source that
     /// answered.
+    ///
+    /// **It named the one value that refuses until 2026-09-19, and so answered every other string
+    /// as a sound source.** It was `source.leap != "unsynchronised"`, an exact match on fourteen
+    /// characters written by whoever signed the receipt, so `Unsynchronised` with a capital letter
+    /// counted nine sources that had all declared their own clocks wrong as nine sound ones, and
+    /// the receipt held up on the CLI and on the served page alike. Corrected 2026-09-19. It now
+    /// names the values that permit, so a string this format has never seen is not a candidate,
+    /// which is the direction that refuses. `validate` refuses such a receipt outright and says so
+    /// in its own words, because the honest answer about an unreadable value is that nothing here
+    /// can tell what the source said, and that is not the same as the source saying its clock was
+    /// wrong.
     #[must_use]
     pub fn was_a_candidate(source: &SourceRecord) -> bool {
-        source.leap != "unsynchronised"
+        SOUND_LEAP.contains(&source.leap.as_str())
+    }
+
+    /// The first listed source whose leap value this format does not know, where there is one.
+    #[must_use]
+    pub fn unreadable_leap(&self) -> Option<&SourceRecord> {
+        self.sources
+            .iter()
+            .find(|s| !LEAP_VALUES.contains(&s.leap.as_str()))
     }
 
     /// How many of the sources that answered were candidates for the intersection.
@@ -653,6 +686,50 @@ impl Receipt {
     #[must_use]
     pub fn width(&self) -> Nanos {
         self.claim.latest - self.claim.earliest
+    }
+
+    /// Every string this receipt carries, each beside where it sits.
+    ///
+    /// A receipt is a file a stranger hands us, so every string in it was written by whoever signed
+    /// it. They reach a reader through a report, and a report is a format: `timewitness verify
+    /// --fields` is one `name=value` per line, and a string carrying a newline is two lines, the
+    /// second of them written by the receipt. On 2026-09-19 a signed receipt whose first source had
+    /// `kind` set to `ntp`, a newline, `earliest_ns=1`, a newline, `width_ns=1` verified clean and
+    /// put both of those into that report above the report's own.
+    ///
+    /// This is the list `validate` holds to what a string may contain, and it is written here so
+    /// there is one list rather than one per surface. Fixing the field that was found would have
+    /// left every other string in the receipt reaching a line of its own somewhere.
+    #[must_use]
+    pub fn strings(&self) -> Vec<(String, &str)> {
+        let mut found: Vec<(String, &str)> = vec![
+            (
+                "payload.algorithm".to_string(),
+                self.payload.algorithm.as_str(),
+            ),
+            ("claim.fusion".to_string(), self.claim.fusion.as_str()),
+        ];
+        for (at, source) in self.claim.sources.iter().enumerate() {
+            for (name, value) in [
+                ("id", source.id.as_str()),
+                ("kind", source.kind.as_str()),
+                ("timescale", source.timescale.as_str()),
+                ("smear", source.smear.as_str()),
+                ("leap", source.leap.as_str()),
+            ] {
+                found.push((format!("claim.sources[{at}].{name}"), value));
+            }
+            if let Some(operator) = &source.operator {
+                found.push((format!("claim.sources[{at}].operator"), operator.as_str()));
+            }
+        }
+        for (at, entry) in self.evidence.iter().enumerate() {
+            found.push((format!("evidence[{at}].scheme"), entry.scheme.as_str()));
+            if let Some(detail) = &entry.detail {
+                found.push((format!("evidence[{at}].detail"), detail.as_str()));
+            }
+        }
+        found
     }
 
     /// The receipt as a value tree, ready to be encoded or rendered.

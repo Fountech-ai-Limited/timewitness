@@ -109,6 +109,25 @@ pub enum Validity {
         /// A short description of which sources disagree and how.
         detail: String,
     },
+    /// The policy the model was given is one its arithmetic cannot stand behind.
+    ///
+    /// A coverage factor under one, or a rate that is not a number or is negative. Each of those
+    /// used to narrow the bound rather than widen it, so the model refuses before it synchronises
+    /// and before it reads. Added 2026-09-17.
+    PolicyRefused {
+        /// Which field, what it held, and what it has to be.
+        detail: String,
+    },
+    /// The counter reads earlier than the moment this model started.
+    ///
+    /// A monotonic counter only goes forward, so a reading before the model's own origin is a
+    /// platform fault, and nothing the model holds describes a moment it was not running for. Added
+    /// 2026-09-17, when a cold set stepped the counter back past the origin and found the model
+    /// projecting its anchor backwards over a moment it had never measured.
+    CounterBeforeStart {
+        /// How far before the model's origin the counter reads, in nanoseconds.
+        by: Nanos,
+    },
     /// The bound has grown wider than the policy is prepared to put its name to.
     BoundTooWide {
         /// The width the model computed, in nanoseconds.
@@ -162,6 +181,11 @@ impl fmt::Display for Refusal {
                  there has been no synchronisation since, so the bound is unknown",
                 crate::time::nanos_as_millis_f64(*by)
             ),
+            Validity::CounterBeforeStart { by } => write!(
+                f,
+                "the monotonic counter reads {} ms before the moment this model started, which a                  counter that only goes forward cannot do, so nothing here describes this moment",
+                crate::time::nanos_as_millis_f64(*by)
+            ),
             Validity::HoldoverExceeded { elapsed, ceiling } => write!(
                 f,
                 "the sources have been unreachable for {} ms, past the {} ms this model will \
@@ -210,6 +234,11 @@ impl fmt::Display for Refusal {
                     "the sources disagree about a pending leap second: {detail}"
                 )
             }
+            Validity::PolicyRefused { detail } => write!(
+                f,
+                "this model was given a policy its arithmetic cannot stand behind, so it declined \
+                 to sign: {detail}"
+            ),
             Validity::BoundTooWide { width, ceiling } => write!(
                 f,
                 "the bound has grown to {} ms, past the {} ms ceiling this model will sign for",

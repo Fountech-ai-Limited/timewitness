@@ -39,13 +39,40 @@ impl MonotonicNanos {
     ///
     /// Saturating rather than wrapping because a monotonic counter that appears to go backwards is
     /// a platform fault, and returning a negative elapsed time would push that fault into the
-    /// bound arithmetic where it would be invisible.
+    /// bound arithmetic where it would be invisible. Where the arithmetic has to widen for the time
+    /// between two readings whichever way the counter went, it asks [`MonotonicNanos::apart`]
+    /// instead, because nought is the one answer that narrows.
     #[must_use]
     pub const fn since(self, earlier: MonotonicNanos) -> Nanos {
         if self.0 >= earlier.0 {
             (self.0 - earlier.0) as Nanos
         } else {
             0
+        }
+    }
+
+    /// Nanoseconds from `earlier` to `self`, negative where the counter went backwards.
+    ///
+    /// The sign is for a correction that has a direction, such as propagating a fitted rate to a
+    /// reading taken before the fit. An allowance never takes this; it takes `apart`.
+    #[must_use]
+    pub const fn signed_since(self, earlier: MonotonicNanos) -> Nanos {
+        self.0 as Nanos - earlier.0 as Nanos
+    }
+
+    /// How far apart two counter readings are, in nanoseconds, whichever came first.
+    ///
+    /// Until 2026-09-17 every allowance that grows with time asked `since`, which answers nought for
+    /// a reading taken before the one it is measured from. A counter stepped back sixty seconds
+    /// after the last exchange then read a bound with no holdover in it at all, and a sample stamped
+    /// in the far future aged by nothing for as long as the process lived. The time between two
+    /// readings is the distance between them, and a bound extrapolated backwards is extrapolated.
+    #[must_use]
+    pub const fn apart(self, other: MonotonicNanos) -> Nanos {
+        if self.0 >= other.0 {
+            (self.0 - other.0) as Nanos
+        } else {
+            (other.0 - self.0) as Nanos
         }
     }
 

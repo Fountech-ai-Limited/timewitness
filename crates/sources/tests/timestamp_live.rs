@@ -33,6 +33,7 @@ fn client_for(name: &str, url: &str, pins: Vec<[u8; 32]>) -> TimestampClient {
         name: name.to_string(),
         url: url.to_string(),
         accepted_certificates: pins,
+        accuracy_where_the_token_states_none: None,
     })
 }
 

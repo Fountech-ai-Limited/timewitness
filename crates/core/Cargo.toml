@@ -15,5 +15,8 @@ rsa = { version = "0.9", default-features = false }
 sha2 = { version = "0.10", default-features = false, features = ["oid"] }
 sha2_for_bls = { version = "0.9", package = "sha2", default-features = false }
 
+[dev-dependencies]
+curve25519-dalek = { version = "4.1.3", default-features = false }
+
 [lints]
 workspace = true

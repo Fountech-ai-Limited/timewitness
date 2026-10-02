@@ -68,7 +68,18 @@ use crate::{Exchange, SourceError, TimeSource};
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The port the key exchange listens on, fixed by RFC 8915.
-const KEY_EXCHANGE_PORT: u16 = 4460;
+///
+/// Public because an operator opening a firewall needs it and the document that lists it is held to
+/// this constant rather than to a number somebody typed twice.
+pub const KEY_EXCHANGE_PORT: u16 = 4460;
+
+/// The port the time exchange goes to where the key exchange names none.
+///
+/// The key exchange may hand back a host and a port of its own and this is what it falls back to,
+/// which is the ordinary NTP port. A server that names another one is reached on that one, so an
+/// operator who opened only this port has opened what the published servers have always asked for
+/// and not a guarantee about every server.
+pub const DEFAULT_TIME_PORT: u16 = 123;
 
 /// The application protocol name the key exchange is negotiated under.
 const ALPN: &[u8] = b"ntske/1";
@@ -435,7 +446,7 @@ fn negotiate(server: &NtsServer, timeout: Duration) -> Result<Session, SourceErr
     let server_to_client = export_key(&connection, 0x01)?;
 
     let time_host = host.unwrap_or_else(|| server.host.clone());
-    let time_port = port.unwrap_or(123);
+    let time_port = port.unwrap_or(DEFAULT_TIME_PORT);
 
     Ok(Session {
         time_address: format!("{time_host}:{time_port}"),
