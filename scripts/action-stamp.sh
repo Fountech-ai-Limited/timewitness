@@ -95,12 +95,13 @@ digest=$(field receipt_sha256) || exit 1
 subject_digest=$(field payload_hash) || exit 1
 checked=$(field attestations_checked) || exit 1
 carried=$(field attestations_carried) || exit 1
+format=$(field format_version) || exit 1
 
 missing=''
 for pair in "earliest_ns=$earliest" "latest_ns=$latest" "width_ns=$width" \
             "width_in_words=$width_words" "reading_ns=$reading" "receipt_sha256=$digest" \
             "payload_hash=$subject_digest" "attestations_checked=$checked" \
-            "attestations_carried=$carried"; do
+            "attestations_carried=$carried" "format_version=$format"; do
     [ -n "${pair#*=}" ] || missing="$missing ${pair%%=*}"
 done
 if [ -n "$missing" ]; then
@@ -146,7 +147,7 @@ if [ -n "$provenance" ]; then
         echo "timewitness: provenance was named as $provenance and there is no file there, so the receipt was not written into anything" >&2
         exit 1
     fi
-    TW_P="$provenance" TW_R="$receipt_base64" TW_E="$event" \
+    TW_P="$provenance" TW_R="$receipt_base64" TW_E="$event" TW_FORMAT="$format" \
     TW_EARLIEST="$earliest" TW_LATEST="$latest" TW_WIDTH="$width" TW_READING="$reading" \
     python3 "$action_path/scripts/action-provenance.py"
     echo "wrote the receipt into $provenance"

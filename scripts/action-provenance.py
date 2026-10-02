@@ -10,18 +10,31 @@ kilobytes never has to survive a shell.
 
 Read as JSON and written back as JSON, rather than edited as text, because this is somebody else's
 file and a text substitution into it is a guess about its shape.
+
+The format is the one the receipt is written in, as the verifier read it off the receipt's own bytes
+a moment earlier, and never a constant here. Until 2026-09-24 this file wrote
+`timewitness-receipt-v0` around every receipt, while every receipt the `v0.2` release writes is
+version 1. A consumer choosing a reader by this field would have chosen a version 0 reader, and the
+`v0.1` verifier refuses a version 1 receipt by name.
 """
 
 import json
 import os
+import sys
 
 path = os.environ["TW_P"]
+
+# A whole number and nothing else, or the label would be a guess written where a fact belongs.
+version = os.environ.get("TW_FORMAT", "")
+if not version.isascii() or not version.isdigit():
+    sys.exit("timewitness: the verifier gave no format version for this receipt, so the provenance "
+             "was not written: [%s]" % version)
 
 with open(path, encoding="utf-8") as handle:
     statement = json.load(handle)
 
 statement.setdefault("predicate", {})["boundedTime"] = {
-    "format": "timewitness-receipt-v0",
+    "format": "timewitness-receipt-v%d" % int(version),
     "event": os.environ["TW_E"],
     "earliestNs": int(os.environ["TW_EARLIEST"]),
     "latestNs": int(os.environ["TW_LATEST"]),

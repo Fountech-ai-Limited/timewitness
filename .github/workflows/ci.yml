@@ -205,6 +205,16 @@ jobs:
           python3 scripts/policy-sentences.py --no-site
           python3 scripts/policy-sentences.py --self-test
 
+      - name: No surface says our servers are not there
+        # The check above reads the policy off the code, and this reads the deployment off the key
+        # log. Until 2026-09-24 the README and the live workflow both said no Roughtime server of ours
+        # was deployed while the log named two, and the live run asked neither. It also holds the
+        # live workflow to asking every server the served log names. The second run is the check
+        # backwards, one seed per rule.
+        run: |
+          python3 scripts/our-servers.py --no-site
+          python3 scripts/our-servers.py --self-test
+
       - name: No surface sells precision or prices a receipt
         # Full precision for everybody, and never a price per receipt. The same rules read the site
         # in the other repository. The two runs below it are this one backwards, and pass only if it
@@ -240,6 +250,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/wire-guard-is-alive.sh
 
+      - name: Every version and format label is read off what it labels
+        # Acceptance items A-02 and A-07. A build from the `v0.2` tag printed `timewitness 0.1.0`, the
+        # page printed "Receipt format v0" and the provenance labelled every receipt v0, while every
+        # receipt that release writes is version 1. The first script holds the first line of
+        # --version to the tags, and refuses a commit other than a release's saying it is that
+        # release. The second holds the page and the provenance writer to the version in a receipt's
+        # own bytes. Each runs backwards first, over the shapes it has to refuse.
+        run: |
+          python3 scripts/the-version-is-the-tag.py --self-test
+          python3 scripts/the-version-is-the-tag.py
+          python3 scripts/the-format-labels-are-the-receipts.py --self-test
+          python3 scripts/the-format-labels-are-the-receipts.py
+
       # Its own cache, keyed on the version rather than on the lockfile. Sharing the cache above
       # would mean a build whose Cargo.lock has not moved restores a cache saved before this step
       # existed, finds no reader, and compiles one from source every run.
@@ -258,3 +281,45 @@ jobs:
       # read by `.github/workflows/advisories.yml`, weekly and on its own.
       - name: Dependency advisories
         run: bash scripts/check-advisories.sh
+
+  every-bit:
+    # Acceptance item A-01 on the binary a consumer runs: every single-bit change to every committed
+    # receipt is refused, one process per change, inside a network namespace with nothing in it. Its
+    # own job, because it is several hundred thousand runs of the verifier and the rest of the checks
+    # need not wait for it.
+    name: every bit of every receipt, with no network
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install the toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-every-bit-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-every-bit-
+
+      - name: Build the command line
+        run: cargo build --release -p timewitness-cli
+
+      - name: Every single-bit change to a receipt is refused, with no network
+        run: bash scripts/every-bit-refused.sh
+
+      - name: That check still stops where the network is in reach
+        run: |
+          if said="$(TW_EVERY_BIT_PROVE=leaky bash scripts/every-bit-refused.sh 2>&1)"; then
+            printf '%s\n' "$said"; echo "the sweep ran with the network in reach"; exit 1
+          fi
+          printf '%s\n' "$said"
+          printf '%s\n' "$said" | grep -qF "would prove nothing" || { echo "it stopped, and not because the network was there"; exit 1; }

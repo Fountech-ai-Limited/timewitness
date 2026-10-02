@@ -192,6 +192,14 @@ if (!Array.isArray(limits) || limits.length < 20) {
   problems.push(`the page carries ${limits ? limits.length : 0} limitations and the document has more`);
 }
 
+// The formats the page names under its form are the ones the command line says it reads. Both are
+// read off one list in the receipt crate, and this is what would see either stop doing so.
+const formats = take(instance.tw_formats());
+const cliReads = (execFileSync(binary, ["--version"], { encoding: "utf8" }).match(/ and reads (.+)$/m)?.[1] ?? "")
+  .split(" and ")
+  .map((version) => Number(version.replace(/^v/, "")));
+agree("the receipt formats each reads", formats?.reads, cliReads);
+
 if (problems.length > 0) {
   for (const problem of problems) console.error("  " + problem);
   console.error("the page and the command line disagree");

@@ -1,6 +1,6 @@
 [package]
 name = "timewitness-receipt"
-description = "Receipt format v0: the schema, deterministic CBOR, the COSE envelope and the validator."
+description = "Receipt formats v0 and v1: the schema, deterministic CBOR, the COSE envelope and the validator."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

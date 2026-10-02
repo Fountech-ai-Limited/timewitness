@@ -1162,6 +1162,27 @@ fn under_a_held_authority(
     ))
 }
 
+/// The witness over a receipt's own signature, held to the one spelling its signatures bind.
+///
+/// The witness sits outside the receipt's signature, and a timestamp token's own signature covers
+/// only part of what it carries, so until 2026-09-24 a third of the single-bit changes inside a
+/// witness still verified. This runs whatever the reader holds and needs no key of theirs: every
+/// byte of the witness is either covered by the token's signature or a hash inside it, or is the
+/// one value the form allows. `rfc3161::held_to_one_spelling` says what binds each part.
+pub(crate) fn signature_witness_is_one_spelling(
+    blob: &[u8],
+    signature: &[u8],
+) -> Result<(), ReceiptError> {
+    use sha2::{Digest, Sha256};
+    let digest: [u8; 32] = Sha256::digest(signature).into();
+    rfc3161::held_to_one_spelling(blob, &digest).map_err(|e| {
+        ReceiptError::Inconsistent(format!(
+            "the witness over this receipt's signature is not in the one spelling its signatures \
+             bind: {e}"
+        ))
+    })
+}
+
 /// The witness over a receipt's own signature, which version 1 carries outside the signed body.
 ///
 /// Every other outside signature in a receipt is about the thing stamped, so it places the subject

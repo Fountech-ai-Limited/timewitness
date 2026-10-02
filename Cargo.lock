@@ -660,6 +660,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest 0.10.7",
+]
+
+[[package]]
 name = "sha2"
 version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -751,7 +762,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-agent"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "getrandom",
  "timewitness-clock",
@@ -763,11 +774,11 @@ dependencies = [
 
 [[package]]
 name = "timewitness-architecture"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "timewitness-cli"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "getrandom",
  "rustls",
@@ -785,7 +796,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-clock"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "timewitness-core",
  "timewitness-sources",
@@ -793,19 +804,20 @@ dependencies = [
 
 [[package]]
 name = "timewitness-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "bls12_381",
  "curve25519-dalek",
  "ed25519-dalek",
  "rsa",
+ "sha1",
  "sha2 0.10.9",
  "sha2 0.9.9",
 ]
 
 [[package]]
 name = "timewitness-countersign"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "sha2 0.10.9",
  "timewitness-core",
@@ -814,14 +826,14 @@ dependencies = [
 
 [[package]]
 name = "timewitness-platform"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "timewitness-core",
 ]
 
 [[package]]
 name = "timewitness-receipt"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "ed25519-dalek",
  "sha2 0.10.9",
@@ -830,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-roughtime-server"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "ed25519-dalek",
  "getrandom",
@@ -839,7 +851,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-sources"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "aes-siv",
  "getrandom",
@@ -851,7 +863,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-verify"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "timewitness-core",
  "timewitness-receipt",
@@ -859,7 +871,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-verify-web"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "getrandom",
  "timewitness-core",

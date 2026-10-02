@@ -28,7 +28,7 @@ change would announce itself.
 | `timewitness-clock` | `crates/clock` | The clock model: per-source windows, Marzullo intersection with our own stricter selection rule on top, inverse-square weighting, regression, rate discipline, holdover, the refusal path. | `core`, `sources` |
 
 The selection rule departs from textbook Marzullo, decided 2026-09-09, and `crates/clock/src/marzullo.rs` states the departure at the head of the file. A majority that exists only because of sources that could not have been put in the minority is refused rather than signed. It only ever turns an answer into a refusal; no region moves.
-| `timewitness-receipt` | `crates/receipt` | Receipt format v0: the schema, deterministic CBOR, the COSE envelope, the validator. | `core` |
+| `timewitness-receipt` | `crates/receipt` | Receipt formats v0 and v1: the schema, deterministic CBOR, the COSE envelope, the validator. | `core` |
 | `timewitness-countersign` | `crates/countersign` | The countersign wire form: what travels in an `X-Bounded-Time` header or on an MCP tool call, its encoding, its size ceiling, and why a receiver refuses one. It signs nothing and decides no order. | `core`, `receipt` |
 | `timewitness-verify` | `crates/verify` | The verifier. Ships as a thing that runs with none of our infrastructure and no account. | `core`, `receipt` |
 | `timewitness-verify-web` | `crates/verify-web` | The verifier core as WebAssembly. Converts bytes to bytes across the boundary a page calls through, and checks nothing itself. | `core`, `receipt`, `verify` |

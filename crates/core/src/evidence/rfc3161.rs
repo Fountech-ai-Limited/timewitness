@@ -37,6 +37,9 @@ use super::{Checked, EvidenceError};
 use crate::hash::{HashFunction, OID_SHA256};
 use crate::time::{Nanos, UnixNanos, NANOS_PER_SEC};
 
+mod spelling;
+pub use spelling::{held_to_one_spelling, in_one_spelling};
+
 /// The scheme name the receipt format uses for this evidence.
 pub const SCHEME: &str = "rfc3161";
 

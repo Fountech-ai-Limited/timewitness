@@ -1,16 +1,19 @@
-//! A version 1 receipt is one receipt however the witness over its signature is spelled.
+//! A version 1 receipt is one receipt, and its witness has one spelling.
 //!
 //! The witness sits in the unprotected header, outside the signature, and an RFC 3161 token holds
-//! plenty its signature does not cover: the request stored beside it, the certificates it carries
-//! besides the one the reader pins, fields nobody reads. On 2026-09-23 a sweep flipped each bit of
-//! the witness on the committed version 1 receipt in turn, and 10,156 of 32,034 flips still verified,
-//! each as a file with a hash of its own. The next receipt in a chain names its predecessor by that
-//! hash, so a holder with no key could fork or break a chain whose unbroken order is half of what this
-//! product claims.
+//! plenty its own signature does not cover: the request stored beside it, the certificates it carries
+//! besides the one the reader pins, the framing round the signed parts. On 2026-09-23 a sweep flipped
+//! each bit of the witness on the committed version 1 receipt in turn, and 10,156 of 32,034 flips
+//! still verified, each as a file with a hash of its own. The next receipt in a chain names its
+//! predecessor by that hash, so a holder with no key could fork or break a chain whose unbroken order
+//! is half of what this product claims.
 //!
-//! The rule now is that a receipt's hash is of the receipt as its agent signed it, with the witness
-//! over the signature set aside. This test flips every bit of the unprotected header of the committed
-//! version 1 receipt and holds each flip to one of two outcomes: refused, or the same hash.
+//! Two rules answer it. A receipt's hash is of the receipt as its agent signed it, with the witness
+//! set aside, so dropping the witness or putting another token in its place never makes a second
+//! receipt.
+//! And from 2026-09-24 the witness is held to the one spelling its signatures bind, so no flip inside
+//! it verifies at all. `every_bit_of_a_receipt.rs` changes every bit of this receipt, witness and all,
+//! and requires every change to be refused; what is left here is the first rule.
 
 use timewitness_receipt::value::Value;
 use timewitness_receipt::{cbor, chain_link, SIGNATURE_WITNESS};
@@ -32,17 +35,6 @@ fn receipt() -> Vec<u8> {
     digits.chunks(2).map(|c| (c[0] << 4) | c[1]).collect()
 }
 
-/// Where the unprotected header sits in the file, as a range of bytes.
-fn header_span(signed: &[u8]) -> (usize, usize) {
-    let envelope = cbor::decode(signed).expect("the receipt decodes");
-    let header = cbor::encode(&envelope.as_array().expect("an envelope")[1]);
-    let at = signed
-        .windows(header.len())
-        .position(|w| w == header.as_slice())
-        .expect("the header is in the file");
-    (at, at + header.len())
-}
-
 /// The receipt with the witness over its signature taken out, which is the file its agent wrote
 /// before the witness came back.
 fn without_the_witness(signed: &[u8]) -> Vec<u8> {
@@ -59,58 +51,6 @@ fn without_the_witness(signed: &[u8]) -> Vec<u8> {
             .collect(),
     );
     cbor::encode(&Value::Array(parts))
-}
-
-#[test]
-fn no_flip_in_the_witness_is_a_second_receipt() {
-    let original = receipt();
-    let link = chain_link(&original);
-    let anchors = anchor_file::published();
-    let (start, end) = header_span(&original);
-    assert!(
-        end - start > 4096,
-        "the header holds the witness, {} bytes",
-        end - start
-    );
-
-    let (mut same, mut refused) = (0usize, 0usize);
-    let mut second = Vec::new();
-    'flips: for at in start..end {
-        for bit in 0..8 {
-            let mut flipped = original.clone();
-            flipped[at] ^= 1 << bit;
-            if chain_link(&flipped) == link {
-                same += 1;
-                continue;
-            }
-            let assessment = verify(
-                &flipped,
-                Subject::Bytes(SUBJECT),
-                &anchors,
-                &Floor::default(),
-            );
-            if assessment.accepted() {
-                second.push((at, bit));
-                if second.len() == 5 {
-                    break 'flips;
-                }
-            } else {
-                refused += 1;
-            }
-        }
-    }
-    assert!(
-        second.is_empty(),
-        "flips inside the witness verify as receipts with a hash of their own, at byte and bit {second:?}; \
-         {same} kept the hash and {refused} were refused before these"
-    );
-    assert_eq!(same + refused, (end - start) * 8);
-    // Most of the header is the token itself, and every flip inside it keeps the hash. What is
-    // refused is the key identifier, the label and the lengths round them.
-    assert!(
-        same > refused * 10,
-        "{same} kept the hash and {refused} were refused"
-    );
 }
 
 #[test]
@@ -137,4 +77,39 @@ fn a_version_0_receipt_hashes_as_the_file_it_is() {
         chain_link(file),
         timewitness_receipt::sha256_payload(file).hash
     );
+}
+
+#[test]
+fn another_genuine_witness_leaves_it_the_same_receipt() {
+    let decode = |text: &str| -> Vec<u8> {
+        let digits: Vec<u8> = text
+            .bytes()
+            .filter(u8::is_ascii_hexdigit)
+            .map(|b| match b {
+                b'0'..=b'9' => b - b'0',
+                b'a'..=b'f' => b - b'a' + 10,
+                _ => b - b'A' + 10,
+            })
+            .collect();
+        digits.chunks(2).map(|c| (c[0] << 4) | c[1]).collect()
+    };
+    let original = receipt();
+    for again in [
+        decode(include_str!(
+            "data/a-version-1-stamp-witnessed-again/sectigo.hex"
+        )),
+        decode(include_str!(
+            "data/a-version-1-stamp-witnessed-again/digicert.hex"
+        )),
+    ] {
+        assert_ne!(again, original);
+        assert_eq!(chain_link(&again), chain_link(&original));
+        let assessment = verify(
+            &again,
+            Subject::Bytes(SUBJECT),
+            &anchor_file::published(),
+            &Floor::default(),
+        );
+        assert!(assessment.accepted(), "refused: {:?}", assessment.refusal());
+    }
 }

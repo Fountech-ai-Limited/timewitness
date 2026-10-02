@@ -278,6 +278,8 @@ pub fn usage() -> String {
         "      Whether the agent is up, and how wide its bound is right now: the width,\n",
     );
     out.push_str("      how many sources it rests on and how long since it last heard from one.\n");
+    out.push_str("      It says in one sentence how wrong the clock could be, and says it with\n");
+    out.push_str("      the width while a fresh agent's bound is still too wide to sign.\n");
     out.push_str("      It asks the agent what a stamp asks it, signs nothing and writes\n");
     out.push_str("      nothing, and it says so plainly where no agent is running.\n\n");
     out.push_str("      --agent <file>      the endpoint file the agent wrote\n\n");
@@ -285,13 +287,16 @@ pub fn usage() -> String {
     out.push_str("      What this product cannot prove, in full. It ships with the claim rather\n");
     out.push_str("      than under it.\n\n");
     out.push_str("  timewitness --version\n");
-    out.push_str("      Which build this is, and the receipt format it reads.\n\n");
+    out.push_str(
+        "      Which release this is, the receipt format it writes and the ones it reads.\n\n",
+    );
     out.push_str("  timewitness --help\n");
     out.push_str("      This, which is also what the tool prints with nothing after it.\n");
     out
 }
 
-/// What `timewitness --version` prints: the build, and the one receipt format it reads.
+/// What `timewitness --version` prints: the release, the receipt format it writes and the ones it
+/// reads.
 ///
 /// Cargo writes the version from the manifest, which is in the tree the verify-path check reads, so
 /// nothing of the building machine's own environment comes in through it.
@@ -303,10 +308,37 @@ pub fn version() -> String {
         .collect();
     format!(
         "timewitness {}\nwrites receipt format v{} and reads {}",
-        env!("CARGO_PKG_VERSION"),
+        release(),
         timewitness_receipt::FORMAT_VERSION,
         reads.join(" and ")
     )
+}
+
+/// The release this source is, spelled the way its tag is spelled.
+///
+/// A tag here leaves off a patch number of nought, so version 0.3.0 in the manifest is the tag
+/// `v0.3`, and that is what a stranger who built from `v0.3` is shown. Until 2026-09-24 this printed
+/// the manifest's version as it stood, which was 0.1.0 at `v0.1` and still 0.1.0 at `v0.2`, so a
+/// build from the `v0.2` tag named a release it was not. `scripts/the-version-is-the-tag.py` holds
+/// the two to each other on every commit a release tag names.
+#[must_use]
+pub fn release() -> String {
+    let (major, minor, patch, pre) = (
+        env!("CARGO_PKG_VERSION_MAJOR"),
+        env!("CARGO_PKG_VERSION_MINOR"),
+        env!("CARGO_PKG_VERSION_PATCH"),
+        env!("CARGO_PKG_VERSION_PRE"),
+    );
+    let mut name = if patch == "0" {
+        format!("v{major}.{minor}")
+    } else {
+        format!("v{major}.{minor}.{patch}")
+    };
+    if !pre.is_empty() {
+        name.push('-');
+        name.push_str(pre);
+    }
+    name
 }
 
 /// The whole of what a verifier found, as a person reads it.
@@ -905,6 +937,18 @@ pub fn agent_started(endpoint_path: &str, address: &str, at: AgentStart) -> Stri
     out.push_str(
         "Nothing is stamped here. It hands over readings and a caller builds the receipt.\n",
     );
+    // What somebody who has just started it wants to know next, said before they have to ask. Both
+    // times are the ones `status` states and the README measures.
+    out.push_str(&format!(
+        "`timewitness status --agent {endpoint_path}` says how wrong the clock could be,\n"
+    ));
+    out.push_str(&format!(
+        "within {} s of starting where the sources answer. Its bound swings above the\n",
+        crate::status_cmd::FIRST_BOUND_WITHIN,
+    ));
+    out.push_str("ceiling between rounds while it learns this machine's clock: in ten starts\n");
+    out.push_str("measured on one desktop, most stamps in the first two minutes were refused,\n");
+    out.push_str("and a refusal was only occasional after about three.\n");
     out
 }
 

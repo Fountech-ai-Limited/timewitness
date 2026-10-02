@@ -334,6 +334,11 @@ pub fn open_with(
     anchors: &crate::anchors::TrustAnchors,
 ) -> Result<(Receipt, crate::report::Verified), ReceiptError> {
     let (receipt, witness) = read_and_check_signature(bytes)?;
+    // Before anything slower, because it needs nothing but the witness and the signature, and a
+    // witness in any other spelling is a changed receipt however the rest of it reads.
+    if let Some((blob, signature)) = &witness {
+        validate::signature_witness_is_one_spelling(blob, signature)?;
+    }
     let mut report = validate::validate_with(&receipt, anchors)?;
     if let Some((blob, signature)) = witness {
         report.signature_witness = Some(validate::examine_signature_witness(
@@ -475,16 +480,16 @@ fn read_and_check_signature(bytes: &[u8]) -> Result<Opened, ReceiptError> {
 /// because the signed copy of the key is the one that counts. That reading is correct about what the
 /// receipt means and it is the wrong rule for a format that chains by hashing bytes.
 ///
-/// **Version 1 allows one entry more, the witness over the signature, and it is the one part of the
-/// file that is not one spelling.** A holder can drop the witness, swap in a later genuine token over
-/// the same signature, or flip any of the many bits of a token its own signature does not cover, all
-/// without the agent's key; on 2026-09-23 a third of the single-bit flips inside the committed
-/// witness still verified. So the chain link is not taken over it: [`crate::chain_link`] hashes the
-/// receipt with this entry set aside, which is the file the agent wrote, and that form has exactly
-/// one spelling. What a respelled witness changes is what a reader is told about the signing, never
-/// which receipt it is, and nothing can move the signing earlier, because a token cannot be dated
-/// before the signature it is over existed. The blob is returned for the caller to check, since
-/// checking it needs the reader's anchors.
+/// **Version 1 allows one entry more, the witness over the signature, and a holder can drop it or
+/// put another token over the same signature in its place without the agent's key.** So the chain link
+/// is not taken over it: [`crate::chain_link`] hashes the receipt with this entry set aside, which is
+/// the file the agent wrote, and that form has exactly one spelling. A witness dropped or swapped
+/// changes what a reader is told about the signing, never which receipt it is, and nothing can move
+/// the signing earlier, because a token cannot be dated before the signature it is over existed.
+/// What a holder can no longer do, from 2026-09-24, is change the witness itself: on 2026-09-23 a
+/// third of the single-bit flips inside the committed witness still verified, and the caller now
+/// holds the blob to the one spelling its signatures bind before anything else. The blob is returned
+/// for the caller to check, since part of checking it needs the reader's anchors.
 fn check_unprotected_header(
     header: &Value,
     receipt: &Receipt,

@@ -18,7 +18,7 @@ use timewitness_receipt::TakenBy;
 use timewitness_agent::crossing::{ask, CrossingError, WhatTheCallerKnows, WILDNESS};
 use timewitness_agent::resident::{Resident, Surroundings};
 use timewitness_agent::serve::{answer, answer_callers, CALLERS_AT_ONCE};
-use timewitness_agent::wire::{Endpoint, TOKEN_BYTES};
+use timewitness_agent::wire::{Endpoint, WireError, TOKEN_BYTES};
 use timewitness_clock::monotonic::{MonotonicClock, SystemMonotonic, TestClock};
 use timewitness_clock::Policy;
 use timewitness_core::time::{Nanos, NANOS_PER_MILLI, NANOS_PER_SEC};
@@ -343,6 +343,59 @@ fn the_refusal_crosses_the_boundary_as_a_refusal_and_never_as_a_reading() {
             assert!(said.contains("resumed from sleep"), "{said}");
         }
         other => panic!("a suspended machine must not hand out a reading: {other:?}"),
+    }
+    thread.join().expect("the answering thread");
+}
+
+#[test]
+fn a_bound_past_the_ceiling_crosses_with_its_width_and_is_still_refused() {
+    // What `status` reads during a fresh agent's first minutes. The model has a bound and it is too
+    // wide to sign, so the refusal carries the width the model worked out, the same figure a direct
+    // read gives, and nothing a caller could sign comes out of it.
+    let (mut resident, clock, _machine) = a_synchronised_agent();
+    clock.advance_seconds(3_000);
+    let (width, ceiling) = match resident.read() {
+        Err(refusal) => match refusal.validity {
+            timewitness_core::Validity::BoundTooWide { width, ceiling } => (width, ceiling),
+            other => panic!("the fixture has to leave the bound past the ceiling: {other:?}"),
+        },
+        Ok(stamp) => panic!("a model this far out should not answer: {stamp:?}"),
+    };
+    assert_eq!(ceiling, Policy::default().max_bound_width);
+    assert!(width > ceiling);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let endpoint = Endpoint::fresh(listener.local_addr().expect("an address").to_string())
+        .expect("random bytes");
+    let shared = Arc::new(Mutex::new(resident));
+    let thread = answering(&shared, listener, endpoint.token, 1);
+
+    let client_clock = SystemMonotonic::new();
+    match ask(&endpoint, &client_clock, a_caller_who_agrees()) {
+        Err(CrossingError::Wire(e @ WireError::PastCeiling { .. })) => {
+            let WireError::PastCeiling {
+                width: crossed,
+                ceiling: theirs,
+                ..
+            } = &e
+            else {
+                unreachable!()
+            };
+            assert_eq!(
+                *crossed, width,
+                "the width has to cross as the model worked it out"
+            );
+            assert_eq!(*theirs, ceiling);
+            let said = format!("{e}");
+            assert!(
+                said.starts_with("the agent would not give a reading"),
+                "{said}"
+            );
+            assert!(said.contains("past the 250 ms ceiling"), "{said}");
+        }
+        other => {
+            panic!("a bound past the ceiling must cross as a refusal with its width: {other:?}")
+        }
     }
     thread.join().expect("the answering thread");
 }
