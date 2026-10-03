@@ -751,31 +751,14 @@ GUARD_HEAD = """      - id: guard
           }
 """
 
-# Where a command starts in a line of shell, near enough for the guard's own lines.
-COMMAND_START = r"(?:^|[;&|({`]|\$\(|\bdo\b|\bthen\b|\belse\b)[ \t]*"
-
 
 def judge_guard(release):
     """The guard asks this file who may start a release, from main, and refuses anybody else; and
     everybody written down as starting releases administers the repository as well."""
     problems = []
     guard = release.split("\n  tag:\n", 1)[0]
-    # The guard step alone, from its id to the next step of the job, without its comments.
-    step = guard[guard.find("      - id: guard\n"):] if "      - id: guard\n" in guard else ""
-    step = step.split("\n      - ", 1)[0]
-    code = "\n".join(line for line in step.splitlines() if not line.lstrip().startswith("#"))
     if guard.count(GUARD_HEAD) != 1:
         problems.append("the guard's environment and its refusal are not as written here")
-    # A function of the guard's own answers in place of a command of the same name, `gh` among them,
-    # so the guard defines `refuse` once and nothing else. An alias does the same, and `command`,
-    # `builtin` and `enable` reach past a function to whatever it stood in for.
-    defined = re.findall(COMMAND_START + r"(?:function[ \t]+)?([A-Za-z_][\w:.-]*)[ \t]*\([ \t]*\)", code, re.M)
-    defined += re.findall(r"\bfunction[ \t]+([A-Za-z_][\w:.-]*)[ \t]*(?:\{|$)", code, re.M)
-    if sorted(defined) != ["refuse"]:
-        problems.append("the guard defines %s, where it defines refuse once and nothing else" % sorted(defined))
-    reach = sorted(set(re.findall(COMMAND_START + r"(command|builtin|enable|alias|unalias)\b", code, re.M)))
-    if reach:
-        problems.append("the guard runs %s, which changes what a name in it answers to" % ", ".join(reach))
     if "            scripts/the-release-route-holds.py\n" not in guard:
         problems.append("the guard does not check out scripts/the-release-route-holds.py from main")
     if not re.search(r'actor_id="\$\(gh api "users/\$ACTOR" --jq \.id\)"', guard):
@@ -797,6 +780,59 @@ def judge_guard(release):
     for name, number in RELEASE_STARTERS.items():
         if ADMINISTRATORS.get(name) != number:
             problems.append("%s starts releases and is not written down as administering the repository" % name)
+    return problems
+
+
+# The guard job, held whole. Holding the compare and the refusal to the byte holds nothing around
+# them. A line added to the guard step, a variable given to the whole job, or a step before the guard
+# that writes to GITHUB_ENV or GITHUB_PATH can each stand a `gh` of its own in front of the compare,
+# by BASH_ENV, PATH, eval, source, hash or a trap, and a tag that is not on main would then build and
+# sign. A list of such shapes is never finished, so the job is held as the Attach step is: its own
+# keys and what each says, exactly two steps, the pinned checkout of main's checks and the guard, and
+# each step by the digest of the step as YAML reads it. Any change to the job at all is a change made
+# here in the same commit and read in that review. The checks above still say what the guard has to
+# do, so a digest moved here for a change that drops any of it fails as well.
+GUARD_JOB = {"name": "may this run build and sign", "runs-on": "ubuntu-latest",
+             "outputs": {name: "${{ steps.guard.outputs.%s }}" % name
+                         for name in ("tag", "commit", "prerelease", "rehearsal", "apple_team")}}
+GUARD_STEPS_SHA256 = ("e72dd30a1ced455d046c6c6a7642d84ed33ff7d39ccd4ee1b5c872c46f429c56",
+                      "855ec1b79ee6976fa8765e7bdb4eff537a114e7b6b7a233a55e9c438787af4b8")
+
+
+def digest_of(step):
+    """A step's digest, over the step as YAML reads it."""
+    return hashlib.sha256(json.dumps(step, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def guard_job(release):
+    """The guard job as YAML reads it, or why it cannot be read."""
+    doc = parsed(release)
+    if not isinstance(doc, dict):
+        return "PyYAML is not installed here" if doc is None else "release.yml: %s" % doc
+    job = dict(parsed_jobs(doc)).get("guard")
+    return job if isinstance(job, dict) else "release.yml has no guard job it can run"
+
+
+def judge_guard_held(release):
+    """Nothing is in the guard job but what is written here, so no line anywhere in it, before the
+    compare or after it, can change what the compare's answer comes from."""
+    job = guard_job(release)
+    if isinstance(job, str):
+        return [job]
+    problems = []
+    own = {key: value for key, value in job.items() if key != "steps"}
+    if own != GUARD_JOB:
+        problems.append("the guard job says %s of itself, not %s as written here"
+                        % (json.dumps(own, sort_keys=True), json.dumps(GUARD_JOB, sort_keys=True)))
+    steps = job.get("steps")
+    if not isinstance(steps, list) or len(steps) != len(GUARD_STEPS_SHA256):
+        problems.append("the guard job has %s steps, where it has two, the checkout and the guard"
+                        % (len(steps) if isinstance(steps, list) else "no list of"))
+    else:
+        for which, step, held in zip(("checkout", "guard"), steps, GUARD_STEPS_SHA256):
+            digest = digest_of(step)
+            if digest != held:
+                problems.append("the guard job's %s step reads %s, not %s as written here" % (which, digest, held))
     return problems
 
 
@@ -1074,7 +1110,7 @@ def judge_attach_pinned(release):
     step = attach_step(release)
     if isinstance(step, str):
         return [step]
-    digest = hashlib.sha256(json.dumps(step, sort_keys=True).encode("utf-8")).hexdigest()
+    digest = digest_of(step)
     return [] if digest == ATTACH_SHA256 else ["the Attach step reads %s, not %s as written here" % (digest, ATTACH_SHA256)]
 
 
@@ -1655,6 +1691,7 @@ def run(tree_only, need_yaml=False, github=github, fetch=get, azure=None, need_a
     clause("release.yml reads the signing values under the names written here, and none an older run of it reads",
            judge_secrets_read(release))
     clause("the guard refuses anybody not written down here as starting releases", judge_guard(release))
+    clause("the guard job is the one written down here, and each of its two steps to the byte", judge_guard_held(release))
     clause("what is written here lets nobody make a tag outside v*, and only an administrator one inside it",
            judge_tag_rulesets(RULESETS))
     clause("every job that enters an environment asks the same of whoever started it", judge_starter_steps(release))
@@ -2010,29 +2047,68 @@ runs:
     expect("the guard not reading the account's number", judge_guard(release.replace('actor_id="$(gh api "users/$ACTOR" --jq .id)"', 'actor_id=0', 1)), True)
     expect("the guard not checking out this file", judge_guard(release.replace("            scripts/the-release-route-holds.py\n", "", 1)), True)
     expect("the guard letting any role start", judge_guard(release.replace('[ "$role" = admin ] || refuse ', 'true || refuse ', 1)), True)
-    # What acts on the compare's answer: the refusal, the commands it runs, and the repository it asks.
-    first_line = '          [ "$EVENT" = workflow_dispatch ] || refuse '
+    # What acts on the compare's answer: the refusal and the repository it asks.
     for label, old, new in (
             ("refusing and carrying on", '            exit 1\n          }\n', '            return 0\n          }\n'),
             ("asking another repository", "          REPO: ${{ github.repository }}\n", "          REPO: someone-else/timewitness\n"),
             ("given one more variable", "          REPO: ${{ github.repository }}\n",
-             "          REPO: ${{ github.repository }}\n          BASH_ENV: ./answers.sh\n"),
-            ("defining gh, which answers every compare", first_line,
-             '          gh() { echo identical; }\n' + first_line),
-            ("defining gh with the function keyword", first_line,
-             '          function gh { echo identical; }\n' + first_line),
+             "          REPO: ${{ github.repository }}\n          BASH_ENV: ./answers.sh\n")):
+        if release.count(old) < 1:
+            wrong.append("the guard %s: the text it changes is not in release.yml" % label)
+        expect("the guard %s" % label, judge_guard(release.replace(old, new, 1)), True)
+    # The guard job held whole: anything that could stand a `gh` of its own in front of the compare, in
+    # the guard step, on the job or in a step before it, and anything else that changes the job. Each
+    # changed file still reads as YAML, so none is refused only for being unreadable.
+    expect("the guard job as written down", judge_guard_held(release), False)
+    expect("a release.yml with no guard job", judge_guard_held(release.replace("\n  guard:\n", "\n  guarded:\n", 1)), True)
+    expect("a release.yml that is not YAML", judge_guard_held(release + "jobs: [\n"), True)
+    first_line = '          [ "$EVENT" = workflow_dispatch ] || refuse '
+    job_head = "  guard:\n    name: may this run build and sign\n    runs-on: ubuntu-latest\n"
+    guard_id = "      - id: guard\n"
+    job_end = "          } >> \"$GITHUB_OUTPUT\"\n\n  tag:\n"
+    sparse = "          persist-credentials: false\n          sparse-checkout: |\n"
+    for label, old, new in (
+            ("defining gh, which answers every compare", first_line, '          gh() { echo identical; }\n' + first_line),
+            ("defining gh with the function keyword", first_line, '          function gh { echo identical; }\n' + first_line),
             ("defining gh on a line of its own after another command", first_line,
              '          true; gh () { echo identical; }\n' + first_line),
-            ("defining refuse a second time", first_line,
-             '          refuse() { echo "$1"; }\n' + first_line),
+            ("defining refuse a second time", first_line, '          refuse() { echo "$1"; }\n' + first_line),
             ("aliasing gh", first_line, "          alias gh='echo identical'\n" + first_line),
             ("running refuse past itself with command", '            *) refuse "$TAG is on',
              '            *) command refuse "$TAG is on'),
             ("reaching a builtin past a function", first_line, '          builtin echo ready\n' + first_line),
-            ("switching a builtin off", first_line, '          enable -n exit\n' + first_line)):
+            ("switching a builtin off", first_line, '          enable -n exit\n' + first_line),
+            ("making gh with eval", first_line, "          eval 'gh() { echo identical; }'\n" + first_line),
+            ("sourcing a file", first_line, "          source ./answers.sh\n" + first_line),
+            ("sourcing a file with a dot", first_line, "          . ./answers.sh\n" + first_line),
+            ("putting a folder of its own first on the path", first_line, '          export PATH="$PWD/bin:$PATH"\n' + first_line),
+            ("setting the path with no export", first_line, "          PATH=/tmp/b:$PATH\n" + first_line),
+            ("pointing gh elsewhere with hash", first_line, "          hash -p /tmp/b/gh gh\n" + first_line),
+            ("passing every failure with a trap", first_line, "          trap 'exit 0' ERR\n" + first_line),
+            ("turning every refusal into a success with a trap on exit", first_line,
+             "          trap 'echo tag=$TAG >> \"$GITHUB_OUTPUT\"; exit 0' EXIT\n" + first_line),
+            ("given BASH_ENV for every step", job_head, job_head + "    env:\n      BASH_ENV: /tmp/answers.sh\n"),
+            ("given a shell of its own for every step", job_head,
+             job_head + "    defaults:\n      run:\n        shell: bash --rcfile /tmp/answers.sh {0}\n"),
+            ("run in a container", job_head, job_head + "    container: ubuntu:24.04\n"),
+            ("carrying on whatever it meets", job_head, job_head + "    continue-on-error: true\n"),
+            ("run on a runner of its own", job_head, job_head.replace("ubuntu-latest", "self-hosted")),
+            ("handing on an output of its own", "      apple_team: ${{ steps.guard.outputs.apple_team }}\n",
+             "      apple_team: identical\n"),
+            ("after a step that writes BASH_ENV to GITHUB_ENV", guard_id,
+             "      - run: echo BASH_ENV=/tmp/answers.sh >> \"$GITHUB_ENV\"\n" + guard_id),
+            ("after a step that writes a folder to GITHUB_PATH", guard_id,
+             "      - run: echo /tmp/b >> \"$GITHUB_PATH\"\n" + guard_id),
+            ("with a step after the guard", job_end, "          } >> \"$GITHUB_OUTPUT\"\n      - run: echo after\n\n  tag:\n"),
+            ("checking out another ref", sparse, "          ref: someone-else\n" + sparse),
+            ("the guard step given a shell of its own", guard_id + "        env:\n",
+             guard_id + "        shell: bash --rcfile /tmp/answers.sh {0}\n        env:\n")):
         if release.count(old) < 1:
-            wrong.append("the guard %s: the text it changes is not in release.yml" % label)
-        expect("the guard %s" % label, judge_guard(release.replace(old, new, 1)), True)
+            wrong.append("the guard job %s: the text it changes is not in release.yml" % label)
+        changed = release.replace(old, new, 1)
+        if parse_shapes_run and not isinstance(guard_job(changed), dict):
+            wrong.append("the guard job %s: release.yml no longer reads as a workflow with a guard job" % label)
+        expect("the guard job %s" % label, judge_guard_held(changed), True)
     # Main asked for by name, which a tag called `main` answers before the branch does.
     for label, old, new in (
             ("comparing the tag with main by name", "compare/$commit...$main_commit", "compare/$commit...main"),
@@ -2764,6 +2840,7 @@ runs:
         "no workflow calls a reusable workflow from another repository",
         "release.yml reads the signing values under the names written here, and none an older run of it reads",
         "the guard refuses anybody not written down here as starting releases",
+        "the guard job is the one written down here, and each of its two steps to the byte",
         "what is written here lets nobody make a tag outside v*, and only an administrator one inside it",
         "every job that enters an environment asks the same of whoever started it",
         "each job that signs with a token holds its subject to main and release.yml before anything else",
