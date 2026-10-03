@@ -10,6 +10,9 @@ name: Binaries check
 # Each macOS and Windows signature is held to our own identities, read from
 # `scripts/signing-identities.json` in the commit this runs from, which is `main` when the release
 # workflow calls it. While one of them is unset every leg fails, and says which.
+#
+# With `linux_only`, for a release that carries the Linux binaries alone, only the two Linux legs run,
+# each with `--linux-only`: no identity is read, and nothing is said about macOS or Windows.
 
 on:
   workflow_call:
@@ -17,12 +20,21 @@ on:
       tag:
         required: true
         type: string
+      linux_only:
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       tag:
         description: 'The release tag to check'
         required: true
         type: string
+      linux_only:
+        description: 'The release carries the Linux binaries alone'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-22.04, ubuntu-22.04-arm, macos-15-intel, macos-15, windows-2022]
+        runner: ${{ fromJSON(inputs.linux_only && '["ubuntu-22.04", "ubuntu-22.04-arm"]' || '["ubuntu-22.04", "ubuntu-22.04-arm", "macos-15-intel", "macos-15", "windows-2022"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,10 +57,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
+          LINUX_ONLY: ${{ inputs.linux_only }}
         run: |
           set -uo pipefail
           # Windows runners name it python, the others python3.
           py=python3
           if ! "$py" -c 'import sys' >/dev/null 2>&1; then py=python; fi
           "$py" scripts/the-binaries-are-signed.py --self-test || exit 1
-          "$py" scripts/the-binaries-are-signed.py --release "$TAG"
+          only=()
+          if [ "$LINUX_ONLY" = true ]; then only=(--linux-only); fi
+          "$py" scripts/the-binaries-are-signed.py --release "$TAG" "${only[@]}"
