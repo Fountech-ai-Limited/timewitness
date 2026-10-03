@@ -1194,6 +1194,258 @@ def judge_attach(release):
     return problems
 
 
+# What carries the guard's answer to the jobs that act on it, held as the guard job is. The guard
+# reads which commit a tag names and refuses one that is not on main, and that answer is worth
+# something only while every job that builds, signs or publishes waits on it and builds what it read.
+# Each joint between them is a line a pull request can change with every other clause still passing:
+# the tag job no longer waiting on the guard, or handing on the tag rather than the commit; the build
+# checking out the tag by name; a folder held to a digest program that prints a constant. A tag with
+# a pre-release name can be moved by anybody who can write, so any one of those builds and signs a
+# commit nobody reviewed. So the route is held by value: which jobs there are and what each waits on,
+# the tag job and the build job whole, every other checkout to main's scripts, every folder one job
+# takes from another to the digest that job said, and the workflow's permissions and environment.
+# Any change to any of it is a change made here in the same commit and read in that review.
+ROUTE_NEEDS = {"guard": [], "tag": ["guard"], "build": ["tag"], "sign-macos": ["build", "tag"],
+               "sign-windows": ["build", "tag"], "pack-linux": ["build", "tag"],
+               "publish": ["pack-linux", "sign-macos", "sign-windows", "tag"], "check": ["publish", "tag"]}
+# What the workflow and each job may do with the run's own token. Write on the repository's contents
+# would let a job attach files past the Attach step, and write on Actions would let it replace or
+# delete what another job uploaded.
+WORKFLOW_PERMISSIONS = {"contents": "read"}
+JOB_PERMISSIONS = {"sign-windows": {"contents": "read", "id-token": "write"},
+                   "publish": {"contents": "write", "id-token": "write"}}
+# The workflow's environment by value, and FOLDER_DIGEST by the digest of its program.
+WORKFLOW_COLOUR = "always"
+FOLDER_DIGEST_SHA256 = "80b4f84ceb1c14c0b55d68d5a9302022bf15eb3be82e8294e2365301c81839b3"
+# The jobs neither held whole nor entering an environment, and what each may say of itself.
+OTHER_JOB_KEYS = {"pack-linux": {"name", "needs", "runs-on", "outputs", "env", "steps"},
+                  "check": {"name", "needs", "if", "uses", "with"}}
+OTHER_JOB_RUNNERS = {"pack-linux": "ubuntu-latest"}
+
+# The tag job, whole: what it says of itself, each of the guard's answers handed on as the guard gave
+# it, and its steps, the starter steps and the one that says which signing sets are complete.
+TAG_JOB = {"name": "which tag, and what can be signed", "needs": "guard", "runs-on": "ubuntu-latest",
+           "environment": "release",
+           "outputs": dict({name: "${{ needs.guard.outputs.%s }}" % name for name in GUARD_JOB["outputs"]},
+                           apple="${{ steps.secrets.outputs.apple }}", azure="${{ steps.secrets.outputs.azure }}")}
+TAG_SECRETS_SHA256 = "19515bbf3559ce57e6a7a74dfc68e976387dc0174a29d92c85fe2d35a7931c8c"
+# The build job, whole: what it says of itself, its matrix among it, by one digest, and each step by
+# its own. It is the job that turns the commit the guard read into bytes, so a step that checks out or
+# fetches anything else is a change to one of these.
+BUILD_JOB_SHA256 = "b44da45c3865a5050c0eb69aabc72da0caa1373ac6356b9812234804ac2d428d"
+BUILD_STEPS_SHA256 = ("6876f534463c307acb266ddc2ba2dcd0265c7ddc2e720ffa2888004ace55bda2",
+                      "72d98c8080e8567d51a76e82dfbb6176b054d1923618c286593fe0e5fd17a399",
+                      "e6a3f0ebd17971ba67e8c41d6cd91c4469b2de2060072cbc213d62fc22ea8862",
+                      "34cee6800f1cbff4e2d1a30695f1fd6f966dea676fb37ea3cd65f9ce514a69a5",
+                      "07694b94e18068199798a651cbdc19f12dc2aa91498f38cad367dc6ef014cdb7",
+                      "2c1aa3c4af4f78ef2df0c8a5dad22ec10316d6c6883c7c4f90303da3dc2cb557")
+CHECKOUT = "actions/checkout@"
+# The one thing the build checks out, and the only two things any other job may: main's own scripts,
+# by the starter checkout and by the one the signature check is read from.
+BUILD_CHECKOUT = {"ref": "${{ needs.tag.outputs.commit }}", "persist-credentials": False}
+SCRIPT_CHECKOUTS = [STARTER_STEPS[0]["with"],
+                    {"persist-credentials": False, "path": "check",
+                     "sparse-checkout": "scripts/the-binaries-are-signed.py\nscripts/signing-identities.json\n",
+                     "sparse-checkout-cone-mode": False}]
+
+# Every folder one job takes from another, by name and where it goes, the step that holds them to the
+# digests their jobs said, by its digest, and where that step reads those digests from. No other job
+# downloads anything.
+DOWNLOAD = "actions/download-artifact@"
+DOWNLOADS = {
+    "sign-macos": [{"name": "unsigned-x86_64-apple-darwin", "path": "in/unsigned-x86_64-apple-darwin"},
+                   {"name": "unsigned-aarch64-apple-darwin", "path": "in/unsigned-aarch64-apple-darwin"}],
+    "sign-windows": [{"name": "unsigned-x86_64-pc-windows-msvc", "path": "in"}],
+    "pack-linux": [{"name": "unsigned-x86_64-unknown-linux-gnu", "path": "in/unsigned-x86_64-unknown-linux-gnu"},
+                   {"name": "unsigned-aarch64-unknown-linux-gnu", "path": "in/unsigned-aarch64-unknown-linux-gnu"}],
+    "publish": [{"name": "asset-linux", "path": "from/linux"}, {"name": "asset-macos", "path": "from/macos"},
+                {"name": "asset-windows", "path": "from/windows"}],
+}
+HOLD_STEPS_SHA256 = {"sign-macos": "48f99632390016606bca51fb2171d6cb72807823b48a20a16d53bd30ff25d2a3",
+                     "sign-windows": "744831f76eb765768c1f6ad714964964cd02cc1d6ebb05afb15cb03c5d9e4cab",
+                     "pack-linux": "4b0d92cd9b63ff2f9d882a81f3e1ed6fb763a0d5332ed596e8bf34e45a35e86d",
+                     "publish": "35c98f34cc258e7160c55fc8a084c640297a79c192cba81b897a040b95deca57"}
+HOLDING_ENV = {
+    "sign-macos": {"TARGETS": "x86_64-apple-darwin aarch64-apple-darwin",
+                   "WANT_x86_64_apple_darwin": "${{ needs.build.outputs.x86_64-apple-darwin }}",
+                   "WANT_aarch64_apple_darwin": "${{ needs.build.outputs.aarch64-apple-darwin }}"},
+    "pack-linux": {"TARGETS": "x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu",
+                   "WANT_x86_64_unknown_linux_gnu": "${{ needs.build.outputs.x86_64-unknown-linux-gnu }}",
+                   "WANT_aarch64_unknown_linux_gnu": "${{ needs.build.outputs.aarch64-unknown-linux-gnu }}"},
+}
+
+
+def route_jobs(release):
+    """Every job of release.yml as YAML reads it, by name, or why they cannot be read."""
+    doc = parsed(release)
+    if not isinstance(doc, dict):
+        return "PyYAML is not installed here" if doc is None else "release.yml: %s" % doc
+    return doc
+
+
+def waits_on(job):
+    """What a job waits on, as a sorted list of names, or None where it is neither a name nor a list."""
+    needs = job.get("needs", []) if isinstance(job, dict) else None
+    if isinstance(needs, str):
+        return [needs]
+    return sorted(str(n) for n in needs) if isinstance(needs, list) else None
+
+
+def not_reaching_the_guard(jobs):
+    """Each job, by name, that does not wait on the guard directly or through the jobs it waits on."""
+    waits = {str(name): waits_on(job) or [] for name, job in jobs.items()}
+    reached, changed = {"guard"} & set(waits), True
+    while changed:
+        changed = False
+        for name, needs in waits.items():
+            if name not in reached and any(n in reached for n in needs):
+                reached.add(name)
+                changed = True
+    return sorted(name for name in waits if name not in reached)
+
+
+def judge_waits_on_guard(release):
+    """No job of release.yml runs but after the guard has answered, so no job builds, signs or
+    publishes while the guard refuses."""
+    doc = route_jobs(release)
+    if isinstance(doc, str):
+        return [doc]
+    jobs = doc.get("jobs")
+    if not isinstance(jobs, dict):
+        return ["release.yml has no jobs this can read"]
+    late = [name for name in not_reaching_the_guard(jobs) if name != "guard"]
+    if late:
+        return ["%s run without waiting on the guard, directly or through the jobs they wait on" % ", ".join(late)]
+    return []
+
+
+def judge_route_joined(release):
+    """release.yml runs the jobs written here, each waiting on what is written here, and none of them
+    or the workflow is given a permission or an environment value that is not written here."""
+    doc = route_jobs(release)
+    if isinstance(doc, str):
+        return [doc]
+    problems = []
+    named = doc.get("jobs")
+    jobs = dict(parsed_jobs(doc))
+    if not isinstance(named, dict) or sorted(map(str, named)) != sorted(ROUTE_NEEDS) or len(jobs) != len(named):
+        problems.append("release.yml runs the jobs %s, where it runs %s" % (
+            sorted(map(str, named)) if isinstance(named, dict) else json.dumps(named), sorted(ROUTE_NEEDS)))
+    for name, want in ROUTE_NEEDS.items():
+        if name in jobs and waits_on(jobs[name]) != want:
+            problems.append("%s waits on %s, not on %s as written here" % (name, json.dumps(jobs[name].get("needs")), want))
+    if doc.get("permissions") != WORKFLOW_PERMISSIONS:
+        problems.append("release.yml gives every job %s, not %s" % (json.dumps(doc.get("permissions")), WORKFLOW_PERMISSIONS))
+    for name, job in jobs.items():
+        if job.get("permissions") != JOB_PERMISSIONS.get(name):
+            problems.append("%s is given %s, not %s" % (name, json.dumps(job.get("permissions")), JOB_PERMISSIONS.get(name)))
+    env = doc.get("env") if isinstance(doc.get("env"), dict) else {}
+    if env.get("CARGO_TERM_COLOR") != WORKFLOW_COLOUR:
+        problems.append("release.yml sets CARGO_TERM_COLOR to %s, not %s" % (json.dumps(env.get("CARGO_TERM_COLOR")), WORKFLOW_COLOUR))
+    program = env.get("FOLDER_DIGEST")
+    digest = hashlib.sha256(program.encode("utf-8")).hexdigest() if isinstance(program, str) else None
+    if digest != FOLDER_DIGEST_SHA256:
+        problems.append("FOLDER_DIGEST reads %s, not %s as written here" % (digest, FOLDER_DIGEST_SHA256))
+    for name, keys in OTHER_JOB_KEYS.items():
+        extra = (names_of(jobs[name]) or set()) - keys if name in jobs else set()
+        if extra:
+            problems.append("%s sets %s for the whole job" % (name, sorted(extra)))
+    for name, runner in OTHER_JOB_RUNNERS.items():
+        if name in jobs and jobs[name].get("runs-on") != runner:
+            problems.append("%s runs on %s, not %s" % (name, json.dumps(jobs[name].get("runs-on")), runner))
+    return problems
+
+
+def judge_commit_carried(release):
+    """The tag job hands on each of the guard's answers as the guard gave it, the build checks out the
+    commit the guard read and nothing else, and no other job checks out anything but main's scripts."""
+    doc = route_jobs(release)
+    if isinstance(doc, str):
+        return [doc]
+    problems = []
+    jobs = dict(parsed_jobs(doc))
+    outputs = (jobs.get("tag") or {}).get("outputs")
+    outputs = outputs if isinstance(outputs, dict) else {}
+    for name in GUARD_JOB["outputs"]:
+        if outputs.get(name) != "${{ needs.guard.outputs.%s }}" % name:
+            problems.append("the tag job hands on %s as %s, not as the guard gave it" % (name, json.dumps(outputs.get(name))))
+    for name, job in jobs.items():
+        checkouts = [step.get("with") for step in job.get("steps") or []
+                     if isinstance(step, dict) and str(step.get("uses", "")).lower().startswith(CHECKOUT)]
+        if name == "build":
+            if checkouts != [BUILD_CHECKOUT]:
+                problems.append("the build checks out %s, where it checks out the commit the guard read and nothing else"
+                                % json.dumps(checkouts))
+        elif name != "guard":
+            other = [c for c in checkouts if c not in SCRIPT_CHECKOUTS]
+            if other:
+                problems.append("%s checks out %s, where it checks out main's scripts alone" % (name, json.dumps(other)))
+    return problems
+
+
+def judge_tag_and_build_held(release):
+    """The tag job and the build job are the ones written down here, each step to the byte."""
+    doc = route_jobs(release)
+    if isinstance(doc, str):
+        return [doc]
+    problems = []
+    jobs = dict(parsed_jobs(doc))
+    tag = jobs.get("tag") or {}
+    own = {key: value for key, value in tag.items() if key != "steps"}
+    if own != TAG_JOB:
+        problems.append("the tag job says %s of itself, not %s as written here"
+                        % (json.dumps(own, sort_keys=True), json.dumps(TAG_JOB, sort_keys=True)))
+    steps = tag.get("steps")
+    if not isinstance(steps, list) or len(steps) != 3 or steps[:2] != STARTER_STEPS:
+        problems.append("the tag job has %s steps, where it has its starter steps and the one that says which signing "
+                        "sets are complete" % (len(steps) if isinstance(steps, list) else "no list of"))
+    elif digest_of(steps[2]) != TAG_SECRETS_SHA256:
+        problems.append("the tag job's secrets step reads %s, not %s as written here" % (digest_of(steps[2]), TAG_SECRETS_SHA256))
+    build = jobs.get("build") or {}
+    own = digest_of({key: value for key, value in build.items() if key != "steps"})
+    if own != BUILD_JOB_SHA256:
+        problems.append("the build job says %s of itself, not %s as written here" % (own, BUILD_JOB_SHA256))
+    steps = build.get("steps")
+    if not isinstance(steps, list) or len(steps) != len(BUILD_STEPS_SHA256):
+        problems.append("the build job has %s steps, where it has %d" % (
+            len(steps) if isinstance(steps, list) else "no list of", len(BUILD_STEPS_SHA256)))
+    else:
+        for at, (step, held) in enumerate(zip(steps, BUILD_STEPS_SHA256)):
+            if digest_of(step) != held:
+                problems.append("the build job's step %d reads %s, not %s as written here" % (at + 1, digest_of(step), held))
+    return problems
+
+
+def judge_folders_held(release):
+    """Every folder a job takes from another is the one written here, put where it is written here,
+    and held, after the last of them is in and before anything else, by the step written here to the
+    digests the jobs that made them said."""
+    doc = route_jobs(release)
+    if isinstance(doc, str):
+        return [doc]
+    problems = []
+    for name, job in parsed_jobs(doc):
+        steps = [step if isinstance(step, dict) else {} for step in job.get("steps") or []]
+        at = [i for i, step in enumerate(steps) if str(step.get("uses", "")).lower().startswith(DOWNLOAD)]
+        taken = [steps[i].get("with") for i in at]
+        if taken != DOWNLOADS.get(name, []):
+            problems.append("%s takes %s, not %s as written here" % (name, json.dumps(taken), json.dumps(DOWNLOADS.get(name, []))))
+        if name not in DOWNLOADS:
+            continue
+        holds = [i for i, step in enumerate(steps)
+                 if 'got="$(' in str(step.get("run", "")) and '"$FOLDER_DIGEST"' in str(step.get("run", ""))]
+        if len(holds) != 1:
+            problems.append("%s has %d steps holding what it took to a digest, where it has one" % (name, len(holds)))
+        elif not at or holds[0] != at[-1] + 1:
+            problems.append("%s does not hold what it took straight after the last of it is in" % name)
+        elif digest_of(steps[holds[0]]) != HOLD_STEPS_SHA256[name]:
+            problems.append("%s holds what it took by a step reading %s, not %s as written here"
+                            % (name, digest_of(steps[holds[0]]), HOLD_STEPS_SHA256[name]))
+        if job.get("env") != HOLDING_ENV.get(name):
+            problems.append("%s gives its steps %s, not %s as written here" % (name, json.dumps(job.get("env")), json.dumps(HOLDING_ENV.get(name))))
+    return problems
+
+
 def judge_secrets_read(release):
     """release.yml reads the secrets written down here and no others, and none an older run reads."""
     read = set(re.findall(r"(?<![\w.-])secrets\.([A-Za-z0-9_]+)", release))
@@ -1702,6 +1954,16 @@ def run(tree_only, need_yaml=False, github=github, fetch=get, azure=None, need_a
     clause("a release is a draft until it carries every file, and is attached only to the commit the run built",
            judge_attach(release))
     clause("the Attach step is the one written down here, to the byte", judge_attach_pinned(release))
+    clause("every job of release.yml waits on the guard, directly or through the jobs it waits on",
+           judge_waits_on_guard(release))
+    clause("release.yml runs the jobs written here, each waiting on what is written here and given no more than is "
+           "written here", judge_route_joined(release))
+    clause("the tag job hands on the commit the guard read, the build checks out that commit and nothing else, and "
+           "no other job checks out anything but main's scripts", judge_commit_carried(release))
+    clause("the tag job and the build job are the ones written down here, each step to the byte",
+           judge_tag_and_build_held(release))
+    clause("every folder a job takes from another is held to the digest that job said, by the step written here",
+           judge_folders_held(release))
     code = 1 if "FAIL" in results else 0
     if tree_only:
         return code, ran
@@ -2437,6 +2699,155 @@ runs:
         expect("an environment job given as a word", judge_nothing_past_the_starter(yaml.safe_dump(doc, sort_keys=False)), True)
         doc["jobs"]["tag"] = saved_job
 
+    if parse_shapes_run:
+        # What carries the guard's answer to the jobs that act on it. Each shape still reads as YAML,
+        # and each is refused by the clause it is listed under, so none passes for being unreadable
+        # and none rests on another clause catching it.
+        for judge in (judge_waits_on_guard, judge_route_joined, judge_commit_carried, judge_tag_and_build_held,
+                      judge_folders_held):
+            expect("%s over release.yml as it is" % judge.__name__, judge(release), False)
+            expect("%s over a release.yml that is not YAML" % judge.__name__, judge(release + "jobs: [\n"), True)
+        expect("every job written here reaching the guard", not_reaching_the_guard(
+            {name: {"needs": needs} for name, needs in ROUTE_NEEDS.items()}), False)
+        expect("two jobs waiting on each other and not on the guard", not_reaching_the_guard(
+            {"guard": {}, "a": {"needs": "b"}, "b": {"needs": ["a"]}}) != ["a", "b"], False)
+        expect("a job waiting on a job that waits on the guard", not_reaching_the_guard(
+            {"guard": {}, "a": {"needs": ["b"]}, "b": {"needs": "guard"}}), False)
+        expect("a job waiting on nothing", not_reaching_the_guard({"guard": {}, "a": {}}) != ["a"], False)
+        expect("a job waiting on a guard that is not there", not_reaching_the_guard({"a": {"needs": "guard"}}) != ["a"], False)
+        expect("a job waiting on a job that is not there", not_reaching_the_guard({"guard": {}, "a": {"needs": "z"}}) != ["a"], False)
+        tag_needs = "  tag:\n    name: which tag, and what can be signed\n    needs: guard\n"
+        guard_head = "\n  guard:\n    name: may this run build and sign\n"
+        build_needs = "    needs: tag\n    runs-on: ${{ matrix.runner }}\n"
+        tag_commit = "      commit: ${{ needs.guard.outputs.commit }}\n"
+        build_ref = "          ref: ${{ needs.tag.outputs.commit }}\n"
+        perm = "\npermissions:\n  contents: read\n"
+        colour = "\nenv:\n  CARGO_TERM_COLOR: always\n"
+        program = "    import hashlib, os, sys\n    whole = hashlib.sha256()\n"
+        pack_head = "    needs: [tag, build]\n    runs-on: ubuntu-latest\n    outputs:\n      packed: "
+        check_head = "    needs: [tag, publish]\n    if: needs.publish.outputs.published == 'true'\n"
+        publish_needs = "    needs: [tag, sign-macos, sign-windows, pack-linux]\n"
+        macos_needs = "    needs: [tag, build]\n    runs-on: macos-15\n"
+        secrets_step = "      - id: secrets\n"
+        build_step = '          cargo build --release --locked --bin timewitness --target "$TARGET"\n'
+        windows_hold = "      - name: Say so when it cannot be signed\n"
+        resolve = ("      - id: resolve\n        env:\n          GH_TOKEN: ${{ github.token }}\n          TAG: ${{ needs.guard.outputs.tag }}\n"
+                   "          REPO: ${{ github.repository }}\n        run: |\n"
+                   "          echo \"commit=$(gh api \"repos/$REPO/commits/refs/tags/$TAG\" --jq .sha)\" >> \"$GITHUB_OUTPUT\"\n")
+        for judge, label, old, new in (
+                (judge_waits_on_guard, "the tag job waiting on nothing", tag_needs, tag_needs.replace("needs: guard", "needs: []")),
+                (judge_waits_on_guard, "the tag job waiting on the build", tag_needs, tag_needs.replace("needs: guard", "needs: build")),
+                (judge_waits_on_guard, "the build waiting on nothing", build_needs, build_needs.replace("needs: tag", "needs: []")),
+                (judge_waits_on_guard, "the check of what was attached waiting on nothing", check_head,
+                 check_head.replace("needs: [tag, publish]", "needs: []")),
+                (judge_waits_on_guard, "a job added that waits on nothing", guard_head,
+                 "\n  early:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n" + guard_head),
+                (judge_waits_on_guard, "no guard job", guard_head, guard_head.replace("guard:", "guarded:")),
+                (judge_route_joined, "the tag job waiting on the guard and on a copy of it", tag_needs,
+                 tag_needs.replace("needs: guard", "needs: [guard, guard2]")),
+                (judge_route_joined, "a job added that waits on the guard", guard_head,
+                 "\n  guard2:\n    needs: guard\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n" + guard_head),
+                (judge_route_joined, "sign-macos waiting on the build alone", macos_needs, macos_needs.replace("[tag, build]", "[build]")),
+                (judge_route_joined, "publish no longer waiting on the tag job", publish_needs, publish_needs.replace("[tag, ", "[")),
+                (judge_route_joined, "the workflow given write on contents", perm, "\npermissions:\n  contents: write\n"),
+                (judge_route_joined, "the workflow given write on Actions", perm, "\npermissions:\n  contents: read\n  actions: write\n"),
+                (judge_route_joined, "the workflow given write on everything", perm, "\npermissions: write-all\n"),
+                (judge_route_joined, "sign-macos given write on contents", macos_needs,
+                 macos_needs + "    permissions:\n      contents: write\n"),
+                (judge_route_joined, "publish given write on Actions", "      contents: write\n      id-token: write\n",
+                 "      contents: write\n      id-token: write\n      actions: write\n"),
+                (judge_route_joined, "CARGO_TERM_COLOR given a value of its own", colour,
+                 "\nenv:\n  CARGO_TERM_COLOR: $(gh() { echo identical; })\n"),
+                (judge_route_joined, "FOLDER_DIGEST printing a constant", program,
+                 "    import sys\n    sys.stdout.write('0' * 64); sys.exit(0)\n    import hashlib, os\n    whole = hashlib.sha256()\n"),
+                (judge_route_joined, "FOLDER_DIGEST changed by one space", program, program.replace("whole = ", "whole  = ")),
+                (judge_route_joined, "pack-linux run whatever the jobs before it did", pack_head,
+                 pack_head.replace("    outputs:\n", "    if: always()\n    outputs:\n")),
+                (judge_route_joined, "pack-linux run on a runner of its own", pack_head, pack_head.replace("ubuntu-latest", "self-hosted")),
+                (judge_route_joined, "the check of what was attached handed every secret", check_head, check_head + "    secrets: inherit\n"),
+                (judge_commit_carried, "the tag job handing on the tag asked for as the commit", tag_commit,
+                 "      commit: ${{ inputs.tag }}\n"),
+                (judge_commit_carried, "the tag job handing on the guard's tag as the commit", tag_commit,
+                 "      commit: ${{ needs.guard.outputs.tag }}\n"),
+                (judge_commit_carried, "the tag job handing on a rehearsal of its own",
+                 "      rehearsal: ${{ needs.guard.outputs.rehearsal }}\n", "      rehearsal: false\n"),
+                (judge_commit_carried, "the tag job reading the tag again after the guard and handing that on",
+                 tag_commit + "      prerelease:", "      commit: ${{ steps.resolve.outputs.commit }}\n      prerelease:"),
+                (judge_commit_carried, "the build checking out the tag by name", build_ref, "          ref: ${{ needs.tag.outputs.tag }}\n"),
+                (judge_commit_carried, "the build checking out the tag asked for", build_ref, "          ref: ${{ inputs.tag }}\n"),
+                (judge_commit_carried, "the build checking out from another repository", build_ref,
+                 build_ref + "          repository: someone/timewitness\n"),
+                (judge_commit_carried, "the build checking out a second time", "      - name: Build\n",
+                 "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n        with:\n"
+                 "          ref: ${{ needs.tag.outputs.tag }}\n          persist-credentials: false\n      - name: Build\n"),
+                (judge_tag_and_build_held, "the tag job handing on the tag asked for as the commit", tag_commit,
+                 "      commit: ${{ inputs.tag }}\n"),
+                (judge_tag_and_build_held, "the tag job given a step that reads the tag again", secrets_step, resolve + secrets_step),
+                (judge_tag_and_build_held, "the tag job's secrets step changed", "          apple=true\n", "          apple=false\n"),
+                (judge_tag_and_build_held, "the build checking out the tag by name", build_ref, "          ref: ${{ needs.tag.outputs.tag }}\n"),
+                (judge_tag_and_build_held, "the build checking out the tag again before it builds", build_step,
+                 '          git fetch --depth 1 origin "refs/tags/$TAG" && git checkout FETCH_HEAD\n' + build_step),
+                (judge_tag_and_build_held, "the build given a step of its own", "      - name: Build\n",
+                 "      - run: echo more\n      - name: Build\n"),
+                (judge_tag_and_build_held, "the build run on a runner of its own",
+                 "          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-22.04, exe: timewitness }\n",
+                 "          - { target: x86_64-unknown-linux-gnu, runner: self-hosted, exe: timewitness }\n"),
+                (judge_tag_and_build_held, "the build saying a digest of its own", "      x86_64-apple-darwin: ${{ matrix.target == ",
+                 "      x86_64-apple-darwin: ${{ matrix.target != "),
+                (judge_folders_held, "sign-macos holding a build to a digest written in", "${{ needs.build.outputs.x86_64-apple-darwin }}",
+                 "'%s'" % ("0" * 64)),
+                (judge_folders_held, "pack-linux holding one build to another's digest",
+                 "      WANT_aarch64_unknown_linux_gnu: ${{ needs.build.outputs.aarch64-unknown-linux-gnu }}\n",
+                 "      WANT_aarch64_unknown_linux_gnu: ${{ needs.build.outputs.x86_64-unknown-linux-gnu }}\n"),
+                (judge_folders_held, "sign-windows taking a folder after it held what it took", windows_hold,
+                 "      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c\n        with:\n"
+                 "          name: other\n          path: in\n" + windows_hold),
+                (judge_folders_held, "sign-windows taking a folder of another name",
+                 "          name: unsigned-x86_64-pc-windows-msvc\n", "          name: unsigned-other\n"),
+                (judge_folders_held, "the build taking a folder", "      - name: Build\n",
+                 "      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c\n        with:\n"
+                 "          name: asset-linux\n          path: staged\n      - name: Build\n"),
+                (judge_folders_held, "publish holding nothing it took", 'got="$(python3 -c "$FOLDER_DIGEST" "from/$kind")"',
+                 'got="${!want}"')):
+            if release.count(old) != 1:
+                wrong.append("%s: the text it changes is not in release.yml once" % label)
+            changed = release.replace(old, new, 1)
+            if not isinstance(parsed(changed), dict):
+                wrong.append("%s: release.yml no longer reads as YAML" % label)
+            expect("%s, by %s" % (label, judge.__name__), judge(changed), True)
+        # The hold moved ahead of the last folder it holds, and pack-linux's environment given as a word.
+        doc = yaml.safe_load(release)
+        steps = doc["jobs"]["pack-linux"]["steps"]
+        doc["jobs"]["pack-linux"]["steps"] = [steps[0], steps[2], steps[1]] + steps[3:]
+        expect("pack-linux holding what it took before the last of it is in", judge_folders_held(yaml.safe_dump(doc, sort_keys=False)), True)
+        doc["jobs"]["pack-linux"]["steps"] = steps
+        saved_env = doc["jobs"]["pack-linux"]["env"]
+        doc["jobs"]["pack-linux"]["env"] = "${{ fromJSON(vars.WANT) }}"
+        expect("pack-linux's environment given as an expression", judge_folders_held(yaml.safe_dump(doc, sort_keys=False)), True)
+        doc["jobs"]["pack-linux"]["env"] = saved_env
+        saved_steps = doc["jobs"]["publish"]["steps"]
+        doc["jobs"]["publish"]["steps"] = saved_steps + [saved_steps[7]]
+        expect("publish holding what it took twice", judge_folders_held(yaml.safe_dump(doc, sort_keys=False)), True)
+        doc["jobs"]["publish"]["steps"] = saved_steps
+        for job in ("tag", "build"):
+            saved_steps = doc["jobs"][job]["steps"]
+            doc["jobs"][job]["steps"] = saved_steps + [{"run": "true"}]
+            expect("the %s job given a step after its last" % job, judge_tag_and_build_held(yaml.safe_dump(doc, sort_keys=False)), True)
+            doc["jobs"][job]["steps"] = saved_steps
+        saved_job = doc["jobs"]["check"]
+        doc["jobs"]["check"] = "x"
+        expect("the check of what was attached given as a word", judge_route_joined(yaml.safe_dump(doc, sort_keys=False)), True)
+        doc["jobs"]["check"] = saved_job
+        held_step = doc["jobs"]["sign-macos"]["steps"][4]
+        doc["jobs"]["sign-macos"]["steps"][4] = dict(held_step, run=held_step["run"].replace(
+            'if [ -z "${!want}" ] || [ "$got" != "${!want}" ]; then', "if false; then"))
+        expect("sign-macos no longer comparing what it took", judge_folders_held(yaml.safe_dump(doc, sort_keys=False)), True)
+        doc["jobs"]["sign-macos"]["steps"][4] = held_step
+        doc["jobs"]["pack-linux"]["steps"] = [{"uses": CHECKOUT + "3d3c42e5aac5ba805825da76410c181273ba90b1",
+                                               "with": {"ref": "${{ needs.tag.outputs.tag }}", "persist-credentials": False}}] + steps
+        expect("pack-linux checking out the tag", judge_commit_carried(yaml.safe_dump(doc, sort_keys=False)), True)
+        doc["jobs"]["pack-linux"]["steps"] = steps
+
     # The patterns alone, as a run without PyYAML reads the workflows, refuse what the parse does.
     def by_pattern_alone(judge, *given):
         global yaml
@@ -2847,6 +3258,13 @@ runs:
         "no job that enters an environment runs on past its starter steps, or runs them with a tool or a setting of its own",
         "a release is a draft until it carries every file, and is attached only to the commit the run built",
         "the Attach step is the one written down here, to the byte",
+        "every job of release.yml waits on the guard, directly or through the jobs it waits on",
+        "release.yml runs the jobs written here, each waiting on what is written here and given no more than is "
+        "written here",
+        "the tag job hands on the commit the guard read, the build checks out that commit and nothing else, and "
+        "no other job checks out anything but main's scripts",
+        "the tag job and the build job are the ones written down here, each step to the byte",
+        "every folder a job takes from another is held to the digest that job said, by the step written here",
         "the pinned signing action restores from the cache only when asked to",
         "no action a job in an environment uses runs a step before the starter steps",
         "the release environment admits runs from main alone, administrators included",
