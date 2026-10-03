@@ -30,7 +30,11 @@
 //      while it checks and while it is left. A request carrying the file is named as that. The list
 //      under the evidence heading says what the command line read: each entry it listed, that there
 //      was none where it listed none, and that nothing could be listed where the receipt was refused
-//      first.
+//      first. Every figure in nanoseconds printed under the claim, the reading among them, is the
+//      command line's digit for digit. Then one of the three files is changed, and the verdict has to
+//      leave the screen before anything is pressed, with the page saying nothing has been checked for
+//      the files now chosen; checked again with the first files, it shows what it showed the first
+//      time.
 //
 // So it runs from any checkout of this repository that carries it, and not only from the commit the
 // page names. The receipts are this checkout's: the one committed in this repository, the same
@@ -46,13 +50,16 @@
 // repository's `npm run wall-check` prints one.
 //
 // `--self-test` serves the page this tree built on the loopback address, holds it to that same file
-// and to the command line built here, runs the whole check on it, and then runs it on eleven seeds,
+// and to the command line built here, runs the whole check on it, and then runs it on thirteen seeds,
 // each of which has to be refused by the part written for it: a page that shows the wrong verdict,
 // one that shows the wrong width, one that sends the file it was given when the button is clicked,
 // one that sends it as the page is left, one that runs a module other than the one it carries, one
 // built from another commit, one with a line of words its build never had, one carrying a module
 // its build never made, one that says a receipt refused before its evidence is listed carries none,
-// one that leaves out why nothing is listed, and one that drops an entry the command line listed. The two that send are written so the page check's spellings cannot see them and the policy
+// one that leaves out why nothing is listed, one that drops an entry the command line listed, one
+// that prints the reading rounded to the nearest number JavaScript can hold, and one that keeps a
+// verdict on the screen after one of its files is changed. The two that send are written so the page
+// check's spellings cannot see them and the policy
 // is taken out so the browser lets them go, and the server has to receive the file, so each is shown
 // connected before its refusal is believed. A guard nobody has seen fail is not evidence.
 //
@@ -83,6 +90,8 @@ const CARRIES_NONE = "This receipt carries no third-party evidence at all.";
 const NOT_LISTED = "This receipt was refused before its evidence could be listed, so nothing here says what evidence it carries.";
 // The line about the witness over the signature, which the page adds under the entries.
 const ABOUT_THE_SIGNATURE = "The signature itself ";
+// The three files a reader chooses on the page, each changed after a verdict to see the verdict go.
+const CHANGED = ["#receipt", "#subject", "#key-log"];
 const BUILT_FROM = /<meta name="tw-built-from" content="([^"]*)">/;
 const MODULE = /const WASM_BASE64 = "([A-Za-z0-9+/=]+)";/g;
 const MODULE_LINE = /^const WASM_BASE64 = "([A-Za-z0-9+/=]+)";$/;
@@ -124,10 +133,36 @@ function fromCommandLine(cli, receiptFile, subjectFile) {
     printed = e.stdout || e.stderr;
   }
   try {
-    return JSON.parse(printed);
-  } catch {
+    return exactly(printed);
+  } catch (e) {
+    if (e instanceof CouldNotRun) throw e;
     throw new CouldNotRun(`the command line gave no answer to read on ${receiptFile}: ${String(printed).slice(0, 200)}`);
   }
+}
+
+// A reading is nanoseconds since 1970, nineteen digits, and past 2^53 a JavaScript number cannot hold
+// it. JSON.parse hands back the nearest double instead, about a hundred nanoseconds away, and until
+// 2026-10-03 this check read both the command line and the page's module that way. Both lost the same
+// digits, so the two agreed on a figure neither of them wrote, while the page printed it beside the
+// words "nanosecond resolution". So a whole number too large for a double is kept as the digits it
+// was written with, on both sides, and compared as those.
+function exactly(text) {
+  return JSON.parse(text, (_, value, context) => {
+    if (typeof value !== "number" || Number.isSafeInteger(value)) return value;
+    if (context === undefined) throw new CouldNotRun(`this Node, ${process.version}, cannot read a number as it was written. Use 22 or later`);
+    return /^-?[0-9]+$/.test(context.source) ? context.source : value;
+  });
+}
+
+// Every figure in nanoseconds the command line gives about the claim, as its digits.
+function nanosecondsIn(value, into = new Set()) {
+  if (value !== null && typeof value === "object") {
+    for (const [key, inner] of Object.entries(value)) {
+      if (key.endsWith("_ns") && inner !== null && typeof inner !== "object") into.add(String(inner));
+      else nanosecondsIn(inner, into);
+    }
+  }
+  return into;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -366,7 +401,7 @@ async function theModuleIn(page, problems) {
     const length = new DataView(instance.memory.buffer, address, 4).getUint32(0, true);
     const text = new TextDecoder().decode(new Uint8Array(instance.memory.buffer, address + 4, length));
     instance.tw_free(address);
-    return JSON.parse(text);
+    return exactly(text);
   };
   const run = (receiptFile, subjectFile) => {
     const receiptAt = put(readFileSync(receiptFile));
@@ -651,7 +686,7 @@ const WATCHED = `(async () => {
 
 // One receipt, in a tab of its own. What the page shows, the bytes the browser was handed, the module
 // it ran, and everything the tab reached for, with the moment it reached for it.
-async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile) {
+async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile, change) {
   const { targetId } = await browser.send("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await browser.send("Target.attachToTarget", { targetId, flatten: true });
   const tab = (method, params) => browser.send(method, params, sessionId);
@@ -723,29 +758,35 @@ async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile) 
       loadedBytes = Buffer.from(body.body, body.base64Encoded ? "base64" : "utf8");
     }
 
-    const { root: documentNode } = await tab("DOM.getDocument", { depth: 1 });
-    for (const [selector, file] of [["#receipt", receiptFile], ["#subject", subjectFile]]) {
+    const choose = async (selector, files) => {
+      const { root: documentNode } = await tab("DOM.getDocument", { depth: 1 });
       const { nodeId } = await tab("DOM.querySelector", { nodeId: documentNode.nodeId, selector });
       if (!nodeId) throw new CouldNotRun(`the page has no ${selector} to choose a file with`);
-      await tab("DOM.setFileInputFiles", { nodeId, files: [file] });
-    }
+      await tab("DOM.setFileInputFiles", { nodeId, files });
+    };
+    await choose("#receipt", [receiptFile]);
+    await choose("#subject", [subjectFile]);
     phase = "after the files were chosen";
 
     // Clicked as a person clicks, with the mouse, so the page has the user activation a real click
     // gives it and cannot tell this from one.
-    const at = JSON.parse(
-      await evaluate(
-        '(() => { const b = document.getElementById("go"); b.scrollIntoView({ block: "center" }); const r = b.getBoundingClientRect(); return JSON.stringify({ x: r.x + r.width / 2, y: r.y + r.height / 2 }); })()',
-      ),
-    );
-    for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
-      await tab("Input.dispatchMouseEvent", { type, x: at.x, y: at.y, button: type === "mouseMoved" ? "none" : "left", clickCount: 1 });
-    }
-    await until("a verdict on the page", () =>
-      evaluate(
-        '!document.getElementById("result").hidden && document.getElementById("go").textContent !== "Checking" && document.getElementById("verdict").textContent !== ""',
-      ),
-    );
+    const press = async () => {
+      const at = JSON.parse(
+        await evaluate(
+          '(() => { const b = document.getElementById("go"); b.scrollIntoView({ block: "center" }); const r = b.getBoundingClientRect(); return JSON.stringify({ x: r.x + r.width / 2, y: r.y + r.height / 2 }); })()',
+        ),
+      );
+      for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+        await tab("Input.dispatchMouseEvent", { type, x: at.x, y: at.y, button: type === "mouseMoved" ? "none" : "left", clickCount: 1 });
+      }
+      await until("a verdict on the page", () =>
+        evaluate(
+          '!document.getElementById("result").hidden && document.getElementById("go").textContent !== "Checking" && document.getElementById("verdict").textContent !== ""',
+        ),
+      );
+    };
+    // Every line under the claim heading is read whole, because every figure in nanoseconds the page
+    // prints there is held to the command line's digits.
     const read = async () =>
       JSON.parse(
         await evaluate(`JSON.stringify({
@@ -753,14 +794,44 @@ async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile) 
           state: document.getElementById("verdict").className.replace("verdict", "").trim(),
           bracket: document.getElementById("verdict-bracket").textContent,
           claim: (document.querySelector("#claim p") || { textContent: "" }).textContent,
+          claimLines: Array.from(document.querySelectorAll("#claim p"), (p) => p.textContent),
           evidence: Array.from(document.querySelectorAll("#evidence > li"), (li) => li.textContent),
         })`),
       );
+    await press();
     const shown = await read();
     // A page that waits before it sends is given the time to, and what it shows is read again, so a
     // verdict that changes after the first look is not taken at the first look.
     await sleep(3000);
     const shownLater = await read();
+
+    // Then one of the three files is changed, the way a reader picks another receipt in the same tab,
+    // and the verdict has to go before anything is pressed. Until 2026-10-03 it stayed, and a forged
+    // receipt sat beside "This receipt holds up". The files the verdict was about are then chosen
+    // again and checked, and the page has to show what it showed the first time.
+    await choose(change.selector, [change.file]);
+    await sleep(500);
+    const readCleared = async () =>
+      JSON.parse(
+        await evaluate(`JSON.stringify({
+          resultHidden: document.getElementById("result").hidden,
+          verdict: document.getElementById("verdict").textContent,
+          lines: document.querySelectorAll("#steps > li, #claim > *, #evidence > li").length,
+          notice: (() => { const n = document.getElementById("not-checked"); return n && !n.hidden ? n.textContent.trim() : ""; })(),
+        })`),
+      );
+    const afterChange = await readCleared();
+    if (change.selector === "#key-log") {
+      // A file input is emptied by the reader cancelling the picker, which the browser reports as a
+      // change, and the debugging protocol has no call for it. This is that act.
+      await evaluate('(() => { const k = document.getElementById("key-log"); k.value = ""; k.dispatchEvent(new Event("input", { bubbles: true })); k.dispatchEvent(new Event("change", { bubbles: true })); })()');
+    } else {
+      await choose(change.selector, [change.selector === "#receipt" ? receiptFile : subjectFile]);
+    }
+    await sleep(500);
+    const afterRestore = await readCleared();
+    await press();
+    const shownAgain = await read();
     const watched = JSON.parse(await evaluate(WATCHED));
 
     // Then the page is left, which is when a page that sends on the way out would, and the tab is
@@ -771,7 +842,7 @@ async function inTheBrowser(browser, address, cookie, receiptFile, subjectFile) 
     await sleep(1500);
     await browser.send("Target.closeTarget", { targetId }).catch(() => {});
     await sleep(1000);
-    return { shown, shownLater, watched, requests, others, loadedBytes };
+    return { shown, shownLater, change, afterChange, afterRestore, shownAgain, watched, requests, others, loadedBytes };
   } finally {
     browser.listeners.delete(listener);
     browser.requestListeners.delete(recorder);
@@ -824,6 +895,44 @@ function whatTheBrowserShowed(problems, what, seen, cli, fetched, run) {
     problems.push(`${what}: the browser shows "${seen.shown.claim}" and the command line's width is ${cli.claim.width_ns} ns`);
   }
   theEvidenceShown(problems, what, seen.shown.evidence, cli);
+  if (cli.claim) theFiguresShown(problems, what, seen.shown.claimLines, cli.claim);
+  theVerdictGoesWithItsFiles(problems, what, seen);
+}
+
+// Every figure the page prints in nanoseconds under the claim is one the command line gave, digit for
+// digit, and the reading is printed and is the command line's. The reading is printed beside the words
+// "nanosecond resolution", so a figure a hundred nanoseconds off there is the page saying something
+// false about the one property it names. Read as text off the page and compared as digits, never
+// through a number, which would round both sides alike and see nothing.
+function theFiguresShown(problems, what, lines, claim) {
+  const given = nanosecondsIn(claim);
+  const reading = lines.join(" ").match(/The reading is (-?[0-9]+) ns since the Unix epoch/);
+  if (!reading) {
+    problems.push(`${what}: the browser does not print the reading, which the command line gives as ${claim.reading_ns} ns`);
+  } else if (reading[1] !== String(claim.reading_ns)) {
+    problems.push(`${what}: the browser prints the reading as ${reading[1]} ns and the command line as ${claim.reading_ns} ns`);
+  }
+  for (const line of lines) {
+    for (const [, figure] of line.matchAll(/(?<![0-9.])(-?[0-9]+) ns(?![A-Za-z])/g)) {
+      if (!given.has(figure)) problems.push(`${what}: the browser prints ${figure} ns, which is no figure the command line gave about the claim: "${line}"`);
+    }
+  }
+}
+
+// A verdict is only ever on the screen beside the files it was given. Once another file is chosen it
+// is gone before anything is pressed, the page says nothing has been checked for what is chosen now,
+// and checking the first files again shows what it showed the first time.
+function theVerdictGoesWithItsFiles(problems, what, seen) {
+  const changed = `after another file was chosen for ${seen.change.selector}`;
+  for (const [when, cleared] of [[changed, seen.afterChange], [`${changed} and the first one chosen again`, seen.afterRestore]]) {
+    if (!cleared.resultHidden || cleared.lines > 0) {
+      problems.push(`${what}: ${when}, the page still showed "${cleared.verdict}" and ${cleared.lines} lines of an answer about files it no longer has`);
+    }
+    if (cleared.notice === "") problems.push(`${what}: ${when}, the page did not say that nothing has been checked for the files now chosen`);
+  }
+  if (JSON.stringify(seen.shownAgain) !== JSON.stringify(seen.shown)) {
+    problems.push(`${what}: checked again with the same files, the page showed ${JSON.stringify(seen.shownAgain)} where it first showed ${JSON.stringify(seen.shown)}`);
+  }
 }
 
 // The list under the evidence heading, held to what the command line listed. No list from the
@@ -973,10 +1082,14 @@ async function check(address, options) {
   const run = await theModuleIn(page, problems);
   const browser = await aBrowser(address);
   try {
-    for (const { what, receipt, subject } of cases) {
+    for (const [index, { what, receipt, subject }] of cases.entries()) {
       const cli = fromCommandLine(build.cli, receipt, subject);
       if (run) theModuleAgrees(problems, what, run(receipt, subject), cli);
-      const seen = await inTheBrowser(browser, address, cookie, receipt, subject);
+      // Each receipt has one of the three files changed after its verdict, in turn, so every run
+      // changes each of them at least once.
+      const selector = CHANGED[index % CHANGED.length];
+      const change = { selector, file: selector === "#subject" ? receipt : subject };
+      const seen = await inTheBrowser(browser, address, cookie, receipt, subject, change);
       whatTheBrowserShowed(problems, what, seen, cli, fetched, run);
       whatTheBrowserSent(problems, what, seen, address, readFileSync(subject));
       options.said?.(what, cli, seen);
@@ -1005,7 +1118,7 @@ async function selfTest(cli) {
   const page = readFileSync(built, "utf8");
   const seeds = {
     "/verify/": page,
-    "/wrong-verdict/": page.replace("    renderResult(result);", "    renderResult(Object.assign(result, { accepted: !result.accepted }));"),
+    "/wrong-verdict/": page.replace("if (asked === choices) renderResult(result);", "if (asked === choices) renderResult(Object.assign(result, { accepted: !result.accepted }));"),
     "/wrong-width/": page.replace('"UTC was somewhere in an interval " + c.width_in_words', '"UTC was somewhere in an interval 1" + c.width_in_words'),
     "/sends-on-click/": page.replace(POLICY, "").replace("</body>", `${SENDS_ON_CLICK}\n</body>`),
     "/sends-on-leaving/": page.replace(POLICY, "").replace("</body>", `${SENDS_ON_LEAVING}\n</body>`),
@@ -1037,6 +1150,11 @@ async function selfTest(cli) {
       "  for (const entry of Array.isArray(entries) ? entries : []) {",
       "  for (const entry of Array.isArray(entries) ? entries.slice(1) : []) {",
     ),
+    // The page as it stood until 2026-10-03, which read the module's answer as JavaScript numbers and
+    // printed the reading about a hundred nanoseconds from the receipt's.
+    "/rounds-the-reading/": page.replace("  wasm.tw_free(address);\n  return exactly(text);", "  wasm.tw_free(address);\n  return JSON.parse(text);"),
+    // And the page as it stood until the same day, which kept a verdict when its files changed.
+    "/keeps-the-verdict-on-a-change/": page.replace('addEventListener("change", filesChanged)', 'addEventListener("change", () => {})'),
   };
   for (const [path, text] of Object.entries(seeds)) {
     if (path !== "/verify/" && text === page) throw new CouldNotRun(`the seed at ${path} found nowhere to go in the page`);
@@ -1075,6 +1193,8 @@ async function selfTest(cli) {
     ["/says-unlisted-evidence-is-none/", "a page saying evidence it never listed is none", (p) => p.includes("refused before its evidence was listed and the page says it carries none")],
     ["/says-nothing-of-unlisted-evidence/", "a page not saying why no evidence is listed", (p) => p.includes("the page does not say the evidence could not be listed")],
     ["/drops-an-entry/", "a page dropping an entry the command line listed", (p) => p.includes("the evidence shown in the browser, the roles listed")],
+    ["/rounds-the-reading/", "a page printing the reading rounded", (p) => p.includes("the browser prints the reading as") && p.includes("1788979278918450302 ns")],
+    ["/keeps-the-verdict-on-a-change/", "a page keeping a verdict after its files change", (p) => p.includes("after another file was chosen for") && p.includes("still showed")],
   ];
   try {
     const clean = await check(at("/verify/"), options);
@@ -1107,6 +1227,16 @@ async function selfTest(cli) {
     theModuleAgrees(found, "an answer moved by one character", moved, cli0);
     if (found.length !== 1) failures.push(`an answer moved by one character in ${where} was read as ${found.length} differences rather than one`);
   }
+  // The reading as the command line printed it, digit for digit, which a number cannot carry.
+  const printed = execFileSync(cli, ["verify", cases[0].receipt, "--json", "--subject", cases[0].subject], { encoding: "utf8" });
+  const digits = printed.match(/"reading_ns":\s*(-?[0-9]+)/)?.[1];
+  if (!digits || String(cli0.claim.reading_ns) !== digits) {
+    failures.push(`the command line printed the reading as ${digits} and this check read it as ${cli0.claim.reading_ns}`);
+  }
+  const nudged = { ...cli0, claim: { ...cli0.claim, reading_ns: `${digits.slice(0, -1)}${(Number(digits.slice(-1)) + 1) % 10}` } };
+  const off = [];
+  theModuleAgrees(off, "an answer with the reading moved by one nanosecond", nudged, cli0);
+  if (off.length !== 1) failures.push(`a reading moved by one nanosecond was read as ${off.length} differences rather than one`);
   const added = [];
   theModuleAgrees(added, "an answer with a field added", { ...cli0, certificate: { holds: true } }, cli0);
   if (added.length === 0) failures.push("a certificate on one side and not the other was not read as a difference");

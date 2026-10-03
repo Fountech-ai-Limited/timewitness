@@ -70,6 +70,9 @@
      reason: amber would read as a pass and magenta as a refusal, and the difference between "this
      receipt is bad" and "I could not read your file" is the whole of what this state is for. */
   .verdict.unavailable { color: color-mix(in srgb, var(--tw-colour-paper) 85%, transparent); }
+  /* Said where a verdict was, once the files it was about are no longer the files chosen. It is not
+     an answer about anything, so it takes no hue an answer takes. */
+  .not-checked { border-left: var(--tw-border-thick) solid color-mix(in srgb, var(--tw-colour-paper) 40%, transparent); padding-left: var(--tw-space-3); font-size: var(--tw-font-size-small); color: color-mix(in srgb, var(--tw-colour-paper) 82%, transparent); margin: var(--tw-space-6) 0 var(--tw-space-4); }
   /* The line under the verdict: how wide the checked outside evidence brackets the moment, and whose
      the width is. It sits at reading size in the heading face, so it is read with the verdict and
      not skipped as detail. */
@@ -137,6 +140,9 @@ this browser, so nothing can be checked here. The command line checks the same r
 code: <code>timewitness verify &lt;receipt&gt;</code>.</p></noscript>
 <p class="notice" id="cannot-run" hidden></p>
 <p class="detail" id="formats"></p>
+<p class="not-checked" id="not-checked" role="status" aria-live="polite" hidden>Nothing has been checked
+for the files now chosen. The answer that was here was about the files chosen before, so it has been
+taken away. Press Check it to check these.</p>
 
 <!-- role="status" rather than role="alert", because a verdict is information and not an alarm,
      and tabindex="-1" so the handler can put the reader inside it once there is something to read. -->
@@ -206,7 +212,36 @@ function take(address) {
   const bytes = new Uint8Array(wasm.memory.buffer, address + 4, length);
   const text = new TextDecoder().decode(bytes);
   wasm.tw_free(address);
-  return JSON.parse(text);
+  return exactly(text);
+}
+
+// A reading is nanoseconds since 1970, nineteen digits, and a JavaScript number holds a whole number
+// exactly only up to 2^53, sixteen digits. Read with JSON.parse alone, the reading came back as the
+// nearest number it could hold, about a hundred nanoseconds from the one in the receipt, and until
+// 2026-10-03 this page printed that beside the words "nanosecond resolution". So every whole number
+// too large to hold is quoted before the text is parsed, and is printed as the digits the checking code
+// wrote. A number inside a string is left alone: the scan steps over every string whole.
+function exactly(text) {
+  let out = "";
+  let from = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const at = text[i];
+    if (at === '"') {
+      for (i += 1; i < text.length && text[i] !== '"'; i += 1) {
+        if (text[i] === "\\") i += 1;
+      }
+    } else if (at === "-" || (at >= "0" && at <= "9")) {
+      let end = i + 1;
+      while (end < text.length && "0123456789.eE+-".includes(text[end])) end += 1;
+      const figure = text.slice(i, end);
+      if (/^-?[0-9]+$/.test(figure) && !Number.isSafeInteger(Number(figure))) {
+        out += text.slice(from, i) + '"' + figure + '"';
+        from = end;
+      }
+      i = end - 1;
+    }
+  }
+  return JSON.parse(out + text.slice(from));
 }
 
 async function start() {
@@ -393,7 +428,7 @@ function renderResult(result) {
     "The bound in this receipt " + (result.basis_granted ? "does" : "does not") +
     " rest on third-party evidence: " + result.basis_reason;
 
-  document.getElementById("result").hidden = false;
+  shown();
 }
 
 // The largest subject this page has been seen to read, and the smallest it has been seen refused.
@@ -438,7 +473,41 @@ function renderUnavailable(detail) {
   document.getElementById("claim").replaceChildren();
   document.getElementById("evidence").replaceChildren();
   document.getElementById("basis").textContent = "";
+  shown();
+}
+
+function shown() {
+  document.getElementById("not-checked").hidden = true;
   document.getElementById("result").hidden = false;
+}
+
+// A verdict is only ever on the screen beside the files it was given. Until 2026-10-03 choosing
+// another receipt after a check left the old verdict where it was until the button was pressed again,
+// so a forged receipt could sit under "This receipt holds up". Now any change to any of the three
+// files takes the answer away and says nothing has been checked for what is chosen now. A check still
+// running when a file changes is counted out the same way: its answer is about files no longer chosen.
+let choices = 0;
+
+function filesChanged() {
+  choices += 1;
+  if (!document.getElementById("result").hidden) notChecked();
+}
+
+function notChecked() {
+  document.getElementById("result").hidden = true;
+  document.getElementById("verdict").className = "verdict";
+  document.getElementById("verdict").textContent = "";
+  document.getElementById("verdict-bracket").textContent = "";
+  document.getElementById("verdict-detail").textContent = "";
+  document.getElementById("steps").replaceChildren();
+  document.getElementById("claim").replaceChildren();
+  document.getElementById("evidence").replaceChildren();
+  document.getElementById("basis").textContent = "";
+  document.getElementById("not-checked").hidden = false;
+}
+
+for (const id of ["receipt", "subject", "key-log"]) {
+  document.getElementById(id).addEventListener("change", filesChanged);
 }
 
 // Two frames, so the busy state is on the screen before anything blocks it. The checking call is
@@ -454,6 +523,7 @@ document.getElementById("form").addEventListener("submit", async (event) => {
   const subjectFile = document.getElementById("subject").files[0];
   const keyLogFile = document.getElementById("key-log").files[0];
   if (!receiptFile) return;
+  const asked = choices;
 
   const form = document.getElementById("form");
   const go = document.getElementById("go");
@@ -482,11 +552,16 @@ document.getElementById("form").addEventListener("submit", async (event) => {
     if (subject !== 0) wasm.tw_free(subject);
     if (keyLog !== 0) wasm.tw_free(keyLog);
 
-    renderResult(result);
+    if (asked === choices) renderResult(result);
+    else notChecked();
   } catch (error) {
     // The one that actually happens: the browser refuses to read a file that size and rejects
     // before the checking code is ever called. It used to reject into nothing, leaving the page
     // exactly as it was, and a reader could only read that as the button being broken.
+    if (asked !== choices) {
+      notChecked();
+      return;
+    }
     const unread = subjectFile && String(error).includes("could not be read") ? subjectFile
       : receiptFile && String(error).includes("could not be read") ? receiptFile
       : null;
@@ -501,6 +576,7 @@ document.getElementById("form").addEventListener("submit", async (event) => {
     form.removeAttribute("aria-busy");
   }
 
+  if (asked !== choices) return;
   const result = document.getElementById("result");
   result.scrollIntoView({ behavior: "smooth", block: "start" });
   // The reader is put inside the region rather than left at the button they pressed, so the next
