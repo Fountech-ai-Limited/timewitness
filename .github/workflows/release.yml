@@ -92,7 +92,10 @@ name: Release binaries
 # environment, the rulesets, this file's `on:` block and which jobs enter `release` and
 # `linux-signing`, and fails on any change. It does not read the settings of `linux-signing`, which
 # holds no secret: nothing rests on them, since a Linux certificate names this workflow and `main` as
-# well as that environment.
+# well as that environment. It holds what carries the guard's answer too, by value: which job waits
+# on which, the tag and build jobs whole, what every other job checks out, and the step in each job
+# that holds a folder another job made to the digest that job said. So a change here that lets a
+# release build anything but the commit the guard read is a change to that file in the same commit.
 #
 # `scripts/the-binaries-are-signed.py` is the check, and `binaries-check.yml` runs it on all three
 # systems once the assets are attached. It holds every macOS and Windows signature to our own
