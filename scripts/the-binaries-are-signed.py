@@ -2112,8 +2112,10 @@ def self_test():
     expect("Linux alone, signed in another repository's release job", linux_only_verdict(bundle=bundle_of(fulcio_elsewhere())),
            (1, False))
     expect("Linux alone, signed with a rehearsal's key", linux_only_verdict(rehearsal_key="cosign.pub"), (1, False))
-    expect("Linux alone, a binary that says it is a dev build",
-           verdict(linux_only_said(host=linux, version="timewitness v0.4-dev")[0]), 1)
+    said = linux_only_said(host=linux, version="timewitness v0.4-dev")[0]
+    expect("Linux alone, a binary that says it is a dev build", verdict(said), 1)
+    expect("and its last line does not pass it for Linux alone",
+           summary(verdict(said), said, True).startswith("PASS for Linux alone"), False)
     # On a machine that is not Linux no binary this run asks for can be run, so it cannot pass.
     for host in others:
         said, _ = linux_only_said(host=host, run_binary=True, targets=list(TARGETS))
