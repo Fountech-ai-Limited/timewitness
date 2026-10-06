@@ -7,9 +7,9 @@ says UTC was somewhere inside an interval and signs that claim. It does not say 
 and the list says what else it will not tell you.
 
 This page takes you from a machine with nothing of ours on it to a receipt you have checked yourself.
-It is written for Ubuntu or Debian. There is no downloadable binary yet, so you compile the command
-line from the `v0.6` release, and that is most of the wait. `scripts/walk-the-quick-start.py` runs
-every command below, as written here, on a fresh Ubuntu 24.04 container every morning, and goes red
+It is written for Ubuntu or Debian. It compiles the command line from the `v0.7` release, and that
+is most of the wait. The same release carries signed Linux binaries, and the README says how to check
+them. `scripts/walk-the-quick-start.py` runs every command below, as written here, on a fresh Ubuntu 24.04 container every morning, and goes red
 if the last one does not verify.
 
 Stamping asks public time servers, so the machine needs the outbound ports in
@@ -32,7 +32,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 ## 3. TimeWitness
 
 ```sh
-cargo install --locked --git https://github.com/Fountech-ai-Limited/timewitness --tag v0.6 timewitness-cli
+cargo install --locked --git https://github.com/Fountech-ai-Limited/timewitness --tag v0.7 timewitness-cli
 ```
 
 This puts `timewitness` in `~/.cargo/bin`.
