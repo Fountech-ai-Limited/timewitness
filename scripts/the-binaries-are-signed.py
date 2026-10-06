@@ -44,6 +44,16 @@ failed, and 2 when none failed but one could not be run here. A clause that coul
 read as a pass. A signature that can only be checked on another system is printed as ELSEWHERE, and
 the last line names those targets, so a pass on one machine is not read as a pass for all five.
 
+    python scripts/the-binaries-are-signed.py --release v0.7 --linux-only
+
+is for a release that carries the Linux binaries alone, which is what a release carries while macOS
+and Windows are not signed. It asks for the two Linux archives, their bundles, `SHA256SUMS` and its
+bundle, holds them exactly as above, and runs the Linux binary built for this machine, so on any
+other system it cannot pass and says so. It never reads `scripts/signing-identities.json`, so the
+Apple and Windows identities being unset does not fail it. A macOS or Windows archive on the release
+is named as not checked, and nothing this mode prints calls one signed: a pass here is a pass for
+Linux and says nothing about the other two systems.
+
     python scripts/the-binaries-are-signed.py --release v0.4 --dist dist --no-run
 
 reads the same assets out of a folder instead of a release, which is how the release workflow's
@@ -151,9 +161,15 @@ LINUX_SUBJECT = "repo:Fountech-ai-Limited@110895113/timewitness@1401363610:envir
 OID_TOKEN_SUBJECT = "1.3.6.1.4.1.57264.1.24"
 
 
-def required_assets(tag):
-    names = [archive_name(tag, t) for t in TARGETS]
-    names += [archive_name(tag, t) + BUNDLE for t in TARGETS if TARGETS[t][0] == "linux"]
+def targets_asked(linux_only=False):
+    """The targets a release is held to: all five, or the two Linux ones alone."""
+    return [t for t in TARGETS if not linux_only or TARGETS[t][0] == "linux"]
+
+
+def required_assets(tag, linux_only=False):
+    targets = targets_asked(linux_only)
+    names = [archive_name(tag, t) for t in targets]
+    names += [archive_name(tag, t) + BUNDLE for t in targets if TARGETS[t][0] == "linux"]
     names += [SUMS, SUMS + BUNDLE]
     return names
 
@@ -476,9 +492,9 @@ def token_subject(certificate):
 # The judgements, each a pure function of what was read, so the self-test can put them to shapes.
 # The signature judges return why a binary is not ours, and nothing when it is.
 
-def judge_assets(tag, attached):
+def judge_assets(tag, attached, linux_only=False):
     """The names a release has to carry and does not."""
-    return [n for n in required_assets(tag) if n not in set(attached)]
+    return [n for n in required_assets(tag, linux_only) if n not in set(attached)]
 
 
 def judge_sums(sums_text, digests):
@@ -595,8 +611,13 @@ def verdict(results):
     return 0
 
 
-def summary(code, results):
+def summary(code, results, linux_only=False):
     """The last line, which names the targets whose signatures this machine did not check."""
+    if code == 0 and linux_only:
+        unchecked = [line.split(":", 1)[0] for state, line in results if state == "NOT CHECKED"]
+        return ("PASS for Linux alone: every clause run on this machine passed, the Apple and Windows identities "
+                "were not read, and this says nothing about macOS or Windows%s"
+                % ("; on the release and not checked: " + ", ".join(unchecked) if unchecked else ""))
     elsewhere = [line.split(":", 1)[0] for state, line in results
                  if state == "ELSEWHERE" and "its signature is checked on" in line]
     if code == 0 and elsewhere:
@@ -843,12 +864,14 @@ def pinned_or_say(say):
     return pins
 
 
-def check(tag, work, repo=REPO, folder=None, run_binary=True, cosign=None, rehearsal_key=None, signtool_at=None):
+def check(tag, work, repo=REPO, folder=None, run_binary=True, cosign=None, rehearsal_key=None, signtool_at=None,
+          linux_only=False):
     """Every clause for the release `tag`, reading its assets from GitHub, or from `folder` where one
     is given. `cosign` is the command that runs cosign, or a function that answers for it, found on
     the path where it is not given,
     `rehearsal_key` the public half of a rehearsal's throwaway key, and `signtool_at` signtool's full
-    path where it is not in the Windows Kits folder."""
+    path where it is not in the Windows Kits folder. With `linux_only` the release is held to its
+    Linux binaries alone, and the identities file is never opened."""
     results = []
 
     def say(state, line):
@@ -865,7 +888,14 @@ def check(tag, work, repo=REPO, folder=None, run_binary=True, cosign=None, rehea
             signature_of[target].append(state)
         return said
 
-    pins = pinned_or_say(say)
+    # A Linux signature is held to where it came from, and to no identity in that file, so a Linux-only
+    # run has no reason to open it, and an Apple or Windows value unset there cannot fail it.
+    if linux_only:
+        pins = {}
+        print("Linux only: the Apple and Windows identities are not read, and nothing here calls a macOS or "
+              "Windows binary signed", flush=True)
+    else:
+        pins = pinned_or_say(say)
 
     if folder is None:
         raw = fetch("https://api.github.com/repos/%s/releases/tags/%s" % (repo, tag), "application/vnd.github+json")
@@ -879,14 +909,21 @@ def check(tag, work, repo=REPO, folder=None, run_binary=True, cosign=None, rehea
         assets = {n: os.path.join(folder, n) for n in sorted(os.listdir(folder)) if os.path.isfile(os.path.join(folder, n))}
         print("%s: %d files, read as the assets of %s" % (folder, len(assets), tag))
 
-    missing = judge_assets(tag, assets)
+    missing = judge_assets(tag, assets, linux_only)
     if missing:
         say("FAIL", "missing from the release: " + ", ".join(missing))
+    elif linux_only:
+        say("PASS", "both Linux archives, their digest list and the three Sigstore bundles are attached")
     else:
         say("PASS", "all five archives, their digest list and the three Sigstore bundles are attached")
+    # Not downloaded and not a clause: said, so a pass for Linux is never read as one for these.
+    for target in TARGETS:
+        if target not in targets_asked(linux_only) and archive_name(tag, target) in assets:
+            say("NOT CHECKED", "%s: on the release, and nothing about its signature is checked or claimed, "
+                               "because this run is for Linux alone" % target)
 
     files = {}
-    for name in required_assets(tag):
+    for name in required_assets(tag, linux_only):
         if name not in assets:
             continue
         if folder is not None:
@@ -991,6 +1028,12 @@ def check(tag, work, repo=REPO, folder=None, run_binary=True, cosign=None, rehea
 
     if here is None:
         say("NOT RUN", "this machine is none of the five targets, so no --version was read")
+    elif here not in targets_asked(linux_only):
+        # The binary built for this machine is not one this run asks for, so no binary's --version
+        # is read here, and a run that reads none never passes. Said with --no-run as well.
+        say("NOT RUN" if run_binary else "ELSEWHERE",
+            "%s: this run is for Linux alone and this machine is not Linux, so no binary's --version was read "
+            "here; run it on Linux" % here)
     elif archive_name(tag, here) in files and not run_binary:
         say("ELSEWHERE", "%s: --version is not run here, because this job holds a token worth having; the "
                          "build that made it asked it already" % here)
@@ -1256,12 +1299,14 @@ def write_release(dist, tag, targets, bundle, drop=()):
 
 
 def linux_bundle_check(cosign_says, rehearsal_key=None, bundle=None, identity=OUR_WORKFLOW, issuer=GITHUB_ISSUER,
-                       targets=("x86_64-unknown-linux-gnu",), drop=(), find_cosign=False, plant=None):
+                       targets=("x86_64-unknown-linux-gnu",), drop=(), find_cosign=False, plant=None, linux_only=False,
+                       run_binary=False):
     """check() over a folder holding a Linux archive and its bundle, or the assets of `targets`, with
     cosign replaced by a stand-in that verifies or refuses as told and holds the check's identity
     and issuer to the certificate's `identity` and `issuer`. The bundle holds a certificate for the
     Linux signing job unless another is given. With `find_cosign` the check looks for cosign itself,
-    and with `plant` a function is handed the folder the assets are in first."""
+    and with `plant` a function is handed the folder the assets are in first. `linux_only` and
+    `run_binary` are handed to the check as they are."""
     if bundle is None:
         bundle = bundle_of(fulcio_shaped([LINUX_SUBJECT]))
     tag = "v0.4"
@@ -1276,11 +1321,64 @@ def linux_bundle_check(cosign_says, rehearsal_key=None, bundle=None, identity=OU
         with open(os.devnull, "w") as quiet:
             saved, sys.stdout = sys.stdout, quiet
             try:
-                return check(tag, work, folder=dist, run_binary=False, cosign=cosign, rehearsal_key=rehearsal_key)
+                return check(tag, work, folder=dist, run_binary=run_binary, cosign=cosign, rehearsal_key=rehearsal_key,
+                             linux_only=linux_only)
             finally:
                 sys.stdout = saved
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+LINUX_TARGETS = tuple(targets_asked(linux_only=True))
+
+
+def linux_only_said(cosign_says="verifies", host=None, version=None, linux_only=True, run_binary=None, **given):
+    """A check over the assets `given` describes, made as linux_bundle_check makes them and the two
+    Linux targets' unless it says otherwise, Linux-only unless told not to. Opening the identities
+    file is recorded, and it reads as a file that does not exist, so a check that opened it would say
+    so. With `host` the check is told it runs on that target, and with `version` the binary it runs
+    prints that, so the --version clause is put to it on any machine. Returns what the check said and
+    whether it opened the identities file."""
+    opened = []
+    saved = {name: globals()[name] for name in ("load_pins", "host_target", "run")}
+
+    def recorded(path=PINS):
+        opened.append(path)
+        return saved["load_pins"](os.path.join(FIXTURES, "no-such-identities.json"))
+
+    def answered(argv, env=None):
+        if argv[1:] == ["--version"]:
+            return 0, version + "\n"
+        return saved["run"](argv, env)
+
+    globals()["load_pins"] = recorded
+    if host is not None:
+        globals()["host_target"] = lambda: host
+    if version is not None:
+        globals()["run"] = answered
+    try:
+        given.setdefault("targets", LINUX_TARGETS)
+        results = linux_bundle_check(cosign_says, linux_only=linux_only,
+                                     run_binary=version is not None if run_binary is None else run_binary, **given)
+    finally:
+        globals().update(saved)
+    return results, bool(opened)
+
+
+def stand_in_preamble(identity=OUR_WORKFLOW):
+    """What to run before main() so a check run as CI runs it asks a cosign stand-in, which verifies a
+    certificate whose identity is `identity`, and fails the run outright if the identities file is
+    opened."""
+    return ("real = check.check\n"
+            "def with_stand_in(*given, **named):\n"
+            "    named['cosign'] = check.stand_in_cosign('verifies', %r, check.GITHUB_ISSUER)\n"
+            "    return real(*given, **named)\n"
+            "check.check = with_stand_in\n"
+            "real_pins = check.load_pins\n"
+            "def opened(*given, **named):\n"
+            "    print('OPENED: the identities file was read')\n"
+            "    return real_pins(*given, **named)\n"
+            "check.load_pins = opened\n" % identity)
 
 
 def planted_tools_taken():
@@ -1975,6 +2073,64 @@ def self_test():
     expect("a check refuses to run a binary whose digest is right and whose signature is not",
            refuses_to_run_what_it_refused(False), True)
 
+    # Linux alone: a release carrying the two Linux archives, signed in the Linux signing job, whose
+    # binary says it is the tag, passes without the identities file being opened. So does one that
+    # carries the other three as well, and each of those is named as not checked and never as signed.
+    linux = "x86_64-unknown-linux-gnu"
+    others = [t for t in TARGETS if t not in LINUX_TARGETS]
+    said, opened = linux_only_said(host=linux, version="timewitness v0.4")
+    expect("Linux alone, signed in the Linux signing job, saying it is the tag", verdict(said), 0)
+    expect("Linux alone opens no identities file", opened, False)
+    expect("Linux alone says nothing about an identity", [line for _, line in said if "PINNED" in line], [])
+    expect("Linux alone runs the binary and holds it to the tag",
+           [state for state, line in said if "--version says" in line], ["PASS"])
+    expect("Linux alone says on its last line that it is for Linux alone",
+           summary(verdict(said), said, True).startswith("PASS for Linux alone: "), True)
+    said, opened = linux_only_said(host=linux, version="timewitness v0.4", targets=list(TARGETS))
+    expect("Linux alone, on a release carrying all five", (verdict(said), opened), (0, False))
+    expect("each macOS and Windows archive on it is named as not checked",
+           sorted(line.split(":", 1)[0] for state, line in said if state == "NOT CHECKED"), sorted(others))
+    expect("and no line passes one or calls it signed",
+           [line for state, line in said if any(t in line for t in others) and (state == "PASS" or " signed by" in line)], [])
+    expect("and the last line names them as not checked", all(t in summary(0, said, True) for t in others), True)
+
+    def linux_only_verdict(**given):
+        said, opened = linux_only_said(host=linux, version="timewitness v0.4", **given)
+        return verdict(said), opened
+
+    aarch64 = archive_name("v0.4", "aarch64-unknown-linux-gnu")
+    expect("Linux alone, a Linux archive with no signature beside it",
+           linux_only_verdict(drop=(archive_name("v0.4", linux) + BUNDLE,)), (1, False))
+    expect("Linux alone, the other Linux archive with no signature beside it", linux_only_verdict(drop=(aarch64 + BUNDLE,)), (1, False))
+    expect("Linux alone, the digest list with no signature beside it", linux_only_verdict(drop=(SUMS + BUNDLE,)), (1, False))
+    expect("Linux alone, a Linux archive missing", linux_only_verdict(drop=(aarch64, aarch64 + BUNDLE)), (1, False))
+    expect("Linux alone, signatures cosign refuses", linux_only_verdict(cosign_says="refuses"), (1, False))
+    expect("Linux alone, signed by the same workflow in another owner's repository",
+           linux_only_verdict(identity=OUR_WORKFLOW.replace("Fountech-ai-Limited/", "someone-else/")), (1, False))
+    expect("Linux alone, signed with sign-windows' token", linux_only_verdict(bundle=bundle_of(fulcio_shaped([WINDOWS_SUBJECT]))),
+           (1, False))
+    expect("Linux alone, signed in another repository's release job", linux_only_verdict(bundle=bundle_of(fulcio_elsewhere())),
+           (1, False))
+    expect("Linux alone, signed with a rehearsal's key", linux_only_verdict(rehearsal_key="cosign.pub"), (1, False))
+    said = linux_only_said(host=linux, version="timewitness v0.4-dev")[0]
+    expect("Linux alone, a binary that says it is a dev build", verdict(said), 1)
+    expect("and its last line does not pass it for Linux alone",
+           summary(verdict(said), said, True).startswith("PASS for Linux alone"), False)
+    # On a machine that is not Linux no binary this run asks for can be run, so it cannot pass.
+    for host in others:
+        said, _ = linux_only_said(host=host, run_binary=True, targets=list(TARGETS))
+        expect("Linux alone, run on %s, whose own archive is on the release" % host,
+               (verdict(said), [state for state, line in said if "--version" in line]), (2, ["NOT RUN"]))
+    # The whole check is unchanged: on a release carrying Linux alone it fails, and it reads the
+    # identities, so an unset one still fails it.
+    said, opened = linux_only_said(host=linux, version="timewitness v0.4", linux_only=False)
+    expect("all five asked for, on a release carrying Linux alone",
+           ([line for state, line in said if state == "FAIL" and line.startswith("missing from the release: ")],
+            opened, verdict(said)),
+           (["missing from the release: " + ", ".join(archive_name("v0.4", t) for t in others)], True, 1))
+    expect("all five asked for, with the identities file unreadable, refuses on it",
+           any(state == "FAIL" and line.startswith("NOT PINNED") for state, line in said), True)
+
     linux_only = [("PASS", ""), ("ELSEWHERE", "x86_64-apple-darwin: its signature is checked on macos, and this is not"),
                   ("ELSEWHERE", "x86_64-pc-windows-msvc: its signature is checked on windows, and this is not")]
     last = summary(verdict(linux_only), linux_only)
@@ -2031,6 +2187,37 @@ def self_test():
                            "check.check = cannot\n")
         expect("a release that cannot be checked exits 2, and says so",
                (code, "NOT RUN: the release could not be read" in out), (2, True))
+
+        # Linux alone, as CI runs it. One release carrying the Linux archives signed in the Linux
+        # signing job, the same with one signature taken away, and the same signed by somebody else.
+        linux_dist, unsigned_dist, foreign_dist = (os.path.join(exits, n) for n in ("linux", "unsigned", "foreign"))
+        for dist, bundle, drop in ((linux_dist, fulcio_shaped([LINUX_SUBJECT]), ()),
+                                   (unsigned_dist, fulcio_shaped([LINUX_SUBJECT]),
+                                    (archive_name(tag, "x86_64-unknown-linux-gnu") + BUNDLE,)),
+                                   (foreign_dist, fulcio_elsewhere(), ())):
+            os.makedirs(dist)
+            write_release(dist, tag, LINUX_TARGETS, bundle_of(bundle), drop=drop)
+        code, out = as_run(["--release", tag, "--dist", linux_dist, "--no-run", "--linux-only"], stand_in_preamble())
+        last = (out.strip().splitlines() or [""])[-1]
+        expect("a release carrying Linux alone, signed in the Linux signing job, exits 0 with --linux-only",
+               (code, last.startswith("PASS for Linux alone: "), "OPENED" in out), (0, True, False))
+        code, out = as_run(["--release", tag, "--dist", unsigned_dist, "--no-run", "--linux-only"], stand_in_preamble())
+        expect("a Linux archive with no signature exits 1 with --linux-only, and says what is missing",
+               (code, "FAIL: missing from the release: " + archive_name(tag, "x86_64-unknown-linux-gnu") + BUNDLE in out),
+               (1, True))
+        pytest = "https://github.com/pytest-dev/pytest/.github/workflows/deploy.yml@refs/heads/main"
+        code, out = as_run(["--release", tag, "--dist", foreign_dist, "--no-run", "--linux-only"], stand_in_preamble(pytest))
+        expect("Linux archives signed in another repository's release job exit 1 with --linux-only",
+               (code, "did not verify against its bundle" in out), (1, True))
+        code, out = as_run(["--release", tag, "--dist", foreign_dist, "--no-run", "--linux-only"], stand_in_preamble())
+        expect("the same, its certificate also passing cosign's question, exit 1 on the job that signed",
+               (code, "which is not the Linux signing job's" in out), (1, True))
+        code, out = as_run(["--release", tag, "--dist", linux_dist, "--no-run"], stand_in_preamble())
+        expect("the whole check on a release carrying Linux alone exits 1, having read the identities",
+               (code, "OPENED" in out), (1, True))
+        for given in (["--pins"], ["--binary", os.path.join(exits, "timewitness")]):
+            code, out = as_run(given + ["--linux-only"])
+            expect("--linux-only with %s is refused" % given[0], code, 2)
     finally:
         shutil.rmtree(exits, ignore_errors=True)
 
@@ -2043,7 +2230,8 @@ def self_test():
           "a Windows binary signed by another publisher, one signed with our name by another issuer, one "
           "signed by another customer of our own issuer, a certificate other than the one signtool verified, "
           "a Linux archive signed with the Windows signing job's token, and a check with an identity unset; "
-          "and no binary the check refused is run")
+          "no binary the check refused is run; and a release carrying Linux alone passes for Linux without the "
+          "identities being read, and never with a Linux archive unsigned or signed by somebody else")
     if problems:
         print("self-test: the tracked identities are not all set, so a release check run now refuses: "
               + "; ".join(p[len("NOT PINNED: "):].split(" is not set")[0] for p in problems))
@@ -2061,12 +2249,18 @@ def main():
     parser.add_argument("--binary", help="check the signature on one binary already on this machine")
     parser.add_argument("--signtool", help="the full path of signtool, where it is not in the Windows Kits folder")
     parser.add_argument("--pins", action="store_true", help="say whether every identity is set")
+    parser.add_argument("--linux-only", action="store_true",
+                        help="hold the release to its Linux binaries alone, reading no Apple or Windows identity")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     # Whatever this starts on Windows looks in the working folder last, if at all, rather than first.
     os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
     if args.signtool and signtool_given(args.signtool):
         parser.error(signtool_given(args.signtool))
+    # The identities and one binary's signature are about macOS and Windows, which this mode never
+    # judges, so either asked for with it is refused rather than answered as if it had been.
+    if args.linux_only and (args.pins or args.binary):
+        parser.error("--linux-only checks a release, and is not taken with --pins or --binary")
     if args.self_test:
         return self_test()
     if args.pins:
@@ -2091,14 +2285,14 @@ def main():
         work = tempfile.mkdtemp(prefix="tw-binaries-")
         try:
             results = check(args.release, work, repo=args.repo, folder=args.dist, run_binary=not args.no_run,
-                            rehearsal_key=args.rehearsal_key, signtool_at=args.signtool)
+                            rehearsal_key=args.rehearsal_key, signtool_at=args.signtool, linux_only=args.linux_only)
         except CouldNotRun as e:
             print("NOT RUN: %s" % e)
             return 2
         finally:
             shutil.rmtree(work, ignore_errors=True)
     code = verdict(results)
-    print(summary(code, results))
+    print(summary(code, results, args.linux_only))
     return code
 
 

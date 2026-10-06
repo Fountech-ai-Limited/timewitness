@@ -262,6 +262,11 @@ ON_BLOCK = """on:
         required: false
         type: boolean
         default: false
+      linux_only:
+        description: 'Attach the Linux binaries alone, signed, and no macOS or Windows binary'
+        required: false
+        type: boolean
+        default: false
 """
 
 # The jobs that enter an environment, all in `release.yml`, and the environment each enters. Three
@@ -741,6 +746,7 @@ GUARD_HEAD = """      - id: guard
           ACTOR: ${{ github.triggering_actor }}
           TAG: ${{ inputs.tag }}
           REHEARSAL: ${{ inputs.rehearsal }}
+          LINUX_ONLY: ${{ inputs.linux_only }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -794,9 +800,9 @@ def judge_guard(release):
 # do, so a digest moved here for a change that drops any of it fails as well.
 GUARD_JOB = {"name": "may this run build and sign", "runs-on": "ubuntu-latest",
              "outputs": {name: "${{ steps.guard.outputs.%s }}" % name
-                         for name in ("tag", "commit", "prerelease", "rehearsal", "apple_team")}}
+                         for name in ("tag", "commit", "prerelease", "rehearsal", "apple_team", "linux_only")}}
 GUARD_STEPS_SHA256 = ("e72dd30a1ced455d046c6c6a7642d84ed33ff7d39ccd4ee1b5c872c46f429c56",
-                      "855ec1b79ee6976fa8765e7bdb4eff537a114e7b6b7a233a55e9c438787af4b8")
+                      "514dd75b7748ce0a38626df1a28286be4e2b4851f8a265092689411c66012022")
 
 
 def digest_of(step):
@@ -884,7 +890,7 @@ STATUS_FUNCTIONS = re.compile(r"\b(?:success|always|failure|cancelled)\s*\(", re
 # The Attach step, as YAML reads it, by its digest. What it does when a run stops partway is read
 # below clause by clause, but a clause reads for text and the step is a program, so any change to it
 # at all is also a change to this digest, made here in the same commit and read in that review.
-ATTACH_SHA256 = "b94bf2660d1d1195e62522a69cac96057617ebae7c2011fd1c2c7c4a36c82580"
+ATTACH_SHA256 = "ccc415b5cda9e9710b2244d36ba235ad2f3d0dac872158c62d1ccc9600054703"
 
 
 def judge_starter_steps(release):
@@ -1228,7 +1234,7 @@ TAG_JOB = {"name": "which tag, and what can be signed", "needs": "guard", "runs-
            "environment": "release",
            "outputs": dict({name: "${{ needs.guard.outputs.%s }}" % name for name in GUARD_JOB["outputs"]},
                            apple="${{ steps.secrets.outputs.apple }}", azure="${{ steps.secrets.outputs.azure }}")}
-TAG_SECRETS_SHA256 = "19515bbf3559ce57e6a7a74dfc68e976387dc0174a29d92c85fe2d35a7931c8c"
+TAG_SECRETS_SHA256 = "97f3b862bbc024182cb409520df6a8827ae6f057048c839f7534383aa7a42420"
 # The build job, whole: what it says of itself, its matrix among it, by one digest, and each step by
 # its own. It is the job that turns the commit the guard read into bytes, so a step that checks out or
 # fetches anything else is a change to one of these.
@@ -1264,7 +1270,7 @@ DOWNLOADS = {
 HOLD_STEPS_SHA256 = {"sign-macos": "48f99632390016606bca51fb2171d6cb72807823b48a20a16d53bd30ff25d2a3",
                      "sign-windows": "744831f76eb765768c1f6ad714964964cd02cc1d6ebb05afb15cb03c5d9e4cab",
                      "pack-linux": "4b0d92cd9b63ff2f9d882a81f3e1ed6fb763a0d5332ed596e8bf34e45a35e86d",
-                     "publish": "35c98f34cc258e7160c55fc8a084c640297a79c192cba81b897a040b95deca57"}
+                     "publish": "96ad0dfa3146a1894cf9491d9e1ed410ba5118fca433f3babe97bdac8346c304"}
 HOLDING_ENV = {
     "sign-macos": {"TARGETS": "x86_64-apple-darwin aarch64-apple-darwin",
                    "WANT_x86_64_apple_darwin": "${{ needs.build.outputs.x86_64-apple-darwin }}",

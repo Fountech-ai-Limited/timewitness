@@ -106,6 +106,12 @@ name: Release binaries
 # each signing job holds what it signed to the check before anything is attached, the Linux
 # signatures included. A rehearsal is how the route is watched before the identities exist, so there
 # each of the three warns instead.
+#
+# With `linux_only` set, a release carries the Linux binaries alone, which is how a release gets
+# binaries while macOS and Windows cannot be signed. The guard reads no Apple or Windows identity,
+# nothing is signed with either, and the publish job attaches the two Linux archives, the digest list
+# of those two and the Sigstore bundles, and no macOS or Windows binary. Each check of what was
+# attached runs with `--linux-only`, on Linux, and says nothing about the other two systems.
 
 on:
   workflow_dispatch:
@@ -116,6 +122,11 @@ on:
         type: string
       rehearsal:
         description: 'Do everything but attach, and check what would have been attached'
+        required: false
+        type: boolean
+        default: false
+      linux_only:
+        description: 'Attach the Linux binaries alone, signed, and no macOS or Windows binary'
         required: false
         type: boolean
         default: false
@@ -153,6 +164,7 @@ jobs:
       prerelease: ${{ steps.guard.outputs.prerelease }}
       rehearsal: ${{ steps.guard.outputs.rehearsal }}
       apple_team: ${{ steps.guard.outputs.apple_team }}
+      linux_only: ${{ steps.guard.outputs.linux_only }}
     steps:
       # The identities the signature check holds our binaries to, as `main` has them for this run.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -171,6 +183,7 @@ jobs:
           ACTOR: ${{ github.triggering_actor }}
           TAG: ${{ inputs.tag }}
           REHEARSAL: ${{ inputs.rehearsal }}
+          LINUX_ONLY: ${{ inputs.linux_only }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -204,17 +217,25 @@ jobs:
           rehearsal="${REHEARSAL:-false}"
           prerelease=false
           case "$TAG" in *-*) prerelease=true ;; esac
-          # A release is checked against our own identities, and the check passes nothing while one
-          # is unset, so a release started before they are set could never pass it.
-          if ! pinned="$(python3 scripts/the-binaries-are-signed.py --pins)"; then
-            first="${pinned%%$'\n'*}"
-            if [ "$rehearsal" = true ]; then
-              echo "::warning title=Signature check not pinned::$first"
-            else
-              refuse "the signature check is not pinned to our identities, so no release could pass it: $first"
+          linux_only="${LINUX_ONLY:-false}"
+          if [ "$linux_only" = true ]; then
+            # A Linux signature is held to this workflow and to no identity, so a release of the Linux
+            # binaries alone reads none, and nothing in it is signed for macOS or Windows.
+            echo "Linux only: no Apple or Windows identity is read, and no macOS or Windows binary is attached"
+            apple_team=""
+          else
+            # A release is checked against our own identities, and the check passes nothing while one
+            # is unset, so a release started before they are set could never pass it.
+            if ! pinned="$(python3 scripts/the-binaries-are-signed.py --pins)"; then
+              first="${pinned%%$'\n'*}"
+              if [ "$rehearsal" = true ]; then
+                echo "::warning title=Signature check not pinned::$first"
+              else
+                refuse "the signature check is not pinned to our identities, so no release could pass it: $first"
+              fi
             fi
+            apple_team="$(python3 -c 'import json; print(json.load(open("scripts/signing-identities.json"))["apple"]["team_id"] or "")')"
           fi
-          apple_team="$(python3 -c 'import json; print(json.load(open("scripts/signing-identities.json"))["apple"]["team_id"] or "")')"
           # A published release that is not a pre-release keeps the binaries it was first given.
           # Somebody may have recorded their digests, and a second build signs different bytes. A
           # rehearsal attaches nothing, and is still refused on a release carrying binaries of any
@@ -245,6 +266,7 @@ jobs:
             echo "prerelease=$prerelease"
             echo "rehearsal=$rehearsal"
             echo "apple_team=$apple_team"
+            echo "linux_only=$linux_only"
           } >> "$GITHUB_OUTPUT"
 
   tag:
@@ -258,6 +280,7 @@ jobs:
       prerelease: ${{ needs.guard.outputs.prerelease }}
       rehearsal: ${{ needs.guard.outputs.rehearsal }}
       apple_team: ${{ needs.guard.outputs.apple_team }}
+      linux_only: ${{ needs.guard.outputs.linux_only }}
       apple: ${{ steps.secrets.outputs.apple }}
       azure: ${{ steps.secrets.outputs.azure }}
     steps:
@@ -298,6 +321,7 @@ jobs:
           Z5: ${{ secrets.WINDOWS_SIGNING_ACCOUNT }}
           Z6: ${{ secrets.WINDOWS_SIGNING_PROFILE }}
           REHEARSAL: ${{ needs.guard.outputs.rehearsal }}
+          LINUX_ONLY: ${{ needs.guard.outputs.linux_only }}
         run: |
           set -euo pipefail
           apple=true
@@ -307,6 +331,12 @@ jobs:
           # A rehearsal signs nothing with either identity, whatever is set.
           if [ "$REHEARSAL" = true ]; then
             echo "A rehearsal: macOS and Windows are built and packed and not signed."
+            apple=false
+            azure=false
+          fi
+          # Nor does a run for the Linux binaries alone.
+          if [ "$LINUX_ONLY" = true ]; then
+            echo "Linux only: macOS and Windows are built and packed and not signed, and none of it is attached."
             apple=false
             azure=false
           fi
@@ -844,12 +874,22 @@ jobs:
           REHEARSAL: ${{ needs.tag.outputs.rehearsal }}
           MACOS: ${{ needs.sign-macos.outputs.signed }}
           WINDOWS: ${{ needs.sign-windows.outputs.signed }}
+          LINUX_ONLY: ${{ needs.tag.outputs.linux_only }}
         run: |
           set -euo pipefail
+          if [ "$LINUX_ONLY" = true ] && { [ "$MACOS" != false ] || [ "$WINDOWS" != false ]; }; then
+            echo "::error::a run for the Linux binaries alone says macOS signed $MACOS and Windows signed $WINDOWS, and it signs neither"
+            exit 1
+          fi
           if [ "$REHEARSAL" = true ]; then
             echo "::notice title=REHEARSAL, nothing attached::Signed on macOS: $MACOS. Signed on Windows: $WINDOWS. What would have been attached to $TAG is signed for Linux and checked here, and no release is touched."
             echo "### REHEARSAL: nothing attached to $TAG; macOS signed $MACOS, Windows signed $WINDOWS" >> "$GITHUB_STEP_SUMMARY"
             echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "packed=true" >> "$GITHUB_OUTPUT"
+          elif [ "$LINUX_ONLY" = true ]; then
+            echo "::notice title=Linux only::$TAG gets the Linux binaries alone, signed, and no macOS or Windows binary."
+            echo "### Linux only: $TAG gets the Linux binaries alone, and no macOS or Windows binary" >> "$GITHUB_STEP_SUMMARY"
+            echo "published=true" >> "$GITHUB_OUTPUT"
             echo "packed=true" >> "$GITHUB_OUTPUT"
           elif [ "$MACOS" = true ] && [ "$WINDOWS" = true ]; then
             echo "published=true" >> "$GITHUB_OUTPUT"
@@ -866,12 +906,12 @@ jobs:
           name: asset-linux
           path: from/linux
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        if: steps.decide.outputs.packed == 'true'
+        if: steps.decide.outputs.packed == 'true' && needs.tag.outputs.linux_only != 'true'
         with:
           name: asset-macos
           path: from/macos
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        if: steps.decide.outputs.packed == 'true'
+        if: steps.decide.outputs.packed == 'true' && needs.tag.outputs.linux_only != 'true'
         with:
           name: asset-windows
           path: from/windows
@@ -882,9 +922,16 @@ jobs:
           WANT_linux: ${{ needs.pack-linux.outputs.packed }}
           WANT_macos: ${{ needs.sign-macos.outputs.packed }}
           WANT_windows: ${{ needs.sign-windows.outputs.packed }}
+          LINUX_ONLY: ${{ needs.tag.outputs.linux_only }}
         run: |
           set -euo pipefail
-          for kind in linux macos windows; do
+          kinds="linux macos windows"
+          targets="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin"
+          if [ "$LINUX_ONLY" = true ]; then
+            kinds="linux"
+            targets="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu"
+          fi
+          for kind in $kinds; do
             want="WANT_$kind"
             got="$(python3 -c "$FOLDER_DIGEST" "from/$kind")"
             if [ -z "${!want}" ] || [ "$got" != "${!want}" ]; then
@@ -893,9 +940,9 @@ jobs:
             fi
           done
           mkdir -p dist
-          mv from/linux/* from/macos/* from/windows/* dist/
-          want="$(for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin; do
-            echo "timewitness-$TAG-$t.tar.gz"; done; echo "timewitness-$TAG-x86_64-pc-windows-msvc.zip")"
+          for kind in $kinds; do mv "from/$kind"/* dist/; done
+          want="$(for t in $targets; do echo "timewitness-$TAG-$t.tar.gz"; done
+            [ "$LINUX_ONLY" = true ] || echo "timewitness-$TAG-x86_64-pc-windows-msvc.zip")"
           want="$(printf '%s\n' "$want" | sort | xargs)"
           got="$(ls -A dist | sort | xargs)"
           if [ "$got" != "$want" ]; then
@@ -930,7 +977,11 @@ jobs:
             [ -s "$keys/cosign.key" ] && [ -s "$keys/cosign.pub" ] || { echo "::error::no rehearsal key was made"; exit 1; }
           fi
           cd dist
-          sha256sum -- *.tar.gz *.zip > SHA256SUMS
+          # A release of the Linux binaries alone has no zip, and a pattern matching nothing is then
+          # dropped rather than handed on as a name.
+          shopt -s nullglob
+          archives=(*.tar.gz *.zip)
+          sha256sum -- "${archives[@]}" > SHA256SUMS
           cat SHA256SUMS
           for blob in *-linux-gnu.tar.gz SHA256SUMS; do
             cosign sign-blob --yes "${signing[@]}" --bundle "$blob.sigstore.json" "$blob"
@@ -962,7 +1013,12 @@ jobs:
         if: steps.decide.outputs.published == 'true'
         env:
           TAG: ${{ needs.tag.outputs.tag }}
-        run: python3 check/scripts/the-binaries-are-signed.py --release "$TAG" --dist dist --no-run
+          LINUX_ONLY: ${{ needs.tag.outputs.linux_only }}
+        run: |
+          set -euo pipefail
+          only=()
+          if [ "$LINUX_ONLY" = true ]; then only=(--linux-only); fi
+          python3 check/scripts/the-binaries-are-signed.py --release "$TAG" --dist dist --no-run "${only[@]}"
       - name: Attach
         if: steps.decide.outputs.published == 'true'
         env:
@@ -971,6 +1027,7 @@ jobs:
           TAG: ${{ needs.tag.outputs.tag }}
           COMMIT: ${{ needs.tag.outputs.commit }}
           PRERELEASE: ${{ needs.tag.outputs.prerelease }}
+          LINUX_ONLY: ${{ needs.tag.outputs.linux_only }}
         run: |
           set -euo pipefail
           # Every job built the commit the guard read, and a tag with a pre-release name can be moved
@@ -1135,6 +1192,9 @@ jobs:
             names_what_was_built
           elif [ "$(cat release.err)" = "release not found" ]; then
             notes="Signed binaries for Linux, macOS and Windows are attached. Check them with scripts/the-binaries-are-signed.py --release $TAG."
+            if [ "$LINUX_ONLY" = true ]; then
+              notes="Signed binaries for Linux, on x86_64 and aarch64, are attached. No macOS or Windows binary is, because neither is signed yet. Check them on Linux with scripts/the-binaries-are-signed.py --release $TAG --linux-only."
+            fi
             latest=legacy
             if [ "$PRERELEASE" = true ]; then latest=false; fi
             # Made on the commit that was built, so that were the tag gone by now, the release would
@@ -1169,12 +1229,22 @@ jobs:
         if: needs.tag.outputs.rehearsal == 'true' && steps.decide.outputs.packed == 'true'
         env:
           TAG: ${{ needs.tag.outputs.tag }}
+          LINUX_ONLY: ${{ needs.tag.outputs.linux_only }}
         run: |
           # Without -e, which the runner's default shell sets: the check's own exit is read below.
           set +e
           set -uo pipefail
+          only=()
+          whole="PASS: all five archives"
+          unpinned="FAIL: NOT PINNED"
+          if [ "$LINUX_ONLY" = true ]; then
+            only=(--linux-only)
+            whole="PASS: both Linux archives"
+            # The Linux-only check reads no identity, so a line about one fails this rehearsal.
+            unpinned="no line is let through for an identity"
+          fi
           said="$(python3 check/scripts/the-binaries-are-signed.py --release "$TAG" --dist dist --no-run \
-            --rehearsal-key "$RUNNER_TEMP/rehearsal-key/cosign.pub")"
+            --rehearsal-key "$RUNNER_TEMP/rehearsal-key/cosign.pub" "${only[@]}")"
           code=$?
           printf '%s\n' "$said"
           # With a rehearsal key the check never passes, so its exit code says nothing here and its
@@ -1185,9 +1255,9 @@ jobs:
           attached=0
           while IFS= read -r line; do
             case "$line" in
-              "FAIL: NOT PINNED"* | "FAIL: REHEARSAL KEY"* | "FAIL: at least one clause failed") ;;
+              "$unpinned"* | "FAIL: REHEARSAL KEY"* | "FAIL: at least one clause failed") ;;
               "FAIL: "* | "NOT RUN: "*) other="$other [$line]" ;;
-              "PASS: all five archives"*) attached=$((attached + 1)) ;;
+              "$whole"*) attached=$((attached + 1)) ;;
               "PASS: "*" is signed by the rehearsal's throwaway key (cosign)") signed=$((signed + 1)) ;;
             esac
           done <<< "$said"
@@ -1200,7 +1270,11 @@ jobs:
             echo "::error::the signature check did not finish as a rehearsal's does (exit $code, $attached of 1 attached, $signed of 3 signed by the rehearsal key, last line [$last])"
             exit 1
           fi
-          echo "::notice::what this rehearsal would have attached passes every clause but the rehearsal key and any identity not yet set"
+          if [ "$LINUX_ONLY" = true ]; then
+            echo "::notice::what this rehearsal would have attached passes every clause for Linux alone but the rehearsal key, with no identity read"
+          else
+            echo "::notice::what this rehearsal would have attached passes every clause but the rehearsal key and any identity not yet set"
+          fi
 
   check:
     name: check what was attached
@@ -1209,3 +1283,4 @@ jobs:
     uses: ./.github/workflows/binaries-check.yml
     with:
       tag: ${{ needs.tag.outputs.tag }}
+      linux_only: ${{ needs.tag.outputs.linux_only == 'true' }}
