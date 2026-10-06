@@ -244,9 +244,10 @@ Order is checked two receipts at a time, and nothing walks a chain. `timewitness
 receipts offline and keeps two answers apart: the intervals say which moment came first, undecided
 where they touch or overlap, and a hash link says which of two receipts of one chain was signed first.
 Two receipts signed by different agent keys are not a chain, so only their intervals are compared. A countersigned exchange shows that two claims are consistent with an order and nothing more: neither side's interval is evidence for the other, an overlap is undecided, and the command that reads one ships from `v0.2`. There is no refusal receipt. A refusal is a return value inside the agent. Nothing signed
-and nothing portable is produced, so there is no artefact a third party could be shown. There is no
-released binary, so a stranger who wants the command line compiles it, and the verifier page is
-served at timewitness.dev/verify with no build. Nothing links an
+and nothing portable is produced, so there is no artefact a third party could be shown. Only Linux has a
+released binary, from `v0.7`, signed by our own release workflow, so on macOS and Windows a stranger
+who wants the command line compiles it, and the verifier page is served at timewitness.dev/verify
+with no build. Nothing links an
 agent's key to anybody, except our own. A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and the one agent key we vouch for, which signs our own receipts from 2026-09-24, with the window it is ours in. The `v0` release cannot read it. There is no first-run figure from anybody outside.
 One freshness beacon works rather than the two the design asks for. One kind of final witness works;
 there is no OpenTimestamps anchor. Roughtime is an Internet-Draft and not an RFC: the IETF datatracker showed revision 19 in the RFC Editor Queue on 17 September 2026.
