@@ -32,8 +32,9 @@ fn refuse(what: &str, code: i32) -> Outcome {
 
 /// The machine credential, from the environment and never the command line.
 ///
-/// Asked only once the app at `address` is known to take machines. A stranger has no credential and
-/// cannot get one while the app is closed, so the closed app is said first and this never is.
+/// Asked only once the address has answered as the app that takes machines. A stranger with no
+/// credential, at an address that is not the app or not open yet, needs to hear that first, so the
+/// address is said first and this after.
 fn credential(address: &str) -> Result<String, Outcome> {
     let Ok(credential) = std::env::var(CREDENTIAL) else {
         return Err(refuse(
@@ -73,9 +74,11 @@ pub fn run_enrol(args: &Args) -> Outcome {
         Ok(path) => path,
         Err(e) => return refuse(&e.0, 2),
     };
-    // Before the key, so a closed app never leaves a new key behind for an enrolment it refused.
-    let address = args.value("--to").unwrap_or(app::APP);
-    if let Some(why) = app::not_open(address) {
+    // Before the key, so an address that is not the app never leaves a new key behind for an
+    // enrolment it could not take.
+    let address = app::address(args.value("--to"));
+    let address = address.as_str();
+    if let Err(why) = app::takes_machines(address, app::KEY_CHALLENGE) {
         return refuse(&format!("nothing was enrolled: {why}"), 1);
     }
     let credential = match credential(address) {
@@ -169,8 +172,9 @@ pub fn run_certificate(args: &Args) -> Outcome {
     if kind != "agent" && kind != "action" {
         return refuse("--kind is agent or action", 2);
     }
-    let address = args.value("--to").unwrap_or(app::APP);
-    if let Some(why) = app::not_open(address) {
+    let address = app::address(args.value("--to"));
+    let address = address.as_str();
+    if let Err(why) = app::takes_machines(address, app::CERTIFICATES) {
         return refuse(
             &format!("no certificate was issued: {why}. Nothing was written"),
             1,

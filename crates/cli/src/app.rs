@@ -6,7 +6,8 @@
 //! each its own command: `timewitness enrol` and `timewitness certificate` before a stamp, and
 //! `timewitness send` after one. They live here so the address is written once.
 //! `crates/architecture` holds both halves: no other source names the host, and neither `stamp`
-//! nor `agent` can reach this module.
+//! nor `agent` can reach this module, which is also the one place the setting that moves the
+//! address is read.
 //!
 //! **Why a client of our own, when the tree already links a TLS stack.** NTS brings `rustls` and
 //! the public roots in, so a request over HTTPS costs a hundred lines rather than a crate. An HTTP
@@ -15,6 +16,9 @@
 //! **A credential never travels in the clear.** Plain HTTP is refused for any host but this machine,
 //! which is what a test of this module talks to. A machine credential sent over plain HTTP to a
 //! real address would be a credential handed to everyone on the path.
+//!
+//! **And it goes only to an address that has answered as the app.** Before a credential leaves the
+//! machine, the route it is for is asked once without one. See [`takes_machines`].
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -23,35 +27,69 @@ use std::time::Duration;
 
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, Stream};
+use timewitness_sources::http::json_field;
 
 /// Where the app answers, unless a caller names another address of it.
 pub const APP: &str = "https://app.timewitness.dev";
 
-/// Whether the app at [`APP`] takes machines yet. It does not: until it opens, that address answers
-/// every path with a redirect to the holding page, and a send, an enrolment or a certificate asked
-/// of it came back as a sentence about a 308. Each is refused by name here instead, before anything
-/// leaves the machine. An address given with `--to` is asked as always.
-pub const APP_IS_OPEN: bool = false;
+/// The setting that names another address of the app for every command run where it is set, such
+/// as the test one a build is walked on before it is released. `--to` beats it, and it beats
+/// [`APP`]. It is read from the environment so a workflow sets it once rather than on each step.
+pub const SETTING: &str = "TIMEWITNESS_APP";
 
-/// The refusal for an act asked of the app before it opens, or nothing where it may go ahead.
+/// The address a command asks: `--to` where it was given, then [`SETTING`], then [`APP`].
+#[must_use]
+pub fn address(to: Option<&str>) -> String {
+    chosen(to, std::env::var(SETTING).ok())
+}
+
+/// The choice itself, with the setting passed in, so a test reads it without touching the
+/// environment every other test shares. A setting that is empty is a setting not made, which is
+/// what a workflow hands over when it names a variable nobody filled in.
+fn chosen(to: Option<&str>, setting: Option<String>) -> String {
+    match (to, setting.as_deref().map(str::trim)) {
+        (Some(to), _) => to.to_string(),
+        (None, Some(setting)) if !setting.is_empty() => setting.to_string(),
+        _ => APP.to_string(),
+    }
+}
+
+/// Whether the address answers as the app that takes machines on `path`, asked with no credential
+/// before the credential goes. Nothing where it does, and the reason, in words, where it does not.
 ///
-/// The address is compared as it will be connected to, not as it was typed. Until 2026-09-29 the
-/// comparison was on the string, so `https://APP.timewitness.dev` or the same with `:443` went past
-/// this and the credential was sent to the closed app all the same.
-pub fn not_open(address: &str) -> Option<String> {
-    let is_the_app = |address: &str| match (target(address), target(APP)) {
-        (Ok(asked), Ok(app)) => {
-            let host = |t: &Target| t.host.trim_end_matches('.').to_ascii_lowercase();
-            asked.tls == app.tls && asked.port == app.port && host(&asked) == host(&app)
-        }
-        _ => false,
-    };
-    (!APP_IS_OPEN && is_the_app(address)).then(|| {
-        format!(
-            "{APP} is not open yet, and until it is every send, enrolment and certificate asked of \
-             it is refused here rather than sent"
-        )
-    })
+/// Until 2026-10-07 a constant answered this, and it said no. That kept a credential from being
+/// sent to `app.timewitness.dev` while the address served the holding page's redirect, and it also
+/// meant every binary built before the app opened would refuse the app for ever, and the day it
+/// opened needed a release. So the app is asked instead. Every machine route the app has answers a
+/// request with no credential by refusing it, 401 with its reason as JSON, before it reads anything
+/// else. The holding page answers with a redirect, and an address or a build that does not take
+/// machines answers with a page, a 404 or a 503. In each of those the credential stays here.
+///
+/// This is a check on where the credential goes and not on who is there. TLS against the public
+/// roots says who is there, and a party holding a certificate for the address could answer this
+/// the way the app does. What it stops is a credential handed to an address that is not the app
+/// at all, which is the mistake a person or a workflow can actually make.
+pub fn takes_machines(address: &str, path: &str) -> Result<(), String> {
+    let answer = post(address, path, None, "{}")?;
+    if (300..400).contains(&answer.status) {
+        return Err(format!(
+            "{address} is not open yet: it answers with a redirect rather than as the app, so the \
+             credential never left this machine"
+        ));
+    }
+    let is_json = answer.body.trim_start().starts_with('{');
+    match (answer.status, json_field(answer.body.as_bytes(), "error")) {
+        (401, Some(_)) if is_json => Ok(()),
+        (status, Some(error)) if is_json => Err(format!(
+            "{address} is not taking machines: asked with no credential it answered {status}, \
+             \"{error}\", so the credential never left this machine"
+        )),
+        (status, _) => Err(format!(
+            "{address} does not answer as the app that takes machines: asked with no credential it \
+             answered {status} with something other than the app's refusal, so the credential \
+             never left this machine"
+        )),
+    }
 }
 
 /// Where a machine files a receipt it signed.
@@ -128,6 +166,11 @@ fn target(address: &str) -> Result<Target, String> {
 
 /// POSTs a JSON body to a path of the app with a bearer credential, and reads the answer.
 pub fn post_json(address: &str, path: &str, bearer: &str, body: &str) -> Result<Answer, String> {
+    post(address, path, Some(bearer), body)
+}
+
+/// POSTs a JSON body, with a bearer credential or with none, and reads the answer.
+fn post(address: &str, path: &str, bearer: Option<&str>, body: &str) -> Result<Answer, String> {
     let target = target(address)?;
     let socket_address = (target.host.as_str(), target.port)
         .to_socket_addrs()
@@ -146,8 +189,11 @@ pub fn post_json(address: &str, path: &str, bearer: &str, body: &str) -> Result<
     } else {
         format!("{}:{}", target.host, target.port)
     };
+    let authorization = bearer.map_or_else(String::new, |bearer| {
+        format!("Authorization: Bearer {bearer}\r\n")
+    });
     let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: {host_header}\r\nAuthorization: Bearer {bearer}\r\n\
+        "POST {path} HTTP/1.1\r\nHost: {host_header}\r\n{authorization}\
          Content-Type: application/json\r\nContent-Length: {}\r\nUser-Agent: timewitness/{}\r\n\
          Connection: close\r\n\r\n{body}",
         body.len(),
@@ -283,32 +329,18 @@ mod tests {
     }
 
     #[test]
-    fn the_closed_app_is_refused_however_its_address_is_spelled() {
-        for spelled in [
-            APP,
-            "https://app.timewitness.dev/",
-            "https://APP.timewitness.dev",
-            "https://App.TimeWitness.Dev/",
-            "https://app.timewitness.dev:443",
-            "https://app.timewitness.dev.",
-            "https://app.timewitness.dev.:443/",
-        ] {
-            assert!(
-                not_open(spelled).is_some(),
-                "sent to the closed app: {spelled}"
-            );
-        }
-        for elsewhere in [
-            "https://dev.timewitness.dev",
-            "https://app.timewitness.dev:8443",
-            "http://127.0.0.1:4000",
-            "https://app.timewitness.dev.example.com",
-        ] {
-            assert!(
-                not_open(elsewhere).is_none(),
-                "refused though not the app: {elsewhere}"
-            );
-        }
+    fn the_address_is_the_one_given_then_the_setting_then_the_app() {
+        let test = "https://dev.timewitness.dev";
+        assert_eq!(chosen(None, None), APP);
+        assert_eq!(chosen(None, Some(test.to_string())), test);
+        assert_eq!(chosen(None, Some(format!(" {test}\n"))), test);
+        assert_eq!(
+            chosen(Some("http://127.0.0.1:4000"), Some(test.to_string())),
+            "http://127.0.0.1:4000"
+        );
+        // A workflow that names a variable nobody filled in hands over an empty one.
+        assert_eq!(chosen(None, Some(String::new())), APP);
+        assert_eq!(chosen(None, Some("  ".to_string())), APP);
     }
 
     #[test]
