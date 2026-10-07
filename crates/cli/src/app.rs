@@ -73,8 +73,8 @@ pub fn takes_machines(address: &str, path: &str) -> Result<(), String> {
     let answer = post(address, path, None, "{}")?;
     if (300..400).contains(&answer.status) {
         return Err(format!(
-            "{address} is not open yet: it answers with a redirect rather than as the app, so the \
-             credential never left this machine"
+            "{address} is not open yet, or is not the app: it answers with a redirect where the \
+             app would ask for a credential, so the credential never left this machine"
         ));
     }
     let is_json = answer.body.trim_start().starts_with('{');
