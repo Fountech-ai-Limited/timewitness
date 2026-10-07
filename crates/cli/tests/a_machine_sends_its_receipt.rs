@@ -357,7 +357,11 @@ fn an_address_that_answers_with_the_holding_pages_redirect_is_not_open_and_never
                 "{what}: {words}"
             );
             assert!(words.contains("never left this machine"), "{what}: {words}");
-            assert!(!words.contains("308"), "{what}: {words}");
+            // Read with the address taken out, because the port it was given can hold 308 too.
+            assert!(
+                !words.replace(&address, "").contains("308"),
+                "{what}: {words}"
+            );
             // A stranger with no credential needs to hear about the address, not the credential.
             assert!(!words.contains(CREDENTIAL), "{what}: {words}");
         }
