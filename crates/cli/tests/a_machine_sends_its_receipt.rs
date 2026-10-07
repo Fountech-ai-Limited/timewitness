@@ -405,6 +405,24 @@ fn an_address_that_does_not_take_machines_never_sees_a_credential() {
             "<p>Sign in</p>",
             "does not answer as the app that takes machines",
         ),
+        // Any API that wants a bearer refuses a request with none, and many say so in JSON. Only
+        // the app's own words let a credential go.
+        (
+            "401 Unauthorized\r\nContent-Type: application/json",
+            r#"{"error":"invalid_token"}"#,
+            "\"invalid_token\"",
+        ),
+        (
+            "401 Unauthorized\r\nContent-Type: application/json",
+            r#"{"message":"Unauthorized"}"#,
+            "does not answer as the app that takes machines",
+        ),
+        // What an address says goes into a job log, so it may not start a line of its own there.
+        (
+            "503 Service Unavailable\r\nContent-Type: application/json",
+            "{\"error\":\"down\n::error::a line of its own\"}",
+            "\"down ::error::a line of its own\"",
+        ),
     ] {
         let (address, received) = not_the_app(head, body);
         for (what, output) in each_act(

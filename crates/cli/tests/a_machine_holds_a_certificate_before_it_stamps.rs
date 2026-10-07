@@ -56,8 +56,9 @@ fn field(request: &str, name: &str) -> Option<String> {
 /// A stand-in for the app that answers each request in turn with what `answer` says, and hands every
 /// request back through the channel. Each command asks the app first with no credential, and the
 /// stand-in refuses that ask the way every machine route of the app does, before `answer` is asked
-/// and without counting it among the `answers`. What the ask carries is held in
-/// `a_machine_sends_its_receipt.rs`.
+/// and without counting it among the `answers`. A credential that arrives with no ask before it, or
+/// first on a route other than the one asked, is refused with a 500, so the command fails and the
+/// test with it. What the ask carries is held in `a_machine_sends_its_receipt.rs`.
 fn stand_in(
     answers: usize,
     answer: impl Fn(&str) -> (&'static str, String) + Send + 'static,
@@ -66,6 +67,10 @@ fn stand_in(
     let address = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
     let (sent, received) = mpsc::channel();
     thread::spawn(move || {
+        let route = |text: &str| text.split(' ').take(2).collect::<Vec<_>>().join(" ");
+        // The route the last ask was on, until the first credential after it is read.
+        let mut asked: Option<String> = None;
+        let mut ever_asked = false;
         let mut answered = 0;
         while answered < answers {
             let Ok((mut socket, _)) = listener.accept() else {
@@ -102,10 +107,24 @@ fn stand_in(
                     body.len()
                 );
                 let _ = socket.write_all(reply.as_bytes());
+                asked = Some(route(&text));
+                ever_asked = true;
                 continue;
             }
             answered += 1;
-            let (status, body) = answer(&text);
+            let in_turn = match asked.take() {
+                Some(asked) => asked == route(&text),
+                None => ever_asked,
+            };
+            let (status, body) = if in_turn {
+                answer(&text)
+            } else {
+                (
+                    "500 Internal Server Error",
+                    r#"{"error":"a credential came with no ask on its route before it"}"#
+                        .to_string(),
+                )
+            };
             let reply = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()

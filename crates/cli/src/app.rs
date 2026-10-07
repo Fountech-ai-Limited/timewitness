@@ -61,36 +61,55 @@ fn chosen(to: Option<&str>, setting: Option<String>) -> String {
 /// sent to `app.timewitness.dev` while the address served the holding page's redirect, and it also
 /// meant every binary built before the app opened would refuse the app for ever, and the day it
 /// opened needed a release. So the app is asked instead. Every machine route the app has answers a
-/// request with no credential by refusing it, 401 with its reason as JSON, before it reads anything
-/// else. The holding page answers with a redirect, and an address or a build that does not take
-/// machines answers with a page, a 404 or a 503. In each of those the credential stays here.
+/// request with no credential by refusing it, 401 with [`THE_APPS_REFUSAL`] as its error, before it
+/// reads anything else. The holding page answers with a redirect, and an address or a build that
+/// does not take machines answers with a page, a 404 or a 503. In each of those the credential
+/// stays here.
+///
+/// The refusal is matched word for word rather than as any 401 with an error in it, because plenty
+/// of APIs that are not the app answer a request with no bearer that way, `invalid_token` for one,
+/// and a credential sent there would be a credential handed to a stranger.
 ///
 /// This is a check on where the credential goes and not on who is there. TLS against the public
 /// roots says who is there, and a party holding a certificate for the address could answer this
 /// the way the app does. What it stops is a credential handed to an address that is not the app
-/// at all, which is the mistake a person or a workflow can actually make.
+/// at all, which is the mistake a person or a workflow can actually make. That includes a step
+/// earlier in a job setting `TIMEWITNESS_APP` for the steps after it, which the Action cannot see.
 pub fn takes_machines(address: &str, path: &str) -> Result<(), String> {
-    let answer = post(address, path, None, "{}")?;
+    let kept = "so the credential never left this machine";
+    let answer = post(address, path, None, "{}").map_err(|e| format!("{e}, {kept}"))?;
     if (300..400).contains(&answer.status) {
         return Err(format!(
             "{address} is not open yet, or is not the app: it answers with a redirect where the \
-             app would ask for a credential, so the credential never left this machine"
+             app would ask for a credential, {kept}"
         ));
     }
     let is_json = answer.body.trim_start().starts_with('{');
-    match (answer.status, json_field(answer.body.as_bytes(), "error")) {
-        (401, Some(_)) if is_json => Ok(()),
+    let error = json_field(answer.body.as_bytes(), "error").map(|error| {
+        // Said in a job log, so nothing the address sent may start a line or carry a command.
+        error
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .take(200)
+            .collect::<String>()
+    });
+    match (answer.status, error) {
+        (401, Some(error)) if is_json && error == THE_APPS_REFUSAL => Ok(()),
         (status, Some(error)) if is_json => Err(format!(
             "{address} is not taking machines: asked with no credential it answered {status}, \
-             \"{error}\", so the credential never left this machine"
+             \"{error}\", where the app answers 401, \"{THE_APPS_REFUSAL}\", {kept}"
         )),
         (status, _) => Err(format!(
             "{address} does not answer as the app that takes machines: asked with no credential it \
-             answered {status} with something other than the app's refusal, so the credential \
-             never left this machine"
+             answered {status} with something other than the app's refusal, {kept}"
         )),
     }
 }
+
+/// What every machine route of the app answers a request with no credential, as its error, with a
+/// 401, in the words `lib/accounts.ts` refuses with. The two change together: changed on one side
+/// alone, every machine is refused, and each refusal quotes both sentences, so it is not silent.
+pub const THE_APPS_REFUSAL: &str = "A machine credential is needed";
 
 /// Where a machine files a receipt it signed.
 ///
