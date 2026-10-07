@@ -132,7 +132,7 @@ sentences=(
   # Replaced 2026-09-09, when a resident agent went into the tree, and again on 2026-09-25, when
   # `timewitness agent install` went in. The sentence it replaces said the agent installs no service
   # and starts at no boot. What exists is still narrower than a reader will assume: a service on
-  # three systems, with a restart checked on one of them and no binary in any release.
+  # three systems, with a restart checked on one of them, and from `v0.7` a released binary on one.
   "The agent starts at boot only where somebody has installed it as a service, and a restart has been checked on Linux and nowhere else."
   # Added 2026-09-10. The measurement that says where a longer baseline stops buying anything.
   "Leaving the agent running longer stops narrowing the bound after about thirty minutes."
@@ -187,6 +187,10 @@ sentences=(
   "A fresh agent refuses most readings for its first two minutes."
   "After it settles the agent still refuses a reading whenever the bound crosses the ceiling, and the share is not a fixed number."
   "The agent answers sixty-four callers at once and refuses the sixty-fifth."
+  # Added 2026-10-07. `v0.7` carries signed Linux binaries, and until then all three surfaces said no
+  # release carried a binary for a day after it shipped. Pinned this far because the README goes on
+  # in a different sentence from the list.
+  "Only Linux has a released binary"
 )
 
 fail=0

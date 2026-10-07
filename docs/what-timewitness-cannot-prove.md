@@ -1,9 +1,18 @@
 # What TimeWitness cannot prove
 
+Version 28, 2026-10-07. Supersedes version 27 of 2026-09-29, which it keeps whole and corrects in
+two items. The `v0.7` release carries signed binaries of the command line tool for Linux, on x86_64
+and aarch64, so the item on binaries now says what that release carries, who signed it and what the
+signature shows, and that no macOS or Windows binary is released. The item on the agent starting at
+boot said no release has any binaries, and now says the service is installed from a released binary
+on Linux and from a command line somebody compiled on macOS and Windows. Versions 24 and 27 below
+said no release carried a binary, which was true on the day each was written and is not true from
+`v0.7`. The list still runs to 61 items.
+
 Version 27, 2026-09-29. Supersedes version 26 of 2026-09-26, which it keeps whole and corrects in
 three places. The item on binaries said there was no published page and that a stranger compiles
 the verifier, and from 2026-09-28 the page is served at timewitness.dev/verify, so it now says the
-verifier runs three ways and that no release carries a binary. The item on what a receipt carries
+verifier runs three ways and that no release carried a binary then. The item on what a receipt carries
 said a format carrying source measurements would be version 1, and version 1 is what ships from
 `v0.2`, so it now says a later version. The section on what is built today said every fact in it
 was about 2026-09-09, and its items are dated to their own days. The list still runs to 61 items.
@@ -29,7 +38,7 @@ Version 24, 2026-09-25. Supersedes version 23 of 2026-09-24, which it keeps whol
 one item. The item said the agent installs no service and starts at no boot, and `timewitness agent
 install` now hands it to systemd, launchd or Task Scheduler. It now says what that is, that a
 restart has been checked on Linux and not on macOS or Windows, what keeps the service from setting
-the clock on each, and that no release carries a binary yet. The list still runs to 61 items.
+the clock on each, and that no release carried a binary yet. The list still runs to 61 items.
 
 Version 23, 2026-09-24. Supersedes version 22 of the same day, which it keeps whole and corrects in
 one item. The key log we serve named no agent key until this version, and it now names the one we
@@ -493,8 +502,8 @@ it. On macOS and Windows the install and the uninstall have been checked and a r
 there the agent coming back after a reboot is built and not shown. On Linux the unit takes away the
 agent's permission to set the clock. On macOS only root may set it and the daemon does not run as
 root. Windows has no such switch, so there the promise that the agent leaves the clock alone rests
-on the code. A release gets binaries only when every one of them is signed, and no release has any
-yet, so today the service is installed from a command line somebody compiled.
+on the code. Only Linux has a released binary, from `v0.7`, so on Linux the service can be installed
+from that binary, and on macOS and Windows it is installed from a command line somebody compiled.
 
 **Leaving the agent running longer stops narrowing the bound after about thirty minutes.** The
 model's own residual is the largest single part of the bound on the agent's path and it falls as
@@ -713,12 +722,18 @@ keeps nothing and stops nothing.
 nothing portable is produced, so there is no artefact a third party could be shown. The phrase reads
 as a description of something that exists and it describes something that does not.
 
-**No release carries a binary of the command line tool or the Action.** The verifier is built and
-works three ways: as a command line tool, as one HTML page that runs from a local disk with no
-network, and as that same page served at timewitness.dev/verify, which needs no toolchain and no
-account and reads the receipt in the browser without sending it anywhere. The served page names the
-commit it was built from, so a reader can build the same page and compare. A stranger who wants the
-command line tool or the Action compiles it from source rather than downloading it.
+**Only Linux has a released binary, and nothing in the binary is evidence about time.** From `v0.7` a
+release carries the command line tool as a binary for Linux, on x86_64 and aarch64. Each archive and
+the digest list beside it are signed with cosign through Sigstore, by this repository's own release
+workflow, and `scripts/the-binaries-are-signed.py --release v0.7 --linux-only` checks them. That
+signature shows the archive came from our release workflow running on `main`. It is our own identity
+and says nothing about any receipt the binary goes on to make. No macOS or Windows binary is released,
+because neither can be signed yet, so on those two systems the command line tool is compiled from
+source. The Action has no binary either: it builds the command from source on the runner. The
+verifier is built and works three ways: as a command line tool, as one HTML page that runs from a
+local disk with no network, and as that same page served at timewitness.dev/verify, which needs no
+toolchain and no account and reads the receipt in the browser without sending it anywhere. The
+served page names the commit it was built from, so a reader can build the same page and compare.
 
 **Nothing links an agent's key to anybody, except our own.** A receipt proves that whoever signed it
 held that key. A log of our keys is served at timewitness.dev/key-log.txt and names the keys of our two Roughtime servers and the one agent key we vouch for, which signs our own receipts from 2026-09-24, with the window it is ours in. That is our own word about our own key and it is not third-party evidence. The receipt committed in
