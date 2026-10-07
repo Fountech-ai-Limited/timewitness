@@ -117,8 +117,11 @@ inputs:
   send:
     description: >-
       Also give a copy of the receipt to the app that keeps an organisation's receipts, as a step
-      after the stamp. The app is not open yet, and until it is every send to it is refused by
-      name, so this step warns and sends nothing. It reads a machine credential from the
+      after the stamp. Off by default, and with it off the Action makes no call to the app at all.
+      The app is asked first with no credential, and where it does not answer as the app that
+      takes machines, or is not open yet, this step warns and the credential stays on the runner.
+      A TIMEWITNESS_APP set in the workflow's environment names another address of the app, such
+      as a test one. It reads a machine credential from the
       TIMEWITNESS_MACHINE_CREDENTIAL environment variable, which the workflow sets from a secret,
       and sends the receipt and the figures it states, never the file it stamps. A send that fails
       is reported as a warning and never fails the job: the receipt is already written, and it

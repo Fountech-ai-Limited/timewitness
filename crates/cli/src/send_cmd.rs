@@ -85,9 +85,10 @@ pub fn run(args: &Args) -> Outcome {
     }
     let body = json::render(&Value::map(fields));
 
-    let address = args.value("--to").unwrap_or(app::APP);
+    let address = app::address(args.value("--to"));
+    let address = address.as_str();
     let hash = render::hex(&chain_link(&bytes));
-    if let Some(why) = app::not_open(address) {
+    if let Err(why) = app::takes_machines(address, app::RECEIPTS) {
         return refuse(
             &format!(
                 "receipt {hash} was not sent: {why}. The receipt is unaffected and is still at \
@@ -96,8 +97,8 @@ pub fn run(args: &Args) -> Outcome {
             1,
         );
     }
-    // Asked only once the app is known to take machines. A stranger has no credential and cannot
-    // get one while it is closed, so the closed app is the sentence they need, not this one.
+    // Asked only once the address has answered as the app that takes machines. A stranger with
+    // no credential, at an address that is not the app, needs that sentence first and not this one.
     // A missing credential is a setting rather than a mistyped command, so it is said without the
     // usage under it: in a job log the usage would bury the one line that matters.
     let Ok(credential) = std::env::var(CREDENTIAL) else {

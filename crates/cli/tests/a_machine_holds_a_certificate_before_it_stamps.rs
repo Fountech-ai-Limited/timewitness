@@ -54,7 +54,11 @@ fn field(request: &str, name: &str) -> Option<String> {
 }
 
 /// A stand-in for the app that answers each request in turn with what `answer` says, and hands every
-/// request back through the channel.
+/// request back through the channel. Each command asks the app first with no credential, and the
+/// stand-in refuses that ask the way every machine route of the app does, before `answer` is asked
+/// and without counting it among the `answers`. A credential that arrives with no ask before it, or
+/// first on a route other than the one asked, is refused with a 500, so the command fails and the
+/// test with it. What the ask carries is held in `a_machine_sends_its_receipt.rs`.
 fn stand_in(
     answers: usize,
     answer: impl Fn(&str) -> (&'static str, String) + Send + 'static,
@@ -63,7 +67,12 @@ fn stand_in(
     let address = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
     let (sent, received) = mpsc::channel();
     thread::spawn(move || {
-        for _ in 0..answers {
+        let route = |text: &str| text.split(' ').take(2).collect::<Vec<_>>().join(" ");
+        // The route the last ask was on, until the first credential after it is read.
+        let mut asked: Option<String> = None;
+        let mut ever_asked = false;
+        let mut answered = 0;
+        while answered < answers {
             let Ok((mut socket, _)) = listener.accept() else {
                 return;
             };
@@ -91,7 +100,31 @@ fn stand_in(
                 }
             }
             let text = String::from_utf8_lossy(&request).to_string();
-            let (status, body) = answer(&text);
+            if !text.contains("\r\nAuthorization: ") {
+                let body = r#"{"error":"A machine credential is needed"}"#;
+                let reply = format!(
+                    "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(reply.as_bytes());
+                asked = Some(route(&text));
+                ever_asked = true;
+                continue;
+            }
+            answered += 1;
+            let in_turn = match asked.take() {
+                Some(asked) => asked == route(&text),
+                None => ever_asked,
+            };
+            let (status, body) = if in_turn {
+                answer(&text)
+            } else {
+                (
+                    "500 Internal Server Error",
+                    r#"{"error":"a credential came with no ask on its route before it"}"#
+                        .to_string(),
+                )
+            };
             let reply = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
@@ -112,7 +145,10 @@ fn statement(key: &str) -> String {
 
 fn run(args: &[&str], credential: Option<&str>) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_timewitness"));
-    command.args(args).env_remove(CREDENTIAL);
+    command
+        .args(args)
+        .env_remove(CREDENTIAL)
+        .env_remove("TIMEWITNESS_APP");
     if let Some(credential) = credential {
         command.env(CREDENTIAL, credential);
     }
@@ -274,6 +310,67 @@ fn a_certificate_is_kept_beside_the_key_and_one_for_another_key_is_not() {
     );
     assert_eq!(output.status.code(), Some(1), "{}", said(&output));
     assert!(!other.exists(), "a certificate for another key was written");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// What a released binary does on the day the app opens, or against a test host before then: no
+/// `--to` on either command line, the address from `TIMEWITNESS_APP`, and the key enrolled and
+/// certified there. Until 2026-10-07 both refused before asking anything, because a constant said
+/// the app was not open.
+#[test]
+fn the_setting_takes_a_machine_through_enrolment_and_its_certificate() {
+    let dir = scratch("setting");
+    let key = dir.join("agent.key");
+    let (address, received) = stand_in(3, |request| {
+        let key = field(request, "publicKey").unwrap_or_default();
+        if request.starts_with("POST /api/machine/keys/challenge/ ") {
+            (
+                "201 Created",
+                format!(
+                    r#"{{"challenge":"{CHALLENGE}","sign":"{}","expires":"2026-10-07T12:05:00Z"}}"#,
+                    statement(&key)
+                ),
+            )
+        } else if request.starts_with("POST /api/machine/keys/ ") {
+            (
+                "201 Created",
+                format!(r#"{{"organisation":"{ORGANISATION}","publicKey":"{key}"}}"#),
+            )
+        } else {
+            (
+                "201 Created",
+                format!(
+                    r#"{{"organisation":"{ORGANISATION}","method":"machine-credential","publicKey":"{key}","validFromNanos":"1","validUntilNanos":"99999999999999999999","leafHash":"ab"}}"#
+                ),
+            )
+        }
+    });
+    for args in [
+        vec!["enrol", "--key", path(&key), "--label", "runner"],
+        vec!["certificate", "--key", path(&key)],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_timewitness"))
+            .args(&args)
+            .env(CREDENTIAL, "twm_a-credential")
+            .env("TIMEWITNESS_APP", &address)
+            .output()
+            .expect("the binary runs");
+        assert_eq!(output.status.code(), Some(0), "{args:?}: {}", said(&output));
+    }
+    for path in [
+        "/api/machine/keys/challenge/",
+        "/api/machine/keys/",
+        "/api/machine/certificates/",
+    ] {
+        let request = received.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(
+            request.starts_with(&format!("POST {path} HTTP/1.1\r\n")),
+            "{request}"
+        );
+    }
+    let kept =
+        std::fs::read_to_string(dir.join("agent.key.certificate")).expect("kept beside the key");
+    assert!(kept.contains(&public()), "{kept}");
     let _ = std::fs::remove_dir_all(dir);
 }
 

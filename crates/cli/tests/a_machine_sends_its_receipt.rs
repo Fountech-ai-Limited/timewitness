@@ -15,6 +15,9 @@ use std::time::Duration;
 
 const CREDENTIAL: &str = "TIMEWITNESS_MACHINE_CREDENTIAL";
 
+/// The setting that names another address of the app.
+const SETTING: &str = "TIMEWITNESS_APP";
+
 /// The committed real receipt, and the figures `timewitness verify --fields` reads off it.
 fn real_receipt() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../verify/tests/data/a-real-stamp/receipt.cbor")
@@ -22,52 +25,113 @@ fn real_receipt() -> PathBuf {
 const REAL_KEY: &str = "07de4306352562a212928f5f8228b4f027af4856ae0b17ea25c7de14a61639ec";
 const REAL_PAYLOAD: &str = "c3857f437414da8b13ace74960f0ee3d717765beddb9e6caff350d8c8a3ecbd5";
 
-/// A stand-in for the app: it takes one request, hands it back through the channel, and answers.
+/// One request off a socket: the head, then as much body as it said it had.
+fn read_request(socket: &mut std::net::TcpStream) -> String {
+    socket
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut request = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        let n = socket.read(&mut chunk).unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        request.extend_from_slice(&chunk[..n]);
+        let text = String::from_utf8_lossy(&request).to_string();
+        if let Some(split) = text.find("\r\n\r\n") {
+            let length = text[..split]
+                .lines()
+                .find_map(|l| l.strip_prefix("Content-Length: "))
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            if request.len() >= split + 4 + length {
+                break;
+            }
+        }
+    }
+    String::from_utf8_lossy(&request).to_string()
+}
+
+/// Whether a request carried a credential.
+fn with_a_credential(request: &str) -> bool {
+    request.contains("\r\nAuthorization: ")
+}
+
+/// A stand-in for the app. A request with no credential is refused the way every machine route of
+/// the app refuses one, and a request with one gets `status` and `body`. It takes two requests,
+/// the ask and the send, and hands each back through the channel.
 fn stand_in(status: &'static str, body: &'static str) -> (String, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a free port");
     let address = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
     let (sent, received) = mpsc::channel();
     thread::spawn(move || {
-        let Ok((mut socket, _)) = listener.accept() else {
-            return;
-        };
-        socket
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .unwrap();
-        let mut request = Vec::new();
-        let mut chunk = [0u8; 8192];
-        // Read the head, then as much body as it said it had.
-        loop {
-            let n = socket.read(&mut chunk).unwrap_or(0);
-            if n == 0 {
-                break;
-            }
-            request.extend_from_slice(&chunk[..n]);
-            let text = String::from_utf8_lossy(&request).to_string();
-            if let Some(split) = text.find("\r\n\r\n") {
-                let length = text[..split]
-                    .lines()
-                    .find_map(|l| l.strip_prefix("Content-Length: "))
-                    .and_then(|v| v.trim().parse::<usize>().ok())
-                    .unwrap_or(0);
-                if request.len() >= split + 4 + length {
-                    break;
-                }
-            }
+        for _ in 0..2 {
+            let Ok((mut socket, _)) = listener.accept() else {
+                return;
+            };
+            let request = read_request(&mut socket);
+            let (status, body) = if with_a_credential(&request) {
+                (status, body)
+            } else {
+                (
+                    "401 Unauthorized",
+                    r#"{"error":"A machine credential is needed"}"#,
+                )
+            };
+            let answer = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(answer.as_bytes());
+            let _ = sent.send(request);
         }
-        let answer = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        let _ = socket.write_all(answer.as_bytes());
-        let _ = sent.send(String::from_utf8_lossy(&request).to_string());
     });
     (address, received)
 }
 
+/// Something at an address that is not the app taking machines: it answers every request the same
+/// way, whatever it carries, and hands each back through the channel.
+fn not_the_app(head: &'static str, body: &'static str) -> (String, mpsc::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a free port");
+    let address = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let (sent, received) = mpsc::channel();
+    thread::spawn(move || {
+        while let Ok((mut socket, _)) = listener.accept() {
+            let request = read_request(&mut socket);
+            let answer = format!(
+                "HTTP/1.1 {head}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(answer.as_bytes());
+            let _ = sent.send(request);
+        }
+    });
+    (address, received)
+}
+
+/// The ask that goes before a credential: the same route, and no credential on it.
+fn the_ask(received: &mpsc::Receiver<String>, path: &str) {
+    let ask = received
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the app was asked first");
+    assert!(
+        ask.starts_with(&format!("POST {path} HTTP/1.1\r\n")),
+        "{ask}"
+    );
+    assert!(
+        !with_a_credential(&ask),
+        "the ask carried a credential: {ask}"
+    );
+}
+
 fn send(args: &[&str], credential: Option<&str>) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_timewitness"));
-    command.arg("send").args(args).env_remove(CREDENTIAL);
+    command
+        .arg("send")
+        .args(args)
+        .env_remove(CREDENTIAL)
+        .env_remove(SETTING);
     if let Some(credential) = credential {
         command.env(CREDENTIAL, credential);
     }
@@ -104,6 +168,7 @@ fn a_receipt_travels_with_its_own_figures_under_a_bearer_and_never_its_subject()
     assert_eq!(output.status.code(), Some(0), "{}", said(&output));
     assert!(said(&output).contains("read the interval off the receipt"));
 
+    the_ask(&received, "/api/machine/receipts/");
     let request = received
         .recv_timeout(Duration::from_secs(10))
         .expect("the stand-in was sent something");
@@ -187,9 +252,15 @@ fn nothing_is_sent_without_a_credential_or_over_plain_http_to_anywhere_else() {
     let receipt = real_receipt();
     let path = receipt.to_str().unwrap();
 
-    let none = send(&[path, "--to", "http://127.0.0.1:9"], None);
+    let (address, received) = stand_in("201 Created", "{}");
+    let none = send(&[path, "--to", &address], None);
     assert_eq!(none.status.code(), Some(2), "{}", said(&none));
     assert!(said(&none).contains(CREDENTIAL));
+    the_ask(&received, "/api/machine/receipts/");
+    assert!(
+        received.recv_timeout(Duration::from_millis(500)).is_err(),
+        "something went after the ask with no credential to send"
+    );
 
     let clear = send(&[path, "--to", "http://app.timewitness.dev"], Some("twm_x"));
     assert_eq!(clear.status.code(), Some(1), "{}", said(&clear));
@@ -220,69 +291,199 @@ fn a_file_that_is_not_a_receipt_that_holds_is_not_sent() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The app is not open yet, and `app.timewitness.dev` answers every path with a redirect to the
-/// holding page. Until 2026-09-25 a send to it came back as a sentence about a 308, which tells a
-/// stranger nothing they can act on. It is refused by name now, before anything leaves the
-/// machine, and so are an enrolment and a certificate asked of it. An address given with `--to` is
-/// asked as always, which is how the tests above reach a stand-in.
+/// Each of the three acts that reach the app, run with `extra` on its command line and the
+/// credential, the setting and the key as given.
+fn each_act(
+    receipt: &str,
+    key: &str,
+    extra: &[&str],
+    credential: Option<&str>,
+    setting: Option<&str>,
+) -> Vec<(&'static str, Output)> {
+    [
+        ("send", vec!["send", receipt]),
+        ("enrol", vec!["enrol", "--key", key]),
+        ("certificate", vec!["certificate", "--key", key]),
+    ]
+    .into_iter()
+    .map(|(what, args)| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_timewitness"));
+        command
+            .args(&args)
+            .args(extra)
+            .env_remove(CREDENTIAL)
+            .env_remove(SETTING);
+        if let Some(credential) = credential {
+            command.env(CREDENTIAL, credential);
+        }
+        if let Some(setting) = setting {
+            command.env(SETTING, setting);
+        }
+        (what, command.output().expect("the binary runs"))
+    })
+    .collect()
+}
+
+/// Until 2026-10-07 the command line held a constant saying the app was not open, and refused
+/// `app.timewitness.dev` by name for every send, enrolment and certificate. That kept a credential
+/// off the holding page, and it also meant no binary built before the app opened could ever reach
+/// it. Now each act asks the app first with no credential, and the holding page's redirect is what
+/// says it is not open: the act is refused in those words, without a sentence about a 308, and the
+/// credential never leaves the machine.
 #[test]
-fn the_app_is_not_open_yet_and_a_send_to_it_is_refused_by_name() {
+fn an_address_that_answers_with_the_holding_pages_redirect_is_not_open_and_never_sees_a_credential()
+{
     let receipt = real_receipt();
-    let path = receipt.to_str().unwrap();
     let dir = std::env::temp_dir().join(format!("tw-not-open-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let key = dir.join("agent.key");
-    let key = key.to_str().unwrap();
+    let (address, received) = not_the_app(
+        "308 Permanent Redirect\r\nLocation: https://timewitness.dev/\r\nContent-Type: text/plain",
+        "Redirecting...",
+    );
 
-    for (what, output) in [
-        ("send", send(&[path], Some("twm_x"))),
+    for credential in [Some("twm_x"), None] {
+        for (what, output) in each_act(
+            receipt.to_str().unwrap(),
+            key.to_str().unwrap(),
+            &["--to", &address],
+            credential,
+            None,
+        ) {
+            let words = said(&output);
+            assert_eq!(output.status.code(), Some(1), "{what}: {words}");
+            assert!(
+                words.contains(&format!("{address} is not open yet")),
+                "{what}: {words}"
+            );
+            assert!(words.contains("never left this machine"), "{what}: {words}");
+            assert!(!words.contains("308"), "{what}: {words}");
+            // A stranger with no credential needs to hear about the address, not the credential.
+            assert!(!words.contains(CREDENTIAL), "{what}: {words}");
+        }
+    }
+    let mut asked = 0;
+    while let Ok(request) = received.recv_timeout(Duration::from_millis(500)) {
+        assert!(!with_a_credential(&request), "a credential went: {request}");
+        asked += 1;
+    }
+    assert_eq!(asked, 6, "each act asks once, and only once");
+    assert!(
+        !key.exists(),
+        "an enrolment the address could not take left a new key behind"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A page, a route the build does not have, and a build with no database all answer, and none of
+/// them is the app asking for a credential. Each is said, with the app's own words where it gave
+/// some, and none is sent one.
+#[test]
+fn an_address_that_does_not_take_machines_never_sees_a_credential() {
+    let receipt = real_receipt();
+    let dir = std::env::temp_dir().join(format!("tw-not-machines-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let key = dir.join("agent.key");
+    for (head, body, expected) in [
         (
-            "enrol",
-            Command::new(env!("CARGO_BIN_EXE_timewitness"))
-                .args(["enrol", "--key", key])
-                .env(CREDENTIAL, "twm_x")
-                .output()
-                .expect("the binary runs"),
+            "200 OK\r\nContent-Type: text/html",
+            "<!doctype html><title>TimeWitness</title>",
+            "does not answer as the app that takes machines",
         ),
         (
-            "certificate",
-            Command::new(env!("CARGO_BIN_EXE_timewitness"))
-                .args(["certificate", "--key", key])
-                .env(CREDENTIAL, "twm_x")
-                .output()
-                .expect("the binary runs"),
+            "404 Not Found\r\nContent-Type: application/json",
+            r#"{"error":"No such route"}"#,
+            "\"No such route\"",
+        ),
+        (
+            "503 Service Unavailable\r\nContent-Type: application/json",
+            r#"{"error":"Accounts are not available here"}"#,
+            "\"Accounts are not available here\"",
+        ),
+        (
+            "401 Unauthorized\r\nContent-Type: text/html",
+            "<p>Sign in</p>",
+            "does not answer as the app that takes machines",
+        ),
+        // Any API that wants a bearer refuses a request with none, and many say so in JSON. Only
+        // the app's own words let a credential go.
+        (
+            "401 Unauthorized\r\nContent-Type: application/json",
+            r#"{"error":"invalid_token"}"#,
+            "\"invalid_token\"",
+        ),
+        (
+            "401 Unauthorized\r\nContent-Type: application/json",
+            r#"{"message":"Unauthorized"}"#,
+            "does not answer as the app that takes machines",
+        ),
+        // What an address says goes into a job log, so it may not start a line of its own there.
+        (
+            "503 Service Unavailable\r\nContent-Type: application/json",
+            "{\"error\":\"down\n::error::a line of its own\"}",
+            "\"down ::error::a line of its own\"",
         ),
     ] {
-        let words = said(&output);
-        assert_eq!(output.status.code(), Some(1), "{what}: {words}");
-        assert!(
-            words.contains("https://app.timewitness.dev is not open yet"),
-            "{what}: {words}"
-        );
-        assert!(!words.contains("308"), "{what}: {words}");
+        let (address, received) = not_the_app(head, body);
+        for (what, output) in each_act(
+            receipt.to_str().unwrap(),
+            key.to_str().unwrap(),
+            &["--to", &address],
+            Some("twm_x"),
+            None,
+        ) {
+            let words = said(&output);
+            assert_eq!(output.status.code(), Some(1), "{what}: {words}");
+            assert!(words.contains(expected), "{what}: {words}");
+            assert!(words.contains("never left this machine"), "{what}: {words}");
+        }
+        while let Ok(request) = received.recv_timeout(Duration::from_millis(500)) {
+            assert!(!with_a_credential(&request), "a credential went: {request}");
+        }
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
 
-    // A stranger has no credential, and cannot get one while the app is closed. Until 2026-09-25
-    // all three answered that the credential was missing and spoke of one "the app issued", which
-    // sends them looking for an app that is not there. The closed app is said first.
-    for (what, args) in [
-        ("send", vec!["send", path]),
-        ("enrol", vec!["enrol", "--key", key]),
-        ("certificate", vec!["certificate", "--key", key]),
-    ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_timewitness"))
-            .args(&args)
-            .env_remove(CREDENTIAL)
-            .output()
-            .expect("the binary runs");
-        let words = said(&output);
-        assert_eq!(output.status.code(), Some(1), "{what}: {words}");
-        assert!(
-            words.contains("https://app.timewitness.dev is not open yet"),
-            "{what}: {words}"
-        );
-        assert!(!words.contains(CREDENTIAL), "{what}: {words}");
-    }
+/// `TIMEWITNESS_APP` points every act at another address of the app with no `--to` on any command
+/// line, which is how a workflow or a machine is walked against a test host and how the released
+/// binary reaches the app on the day it opens without a rebuild. `--to` still beats it.
+#[test]
+fn the_setting_points_every_act_at_the_app_and_to_beats_it() {
+    let receipt = real_receipt();
+    let path = receipt.to_str().unwrap();
+    let (address, received) = stand_in(
+        "201 Created",
+        r#"{"id":"x","receiptHash":"y","alreadyHeld":false,"interval":{"from":"receipt"}}"#,
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_timewitness"))
+        .args(["send", path])
+        .env(CREDENTIAL, "twm_a-credential")
+        .env(SETTING, &address)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(0), "{}", said(&output));
+    assert!(said(&output).contains("Sent receipt"), "{}", said(&output));
+    the_ask(&received, "/api/machine/receipts/");
+    let sent = received.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(sent.contains("\r\nAuthorization: Bearer twm_a-credential\r\n"));
+
+    let (elsewhere, nothing) = not_the_app("500 Internal Server Error", "");
+    let (given, asked) = stand_in(
+        "201 Created",
+        r#"{"id":"x","receiptHash":"y","alreadyHeld":false,"interval":{"from":"receipt"}}"#,
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_timewitness"))
+        .args(["send", path, "--to", &given])
+        .env(CREDENTIAL, "twm_a-credential")
+        .env(SETTING, &elsewhere)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(0), "{}", said(&output));
+    the_ask(&asked, "/api/machine/receipts/");
+    assert!(
+        nothing.recv_timeout(Duration::from_millis(500)).is_err(),
+        "the setting was asked though --to was given"
+    );
 
     let usage = String::from_utf8_lossy(
         &Command::new(env!("CARGO_BIN_EXE_timewitness"))
@@ -294,9 +495,11 @@ fn the_app_is_not_open_yet_and_a_send_to_it_is_refused_by_name() {
     .split_whitespace()
     .collect::<Vec<_>>()
     .join(" ");
-    assert_eq!(
-        usage.matches("The app is not open yet").count(),
-        3,
-        "send, enrol and certificate each say so: {usage}"
-    );
+    for said in [
+        "or at the one TIMEWITNESS_APP names, and --to beats both",
+        "the credential goes only where the answer is the app asking for one",
+    ] {
+        assert!(usage.contains(said), "the usage does not say: {said}");
+    }
+    assert!(!usage.contains("not open yet, and until it is"), "{usage}");
 }
