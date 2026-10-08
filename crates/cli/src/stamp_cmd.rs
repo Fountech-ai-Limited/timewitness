@@ -1062,9 +1062,9 @@ fn what_the_verifier_refuses(signed: &[u8], subject_hash: &[u8; 32]) -> Option<S
 /// `claim` is the interval the receipt states, and each entry is placed against it: a corridor that
 /// answered for a moment wholly after it, by no more than the time since the reading explains, is
 /// set aside, and a beacon round too far behind it is set aside. `read_at` is the monotonic counter
-/// when the reading came back. `beacon` is the round fetched before the reading, or why there is none. Nothing else here
-/// depends on how the reading was arrived at, which is why this takes the claim rather than the
-/// whole stamp.
+/// when the reading came back. `beacon` is the round fetched before the reading, or why there is
+/// none. Nothing else here depends on how the reading was arrived at, which is why this takes the
+/// claim rather than the whole stamp.
 fn gather(
     outside: &mut dyn Outside,
     subject_hash: &[u8; 32],
