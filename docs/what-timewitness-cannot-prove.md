@@ -1,5 +1,11 @@
 # What TimeWitness cannot prove
 
+Version 29, 2026-10-08. Supersedes version 28 of 2026-10-07, which it keeps whole and corrects in
+one place. The note on version 26 said the drand round is fetched after the reading is taken. That
+was true when it was written and stopped being true at `v0.8.1`, which fetches the round before the
+reading, so the note now says which releases did which. What the round shows is unchanged: the
+receipt was made no earlier than that round. The list still runs to 61 items.
+
 Version 28, 2026-10-07. Supersedes version 27 of 2026-09-29, which it keeps whole and corrects in
 two items. The `v0.7` release carries signed binaries of the command line tool for Linux, on x86_64
 and aarch64, so the item on binaries now says what that release carries, who signed it and what the
@@ -19,8 +25,9 @@ was about 2026-09-09, and its items are dated to their own days. The list still 
 
 Version 26, 2026-09-26. Supersedes version 25 of the same day, which it keeps whole and corrects in
 two places. The claim at the head of the list said the beacon puts the reading no earlier than its
-round. The round is fetched after the reading is taken, so what it shows is that the receipt was made
-no earlier than that round, which is what the item on the beacon below has always said. The item on
+round. Up to `v0.8` the round was fetched after the reading was taken, and from `v0.8.1` it is
+fetched before, so what it shows is that the receipt was made no earlier than that round, which is
+what the item on the beacon below has always said. The item on
 the corridor said the reading has to overlap it, and a reading is a point: it is the receipt's interval
 that is held to overlap the corridor. The note on version 18 said the outside signatures say when the
 reading was taken and that the corridor makes the moment checkable. Neither is true, since no signature

@@ -60,7 +60,7 @@ use timewitness_clock::{
 use timewitness_core::evidence::rfc3161::{in_one_spelling, Authority};
 use timewitness_core::evidence::roughtime::MIN_RADIUS_SECONDS;
 use timewitness_core::time::{Nanos, NANOS_PER_SEC};
-use timewitness_core::{Attestation, UnixNanos, Validity};
+use timewitness_core::{Attestation, MonotonicNanos, UnixNanos, Validity};
 use timewitness_platform::EnvironmentWatch;
 use timewitness_receipt::schema::{AgentClaim, Evidence, Payload, Receipt, Role, Scheme, TakenBy};
 use timewitness_receipt::{
@@ -794,6 +794,8 @@ trait Outside {
     /// One authority's token over the digest of a signature, in the one spelling a reader accepts.
     fn witness_signature(&mut self, authority: usize, digest: &[u8; 32])
         -> Result<Vec<u8>, String>;
+    /// This machine's monotonic counter, which times how long after the reading each answer came.
+    fn now(&self) -> MonotonicNanos;
 }
 
 /// The servers this product publishes, asked over the network.
@@ -870,6 +872,10 @@ impl Outside for Published {
                 in_one_spelling(&attestation.blob, digest).map_err(|e| e.to_string())
             })
     }
+
+    fn now(&self) -> MonotonicNanos {
+        self.clock.now()
+    }
 }
 
 /// What signs a receipt and what it is about, put into it after the reading whichever path the
@@ -928,6 +934,11 @@ fn finish(
         carrier: mut receipt,
         mut notes,
     } = read()?;
+    // Taken once the reading is in hand rather than before it is asked for, so the time since the
+    // reading is never counted as longer than it was. Counted short, a corridor that really was late
+    // can be kept and the receipt refused, which costs a stamp. Counted long, a corridor that
+    // contradicts the reading could be set aside as late, which is the fault this measure is for.
+    let read_at = outside.now();
 
     // What the carrier was holding a place for. The agent never sees any of it, and the one-shot
     // path fills in the same four fields at the same point, so a receipt is assembled once.
@@ -941,6 +952,7 @@ fn finish(
             outside,
             &signing.subject_hash,
             &receipt.claim,
+            read_at,
             beacon,
             deadline,
         );
@@ -1048,14 +1060,16 @@ fn what_the_verifier_refuses(signed: &[u8], subject_hash: &[u8; 32]) -> Option<S
 /// One attestation in each role, or as many of the three as answered.
 ///
 /// `claim` is the interval the receipt states, and each entry is placed against it: a corridor that
-/// answered for a moment wholly after it is set aside, and a beacon round too far behind it is set
-/// aside. `beacon` is the round fetched before the reading, or why there is none. Nothing else here
+/// answered for a moment wholly after it, by no more than the time since the reading explains, is
+/// set aside, and a beacon round too far behind it is set aside. `read_at` is the monotonic counter
+/// when the reading came back. `beacon` is the round fetched before the reading, or why there is none. Nothing else here
 /// depends on how the reading was arrived at, which is why this takes the claim rather than the
 /// whole stamp.
 fn gather(
     outside: &mut dyn Outside,
     subject_hash: &[u8; 32],
     claim: &AgentClaim,
+    read_at: MonotonicNanos,
     beacon: Result<Attestation, String>,
     deadline: Deadline,
 ) -> (Vec<Evidence>, Vec<String>) {
@@ -1086,20 +1100,26 @@ fn gather(
     // back in tens of milliseconds. One server timing out first is five seconds, and the next one's
     // interval can then start after the latest moment the receipt claims. Written into the receipt
     // it made the receipt contradict itself, so a corridor wholly after the claim is set aside and
-    // the next server is asked. A corridor wholly before the claim is not lateness and is kept:
-    // asked after the reading, an honest server and an honest model cannot produce one, and the
-    // check before the file refuses the receipt rather than this step hiding the disagreement.
+    // the next server is asked, but only where the wait explains it: see `late_rather_than_wrong`.
+    // Any other corridor is kept. One wholly before the claim is not lateness: asked after the
+    // reading, an honest server and an honest model cannot produce one. Nor is one further after
+    // the claim than the wait explains. Either way the check before the file refuses the receipt
+    // rather than this step hiding the disagreement.
     for (server, name) in outside.corridor_servers().into_iter().enumerate() {
         if out_of_time(&mut notes, "corridor") {
             break;
         }
-        match outside.corridor(server, subject_hash) {
-            Ok(Some(attestation)) if attestation.earliest() > claim.latest => {
+        let answer = outside.corridor(server, subject_hash);
+        let since = i128::from(outside.now().as_nanos().saturating_sub(read_at.as_nanos()));
+        match answer {
+            Ok(Some(attestation)) if late_rather_than_wrong(&attestation, claim, since) => {
                 let late = attestation.earliest().as_nanos() - claim.latest.as_nanos();
                 notes.push(format!(
-                    "no corridor from {name}: it answered too late to speak to the reading. Its \
-                     interval starts {:.3} s after the latest moment this receipt claims, and a \
-                     corridor is evidence for a reading only where the two overlap",
+                    "no corridor from {name}: it answered too late to speak to the reading. It \
+                     answered {:.3} s after the reading, and its interval starts {:.3} s after the \
+                     latest moment this receipt claims, which the wait explains. A corridor is \
+                     evidence for a reading only where the two overlap",
+                    since as f64 / NANOS_PER_SEC as f64,
                     late as f64 / NANOS_PER_SEC as f64
                 ));
             }
@@ -1170,6 +1190,29 @@ fn gather(
     }
 
     (evidence, notes)
+}
+
+/// Whether a corridor wholly after the claim is there because it was asked late, rather than because
+/// the reading is wrong.
+///
+/// `since` is how long after the reading the corridor answered, on the monotonic counter. Asked at
+/// the moment of the reading, an honest server's corridor holds the moment of the reading, so its
+/// midpoint sits no more than its radius past the latest moment the receipt claims. Asked `since`
+/// later, the midpoint moves on by at most `since`. So a corridor whose midpoint is past that latest
+/// moment by no more than `since` and its own radius is late, and is set aside. One past it by more
+/// is something the wait cannot explain: an honest server and an honest model cannot produce it, so
+/// it is kept and the check before the file refuses the receipt.
+///
+/// Until v0.8.2 every corridor wholly after the claim was set aside. A reading slow by more than its
+/// own bound then turned every honest corridor into a late one, and the receipt was written with no
+/// corridor in it. The test of lateness was our own claim, and an edge judged by our own claim cannot
+/// disagree with it, which is hard rule 2.
+fn late_rather_than_wrong(attestation: &Attestation, claim: &AgentClaim, since: Nanos) -> bool {
+    if attestation.earliest() <= claim.latest {
+        return false;
+    }
+    let past = attestation.at.as_nanos() - claim.latest.as_nanos();
+    past <= since + attestation.radius.unwrap_or(0).max(0)
 }
 
 /// A timestamp over the receipt's own signature, put outside the signed body where version 1 allows

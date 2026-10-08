@@ -17,12 +17,12 @@ use std::rc::Rc;
 
 use timewitness_core::evidence::drand::{pack_blob, Chain};
 use timewitness_core::time::{Nanos, NANOS_PER_MILLI, NANOS_PER_SEC};
-use timewitness_core::{Attestation, UnixNanos};
+use timewitness_core::{Attestation, MonotonicNanos, UnixNanos};
 use timewitness_receipt::schema::{Payload, Role};
 use timewitness_receipt::AgentKey;
 use timewitness_verify::{anchor_file, verify, Assessment, Floor, Subject};
 
-use super::{finish, Deadline, Made, Outside, Reading, Signing};
+use super::{finish, late_rather_than_wrong, Deadline, Made, Outside, Reading, Signing};
 
 const SECOND: Nanos = NANOS_PER_SEC;
 
@@ -190,6 +190,12 @@ impl Outside for Elsewhere {
 
     fn witness_signature(&mut self, _: usize, _: &[u8; 32]) -> Result<Vec<u8>, String> {
         self.over_the_signature.clone()
+    }
+
+    fn now(&self) -> MonotonicNanos {
+        // The test's one clock stands in for the monotonic counter as well, which is what makes the
+        // time since the reading the time every party took to answer and nothing else.
+        MonotonicNanos(u64::try_from(self.clock.now()).expect("a time after 1970"))
     }
 }
 
@@ -475,4 +481,152 @@ fn a_stamp_with_no_evidence_asks_nobody_and_still_holds() {
         ROUND_32000947 + SECOND + NANOS_PER_MILLI,
         "only the reading took any time, so nothing else was asked"
     );
+}
+
+#[test]
+fn a_slow_reading_its_prompt_corridor_contradicts_writes_no_receipt() {
+    // Two seconds after round 32000947, as in the prompt case above. The reading says the moment was
+    // a second and a half before it was taken, which is a model gone slow by more than its own
+    // bound. roughtime.se answers in 50 ms with a corridor round the true moment, so the corridor
+    // starts after the latest moment the reading claims, by more than 50 ms of waiting can explain.
+    // That is the reading being wrong rather than the corridor being late, and until v0.8.2 the
+    // stamp set the corridor aside and wrote the receipt.
+    let clock = Clock::at(ROUND_32000947 + 2 * SECOND);
+    let mut outside = Elsewhere::at(&clock);
+    outside.corridors = vec![(
+        "roughtime.se".into(),
+        after(50 * NANOS_PER_MILLI, Ok(Some(the_corridor()))),
+    )];
+    outside.witnesses = vec![(
+        "DigiCert".into(),
+        after(200 * NANOS_PER_MILLI, Ok((the_witness(), false))),
+    )];
+
+    let refused = stamp(&mut outside, a_reading(&clock, 1_500 * NANOS_PER_MILLI)).map(|made| {
+        let read = read_as_a_stranger(&made);
+        format!(
+            "a receipt was made with {} entries ({:?}), and verify says: {}",
+            made.receipt.evidence.len(),
+            made.notes,
+            if read.holds() {
+                "it holds".to_string()
+            } else {
+                why_refused(&read)
+            }
+        )
+    });
+
+    let text = refused.expect_err("no receipt");
+    assert!(text.contains("no receipt was written"), "{text}");
+    assert!(text.to_lowercase().contains("corridor"), "{text}");
+}
+
+#[test]
+fn a_corridor_asked_well_after_the_reading_is_still_set_aside() {
+    // Half a second after round 32000946. The first server takes five seconds to time out, and
+    // roughtime.se then answers in 50 ms with a corridor round the moment it answered. It starts
+    // more than three seconds after the latest moment the reading claims, and five seconds of waiting
+    // explain that, so it is late rather than a contradiction. It is set aside and the next server
+    // is asked, as before.
+    let clock = Clock::at(ROUND_32000947 - 3 * SECOND + SECOND / 2);
+    let mut outside = Elsewhere::at(&clock);
+    outside.corridors = vec![
+        ("roughtime.int08h.com".into(), times_out()),
+        (
+            "roughtime.se".into(),
+            after(50 * NANOS_PER_MILLI, Ok(Some(the_corridor()))),
+        ),
+        (
+            "time.txryan.com".into(),
+            after(50 * NANOS_PER_MILLI, Err("refused".into())),
+        ),
+    ];
+
+    let made = stamp(&mut outside, a_reading(&clock, 0)).expect("a receipt");
+    let read = read_as_a_stranger(&made);
+
+    assert!(read.holds(), "verify refused it: {}", why_refused(&read));
+    assert!(
+        made.receipt.claim.latest.as_nanos() + 3 * SECOND < the_corridor().earliest().as_nanos(),
+        "the corridor should start more than three seconds after the claim"
+    );
+    assert!(
+        made.receipt
+            .evidence
+            .iter()
+            .all(|e| e.role != Role::AuthenticatedUtcCorridor),
+        "a corridor that does not overlap the reading was written into the receipt"
+    );
+    assert!(
+        made.notes
+            .iter()
+            .any(|note| note.starts_with("no corridor from roughtime.se") && note.contains("late")),
+        "the run should say why the corridor it was handed is not there: {:?}",
+        made.notes
+    );
+    assert!(
+        made.notes
+            .iter()
+            .any(|note| note.starts_with("no corridor from time.txryan.com")),
+        "the next server should have been asked: {:?}",
+        made.notes
+    );
+}
+
+#[test]
+fn a_corridor_wholly_before_the_reading_writes_no_receipt() {
+    // A reading that says the moment was ten seconds after it was taken. The corridor answers in
+    // 50 ms and ends before the earliest moment the reading claims. Asked after the reading, an
+    // honest server and an honest model cannot produce that, so the corridor is kept and the check
+    // before the file refuses the receipt.
+    let clock = Clock::at(ROUND_32000947 + 2 * SECOND);
+    let mut outside = Elsewhere::at(&clock);
+    outside.corridors = vec![(
+        "roughtime.se".into(),
+        after(50 * NANOS_PER_MILLI, Ok(Some(the_corridor()))),
+    )];
+
+    let refused = stamp(&mut outside, a_reading(&clock, -10 * SECOND)).map(|made| {
+        format!(
+            "a receipt was made with {} entries ({:?})",
+            made.receipt.evidence.len(),
+            made.notes
+        )
+    });
+
+    let text = refused.expect_err("no receipt");
+    assert!(text.contains("no receipt was written"), "{text}");
+    assert!(text.to_lowercase().contains("corridor"), "{text}");
+}
+
+#[test]
+fn a_corridor_is_late_up_to_the_wait_and_its_radius_and_no_further() {
+    // The edge itself, in nanoseconds. A corridor whose midpoint is past the latest moment the
+    // reading claims by exactly the wait and its radius is late. One nanosecond further is not, and
+    // nor is one that overlaps the claim, which is kept as evidence and never set aside.
+    let claim = timewitness_receipt::open(&unhex(A_REAL_READING))
+        .expect("the committed receipt opens")
+        .claim;
+    let latest = claim.latest.as_nanos();
+    let wait = 250 * NANOS_PER_MILLI;
+    let corridor = |past: Nanos| {
+        Attestation::over_interval(Vec::new(), Vec::new(), UnixNanos(latest + past), SECOND)
+    };
+
+    assert!(late_rather_than_wrong(
+        &corridor(wait + SECOND),
+        &claim,
+        wait
+    ));
+    assert!(!late_rather_than_wrong(
+        &corridor(wait + SECOND + 1),
+        &claim,
+        wait
+    ));
+    assert!(!late_rather_than_wrong(
+        &corridor(wait + SECOND + 1),
+        &claim,
+        0
+    ));
+    assert!(!late_rather_than_wrong(&corridor(SECOND), &claim, wait));
 }
