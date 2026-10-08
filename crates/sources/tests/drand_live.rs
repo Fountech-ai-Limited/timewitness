@@ -12,8 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use timewitness_core::evidence::drand;
 use timewitness_core::time::NANOS_PER_SEC;
 use timewitness_core::UnixNanos;
-use timewitness_sources::drand::{DrandClient, DEFAULT_STALENESS};
-use timewitness_sources::FreshnessBeacon;
+use timewitness_sources::drand::DrandClient;
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -38,7 +37,7 @@ fn roughly_now() -> UnixNanos {
 fn the_current_round_verifies_against_the_group_key() {
     let client = DrandClient::quicknet();
     let attestation = client
-        .fetch_near(roughly_now(), DEFAULT_STALENESS)
+        .latest()
         .expect("a current round from one of three relays");
 
     let stored = drand::unpack_blob(&attestation.blob).expect("what we stored unpacks");
@@ -72,9 +71,7 @@ fn every_relay_serves_the_same_bytes_for_the_same_round() {
     // about that key. It is here because a relay quietly serving something else is worth knowing.
     let round = {
         let client = DrandClient::quicknet();
-        let a = client
-            .fetch_near(roughly_now(), DEFAULT_STALENESS)
-            .expect("a current round");
+        let a = client.latest().expect("a current round");
         drand::unpack_blob(&a.blob).expect("unpacks").round
     };
 
@@ -103,18 +100,23 @@ fn every_relay_serves_the_same_bytes_for_the_same_round() {
 
 #[test]
 #[ignore = "talks to somebody else's relay"]
-fn a_round_from_long_ago_is_refused_as_stale() {
-    // Round one, which is genuinely signed and genuinely published in 2023. The signature checks
-    // and the round is still refused, because a not-earlier-than edge three years behind the
-    // reading pins nothing anybody wanted pinned.
+fn round_one_still_checks_and_the_latest_round_is_one_already_published() {
+    // Round one, which is genuinely signed and genuinely published in 2023. The signature checks,
+    // because a signature says nothing about age: a not-earlier-than edge three years behind the
+    // reading pins nothing, and the stamp judges that against its own reading, not this client.
     let client = DrandClient::quicknet();
     let genuine = client.round(1).expect("round one is still served");
     let checked = client.describe(&genuine.blob).expect("round one verifies");
     assert!(!checked.is_empty());
 
-    let err = client
-        .from_relays(vec!["http://api.drand.sh".to_string()])
-        .latest_near(UnixNanos(0), 1)
-        .expect_err("a current round offered against an expectation at the epoch");
-    println!("refused: {err}");
+    // And the newest round is one already published, since nobody can sign a round early. Held to
+    // this machine's clock, which is the clock the product says not to trust, so the minute of slack
+    // is for that clock and not for the relay.
+    let latest = client.latest().expect("a current round");
+    let after = roughly_now();
+    assert!(
+        latest.at.as_nanos() <= after.as_nanos() + 60 * NANOS_PER_SEC,
+        "a round dated {} s ahead of this machine",
+        (latest.at.as_nanos() - after.as_nanos()) / NANOS_PER_SEC
+    );
 }

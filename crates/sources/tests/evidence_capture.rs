@@ -10,15 +10,12 @@
 //! sandwich, and three pieces of evidence gathered on different days about different things do not
 //! make one. That is the whole point of the test they feed.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use timewitness_core::evidence::{drand, rfc3161, roughtime};
 use timewitness_core::time::NANOS_PER_SEC;
-use timewitness_core::{MonotonicNanos, UnixNanos};
-use timewitness_sources::drand::{DrandClient, DEFAULT_STALENESS};
+use timewitness_core::MonotonicNanos;
+use timewitness_sources::drand::DrandClient;
 use timewitness_sources::roughtime::{RoughtimeClient, RoughtimeServer};
 use timewitness_sources::timestamp::{published_authorities, TimestampClient};
-use timewitness_sources::FreshnessBeacon;
 
 /// The subject everything in the corpus is about.
 ///
@@ -43,20 +40,9 @@ fn wrapped(bytes: &[u8]) -> String {
 #[test]
 #[ignore = "talks to three sets of somebody else's servers"]
 fn one_of_each_role_about_one_subject() {
-    let roughly_now = UnixNanos(
-        i128::from(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("this machine thinks it is before 1970")
-                .as_secs(),
-        ) * NANOS_PER_SEC,
-    );
-
     // Not-earlier-than first, because a beacon has to be published before the thing it pins.
     let beacon = DrandClient::quicknet();
-    let round = beacon
-        .fetch_near(roughly_now, DEFAULT_STALENESS)
-        .expect("a current drand round");
+    let round = beacon.latest().expect("a current drand round");
     let stored_round = drand::unpack_blob(&round.blob).expect("unpacks");
     println!(
         "drand round {} at {} s",

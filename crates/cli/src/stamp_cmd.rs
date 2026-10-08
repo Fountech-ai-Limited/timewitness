@@ -62,7 +62,7 @@ use timewitness_core::evidence::roughtime::MIN_RADIUS_SECONDS;
 use timewitness_core::time::{Nanos, NANOS_PER_SEC};
 use timewitness_core::{Attestation, UnixNanos, Validity};
 use timewitness_platform::EnvironmentWatch;
-use timewitness_receipt::schema::{Evidence, Payload, Receipt, Role, Scheme, TakenBy};
+use timewitness_receipt::schema::{AgentClaim, Evidence, Payload, Receipt, Role, Scheme, TakenBy};
 use timewitness_receipt::{
     chain_link, sha256_payload, signature_of, with_signature_witness, AgentKey,
 };
@@ -72,6 +72,7 @@ use timewitness_sources::nts::{NtsClient, NtsServer};
 use timewitness_sources::roughtime::{RoughtimeClient, RoughtimeServer};
 use timewitness_sources::timestamp::{published_authorities, TimestampClient};
 use timewitness_sources::{FinalWitness, TimeSource};
+use timewitness_verify::{anchor_file, Floor, Subject};
 
 use crate::args::Args;
 use crate::render;
@@ -279,10 +280,13 @@ fn the_waiting_fits_the_deadline(rounds: usize, gap: u64, deadline: u64) -> Resu
     Ok(())
 }
 
-/// How far a beacon round may sit from where the model thinks the present is.
+/// How far behind the reading a beacon round may have been published and still be kept.
 ///
-/// Two minutes. A drand relay can lag by a few rounds of three seconds, and a value further out than
-/// this is not a lagging relay, it is a different moment.
+/// Two minutes. The round is fetched just before the reading, so an ordinary one is a few seconds
+/// behind it: up to a round of three seconds, and the time the fetch took. A drand relay can lag by a
+/// few rounds, and a round further behind than this is not a lagging relay, it is a different moment.
+/// Until v0.8.1 the same two minutes were allowed ahead of the reading as well, which is how a round
+/// published after the reading got into a receipt.
 const BEACON_TOLERANCE: Nanos = 120 * NANOS_PER_SEC;
 
 /// A reading and its bound, before anything about the subject is put in it.
@@ -890,6 +894,27 @@ struct Made {
 ///
 /// `read` takes the reading, and it is called here rather than before so that this function, and
 /// nothing else, decides what is asked of the world outside before the reading and what after it.
+///
+/// **The beacon is asked for before the reading, and that order is the fix for a receipt that
+/// refused itself.** A round is a value nobody could know before it was published, so a round
+/// fetched before the reading was published before the reading, and the receipt can carry it as a
+/// floor under the moment. Until v0.8.1 it was fetched after the reading and after a corridor
+/// server, as whatever round was newest by then, and kept if it was within two minutes either side.
+/// One slow answer in between was enough for the newest round to be one published after the latest
+/// moment the receipt claimed. On 2026-10-08 the released v0.8 stamp wrote a receipt with a round
+/// 2.204 s past its own edge, and its own `verify` refused it.
+///
+/// **Fetching first rather than choosing the round from the reading, and the reason is hard rule 2.**
+/// The other way to keep the round before the reading is to work out which round falls before the
+/// earliest moment the reading claims and ask for that one. It would always agree with the claim,
+/// because it was chosen off the claim, and an edge that cannot disagree with our own bound is our
+/// bound wearing a third party's signature. Fetched first, the round is wherever the chain had got to
+/// when it was asked, which the reading did not decide, so a reading that is wrong can still be
+/// caught by it.
+///
+/// **And the receipt is read the way a stranger reads it before it is written.** Whatever the
+/// reason, a receipt `timewitness verify` would refuse is never put on disk. The run refuses
+/// instead, and says which check refused it.
 fn finish(
     outside: &mut dyn Outside,
     read: impl FnOnce() -> Result<Reading, String>,
@@ -897,6 +922,8 @@ fn finish(
     with_evidence: bool,
     deadline: Deadline,
 ) -> Result<Made, String> {
+    let beacon = with_evidence.then(|| the_newest_round(outside, deadline));
+
     let Reading {
         carrier: mut receipt,
         mut notes,
@@ -909,11 +936,12 @@ fn finish(
     receipt.payload = signing.payload;
     receipt.agent_public_key = signing.key.public_key_bytes();
 
-    if with_evidence {
+    if let Some(beacon) = beacon {
         let (evidence, gathered) = gather(
             outside,
             &signing.subject_hash,
-            receipt.utc_estimate,
+            &receipt.claim,
+            beacon,
             deadline,
         );
         receipt.evidence = evidence;
@@ -934,6 +962,8 @@ fn finish(
         signed
     };
 
+    the_verifier_holds_it(&signed, &signing.subject_hash)?;
+
     Ok(Made {
         signed,
         receipt,
@@ -941,35 +971,77 @@ fn finish(
     })
 }
 
-/// A beacon round, or the reason it is not near enough the reading to keep.
-fn near_the_reading(attestation: Attestation, reading: UnixNanos) -> Result<Attestation, String> {
-    let drift = attestation.at.as_nanos() - reading.as_nanos();
-    if drift > BEACON_TOLERANCE {
+/// The newest round the beacon's relays hold, asked for before the reading exists.
+fn the_newest_round(outside: &mut dyn Outside, deadline: Deadline) -> Result<Attestation, String> {
+    if deadline.left().is_none() {
         return Err(format!(
-            "the relay answered with a round dated {} s after the time this agent believes it is, \
-             which is further ahead than a relay lag explains",
-            drift / NANOS_PER_SEC
+            "this run passed its {} s deadline before asking for one, so the receipt carries what \
+             was gathered before that and nothing else",
+            deadline.whole.as_secs()
         ));
     }
-    if -drift > BEACON_TOLERANCE {
+    outside.beacon()
+}
+
+/// A round fetched before the reading, or the reason it is too far behind the reading to keep.
+///
+/// One direction is judged here and not the other. A round published after the latest moment the
+/// receipt claims is kept: fetched before the reading, it can only be there if the reading is
+/// wrong, and leaving it out would hide the one piece of outside evidence that says so. The check
+/// before the file then refuses the receipt, and the run says why.
+fn recent_enough(round: Attestation, claim: &AgentClaim) -> Result<Attestation, String> {
+    let behind = claim.earliest.as_nanos() - round.at.as_nanos();
+    if behind > BEACON_TOLERANCE {
         return Err(format!(
-            "the relay answered with a round {} s old, and a not-earlier-than edge that far behind \
-             the reading pins nothing",
-            -drift / NANOS_PER_SEC
+            "the newest round the relays held was published {} s before the earliest moment this \
+             receipt claims, and a not-earlier-than edge that far behind the reading pins nothing",
+            behind / NANOS_PER_SEC
         ));
     }
-    Ok(attestation)
+    Ok(round)
+}
+
+/// Read the signed bytes the way `timewitness verify` reads them, and refuse to write them where
+/// that refuses.
+///
+/// The same function, the same published trust material and the same floor a reader gets with no
+/// options, over the bytes about to go on disk, so what this lets through is what that command
+/// accepts. The Action has run `verify` over every receipt it stamps since v0.4 and failed the step
+/// on a refusal, but only after the file was written, and the command line on its own never did. A
+/// receipt is a thing a stranger is handed, and one its maker's own verifier refuses is not
+/// something to hand over.
+fn the_verifier_holds_it(signed: &[u8], subject_hash: &[u8; 32]) -> Result<(), String> {
+    let read = timewitness_verify::verify(
+        signed,
+        Subject::Digest(subject_hash),
+        &anchor_file::published(),
+        &Floor::default(),
+    );
+    if read.holds() {
+        return Ok(());
+    }
+    let why = read.refusal().map_or_else(
+        || read.headline(),
+        |step| format!("{}: {}", step.question, step.state.detail()),
+    );
+    Err(format!(
+        "no receipt was written. `timewitness verify` would refuse the receipt this run made \
+         ({why}), and a stamp never writes a receipt its own verify refuses"
+    ))
 }
 
 /// One attestation in each role, or as many of the three as answered.
 ///
-/// `reading` is where the receipt says the moment was, and it is used to pick the beacon round
-/// nearest that moment. Nothing else here depends on how the reading was arrived at, which is why
-/// this takes the one value rather than the whole stamp.
+/// `claim` is the interval the receipt states, and each entry is placed against it: a corridor that
+/// answered for a moment wholly after it is set aside, and a beacon round too far behind it is set
+/// aside. `beacon` is the round fetched before the reading, or why there is none. Nothing else here
+/// depends on how the reading was arrived at, which is why this takes the claim rather than the
+/// whole stamp.
 fn gather(
     outside: &mut dyn Outside,
     subject_hash: &[u8; 32],
-    reading: UnixNanos,
+    claim: &AgentClaim,
+    beacon: Result<Attestation, String>,
     deadline: Deadline,
 ) -> (Vec<Evidence>, Vec<String>) {
     let mut evidence = Vec::new();
@@ -993,11 +1065,29 @@ fn gather(
 
     // The corridor. The nonce is derived from the hash of what is being stamped and a fresh salt, so
     // the response is about this subject and could not have been fetched in advance.
+    //
+    // It is asked after the reading, so it is about a later moment than the reading, and that is
+    // fine while the two still overlap: a Roughtime radius is a second or more and an answer comes
+    // back in tens of milliseconds. One server timing out first is five seconds, and the next one's
+    // interval can then start after the latest moment the receipt claims. Written into the receipt
+    // it made the receipt contradict itself, so a corridor wholly after the claim is set aside and
+    // the next server is asked. A corridor wholly before the claim is not lateness and is kept:
+    // asked after the reading, an honest server and an honest model cannot produce one, and the
+    // check before the file refuses the receipt rather than this step hiding the disagreement.
     for (server, name) in outside.corridor_servers().into_iter().enumerate() {
         if out_of_time(&mut notes, "corridor") {
             break;
         }
         match outside.corridor(server, subject_hash) {
+            Ok(Some(attestation)) if attestation.earliest() > claim.latest => {
+                let late = attestation.earliest().as_nanos() - claim.latest.as_nanos();
+                notes.push(format!(
+                    "no corridor from {name}: it answered too late to speak to the reading. Its \
+                     interval starts {:.3} s after the latest moment this receipt claims, and a \
+                     corridor is evidence for a reading only where the two overlap",
+                    late as f64 / NANOS_PER_SEC as f64
+                ));
+            }
             Ok(Some(attestation)) => {
                 evidence.push(entry(
                     Role::AuthenticatedUtcCorridor,
@@ -1019,14 +1109,9 @@ fn gather(
         );
     }
 
-    // Not earlier than.
-    if out_of_time(&mut notes, "freshness beacon") {
-        return (evidence, notes);
-    }
-    match outside
-        .beacon()
-        .and_then(|attestation| near_the_reading(attestation, reading))
-    {
+    // Not earlier than, fetched before the reading and placed here, so the receipt lists its roles
+    // in the order it always has.
+    match beacon.and_then(|round| recent_enough(round, claim)) {
         Ok(attestation) => evidence.push(entry(
             Role::NotEarlierThan,
             "drand",
@@ -1220,6 +1305,9 @@ fn no_receipt_after_the_last_round(validity: &Validity, answered: usize, polls: 
          is not issued from a model that cannot support one"
     )
 }
+
+#[cfg(test)]
+mod when_the_answers_arrive;
 
 #[cfg(test)]
 mod tests {

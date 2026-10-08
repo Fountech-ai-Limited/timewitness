@@ -3,30 +3,21 @@
 //! The pairing check is in [`timewitness_core::evidence::drand`], for the reason every check in
 //! this product is over there: a stranger's verifier applies the same rules to the same bytes.
 //!
-//! What is here is the fetch and one judgement the verifier cannot make, which is whether the round
-//! we were handed is the current one. A relay that answers with a round from last Tuesday is
-//! answering honestly, in the sense that the signature checks: the round really was published then.
-//! It is still useless as evidence, because a not-earlier-than edge a week behind the reading pins
-//! nothing anybody cares about. So the client says what round it expected and refuses one too far
-//! from it, and it says out loud which clock that expectation came from.
+//! What is here is the fetch. Whether a round is recent enough to be worth keeping is a judgement
+//! against the reading it is for, and the round is fetched before that reading exists, so the stamp
+//! makes it and this does not. A relay that answers with a round from last Tuesday is answering
+//! honestly, in the sense that the signature checks, and a not-earlier-than edge a week behind the
+//! reading still pins nothing anybody cares about.
 
 use std::time::Duration;
 
 use timewitness_core::evidence::drand::{self, Chain};
-use timewitness_core::time::{Nanos, NANOS_PER_SEC};
-use timewitness_core::{Attestation, UnixNanos};
+use timewitness_core::Attestation;
 
 use crate::{http, FreshnessBeacon, SourceError};
 
 /// How long to wait for a relay.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
-
-/// How far from the expected round a fetched one may be before it is refused.
-///
-/// Five minutes, on a chain whose rounds are three seconds apart, so a hundred rounds of slack. It
-/// is generous on purpose: the expectation comes from the agent's own model and the point of this
-/// check is to catch a relay that is hours or days behind, not to police a second.
-pub const DEFAULT_STALENESS: Nanos = 300 * NANOS_PER_SEC;
 
 /// A client for one drand chain, over one or more relays.
 #[derive(Clone, Debug)]
@@ -116,48 +107,6 @@ impl DrandClient {
         Err(last.unwrap_or_else(|| SourceError::Transport("no relay was configured".to_string())))
     }
 
-    /// Fetch whatever the relay calls the latest round, and refuse it if it is not near the round
-    /// the caller expected.
-    ///
-    /// `expected` comes from the agent's own model of UTC. That is the honest source for it: the
-    /// machine has no other idea of the time, and if the model is wrong then the corridor evidence
-    /// is what catches that, not this. The tolerance is the width of the disagreement this is
-    /// willing to put down to a relay lagging.
-    pub fn latest_near(
-        &self,
-        expected: UnixNanos,
-        tolerance: Nanos,
-    ) -> Result<Attestation, SourceError> {
-        let path = format!("/{}/public/latest", self.chain_hash_hex());
-        let mut last: Option<SourceError> = None;
-        for relay in &self.relays {
-            match self.fetch_and_check(&format!("{relay}{path}"), None) {
-                Ok(attestation) => {
-                    let drift = attestation.at.as_nanos() - expected.as_nanos();
-                    if drift > tolerance {
-                        last = Some(SourceError::Malformed(format!(
-                            "{relay} answered with a round dated {} s after the time this agent \
-                             believes it is, which is further ahead than a relay lag explains",
-                            drift / NANOS_PER_SEC
-                        )));
-                        continue;
-                    }
-                    if -drift > tolerance {
-                        last = Some(SourceError::Malformed(format!(
-                            "{relay} answered with a round {} s old, and a not-earlier-than edge \
-                             that far behind the reading pins nothing",
-                            -drift / NANOS_PER_SEC
-                        )));
-                        continue;
-                    }
-                    return Ok(attestation);
-                }
-                Err(e) => last = Some(e),
-            }
-        }
-        Err(last.unwrap_or_else(|| SourceError::Transport("no relay was configured".to_string())))
-    }
-
     fn fetch_and_check(
         &self,
         url: &str,
@@ -214,12 +163,8 @@ impl FreshnessBeacon for DrandClient {
         drand::SCHEME
     }
 
-    fn fetch_near(
-        &self,
-        expected: UnixNanos,
-        tolerance: Nanos,
-    ) -> Result<Attestation, SourceError> {
-        self.latest_near(expected, tolerance)
+    fn latest(&self) -> Result<Attestation, SourceError> {
+        DrandClient::latest(self)
     }
 }
 
