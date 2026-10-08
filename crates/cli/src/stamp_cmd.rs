@@ -729,7 +729,7 @@ impl Polled {
     }
 }
 
-/// What this run did to the system clock, in a line of its own.
+/// What a stamp did to the system clock, in a line of its own.
 ///
 /// Measure and vouch, which on this machine means the system clock is left exactly as it was
 /// found. Said out loud in the run's own output because the alternative, an agent that quietly
@@ -910,7 +910,7 @@ struct Made {
 /// moment the receipt claimed. On 2026-10-08 the released v0.8 stamp wrote a receipt with a round
 /// 2.204 s past its own edge, and its own `verify` refused it.
 ///
-/// **Fetching first rather than choosing the round from the reading, and the reason is hard rule 2.**
+/// **Fetching first rather than choosing the round from the reading, so the round can disagree.**
 /// The other way to keep the round before the reading is to work out which round falls before the
 /// earliest moment the reading claims and ask for that one. It would always agree with the claim,
 /// because it was chosen off the claim, and an edge that cannot disagree with our own bound is our
@@ -1034,7 +1034,7 @@ fn the_verifier_holds_it(signed: &[u8], subject_hash: &[u8; 32]) -> Result<(), S
     match what_the_verifier_refuses(signed, subject_hash) {
         None => Ok(()),
         Some(why) => Err(format!(
-            "no receipt was written. `timewitness verify` would refuse the receipt this run made \
+            "no receipt was written. `timewitness verify` would refuse the receipt this stamp made \
              ({why}), and a stamp never writes a receipt its own verify refuses"
         )),
     }
@@ -1206,7 +1206,7 @@ fn gather(
 /// Until v0.8.2 every corridor wholly after the claim was set aside. A reading slow by more than its
 /// own bound then turned every honest corridor into a late one, and the receipt was written with no
 /// corridor in it. The test of lateness was our own claim, and an edge judged by our own claim cannot
-/// disagree with it, which is hard rule 2.
+/// disagree with it. That passes our own claim off as a third party's evidence.
 fn late_rather_than_wrong(attestation: &Attestation, claim: &AgentClaim, since: Nanos) -> bool {
     if attestation.earliest() <= claim.latest {
         return false;
