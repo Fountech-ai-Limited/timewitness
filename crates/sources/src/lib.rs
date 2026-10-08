@@ -187,15 +187,14 @@ pub trait FreshnessBeacon {
     /// The scheme name the receipt format uses for this beacon.
     fn scheme(&self) -> &'static str;
 
-    /// Fetch the current published value and check it.
+    /// Fetch the newest value the beacon has published, and check it.
     ///
-    /// `expected` is where the agent's own model believes the present is, and `tolerance` is how far
-    /// from that a published value may be before it is refused. A beacon far behind the reading is
-    /// not evidence for it: the edge it pins is one nobody needed pinning. The expectation comes
-    /// from a clock the agent already admits it cannot fully trust, which is why the corridor role
-    /// exists separately.
-    fn fetch_near(&self, expected: UnixNanos, tolerance: Nanos)
-        -> Result<Attestation, SourceError>;
+    /// Asked before the moment it is to pin. A value nobody could know before it was published,
+    /// fetched first, was published first, and that order is the whole of what a not-earlier-than
+    /// edge rests on. How far behind the moment it may be is for the caller to judge once it has
+    /// the moment, so nothing here takes a time. Until v0.8.1 this took the moment the caller
+    /// expected and a tolerance either side of it, and a value published after the moment passed.
+    fn latest(&self) -> Result<Attestation, SourceError>;
 }
 
 /// Something that will put its own name to having seen a value.
