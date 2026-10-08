@@ -952,16 +952,23 @@ fn finish(
         .key
         .sign(&receipt)
         .map_err(|e| format!("the receipt would not sign: {e}"))?;
+    // Read before anything goes outside the signature, so a receipt that is already refused costs
+    // no authority a token, and so a witness set aside below is set aside for itself alone.
+    the_verifier_holds_it(&signed, &signing.subject_hash)?;
+
     // After signing, because it is about the signature. Every attestation gathered above is about
     // the subject, so it places the thing stamped and not the signing; this one places the signing.
     let signed = if with_evidence {
-        let (witnessed, said) = witness_the_signature(outside, signed, deadline);
+        let (witnessed, said) =
+            witness_the_signature(outside, signed, &signing.subject_hash, deadline);
         notes.push(said);
         witnessed
     } else {
         signed
     };
 
+    // And once more over the bytes that go on disk. Nothing above should be able to fail it, which
+    // is the reason to ask rather than to assume.
     the_verifier_holds_it(&signed, &signing.subject_hash)?;
 
     Ok(Made {
@@ -987,8 +994,9 @@ fn the_newest_round(outside: &mut dyn Outside, deadline: Deadline) -> Result<Att
 ///
 /// One direction is judged here and not the other. A round published after the latest moment the
 /// receipt claims is kept: fetched before the reading, it can only be there if the reading is
-/// wrong, and leaving it out would hide the one piece of outside evidence that says so. The check
-/// before the file then refuses the receipt, and the run says why.
+/// wrong or the chain published a round ahead of its own schedule, and leaving it out would hide
+/// the one piece of outside evidence that says so. The check before the file then refuses the
+/// receipt, and the run says why.
 fn recent_enough(round: Attestation, claim: &AgentClaim) -> Result<Attestation, String> {
     let behind = claim.earliest.as_nanos() - round.at.as_nanos();
     if behind > BEACON_TOLERANCE {
@@ -1006,11 +1014,22 @@ fn recent_enough(round: Attestation, claim: &AgentClaim) -> Result<Attestation, 
 ///
 /// The same function, the same published trust material and the same floor a reader gets with no
 /// options, over the bytes about to go on disk, so what this lets through is what that command
-/// accepts. The Action has run `verify` over every receipt it stamps since v0.4 and failed the step
-/// on a refusal, but only after the file was written, and the command line on its own never did. A
+/// accepts. The Action has always run `verify` over the receipt it stamps and failed the step on a
+/// refusal, but only after the file was written, and the command line on its own never did. A
 /// receipt is a thing a stranger is handed, and one its maker's own verifier refuses is not
 /// something to hand over.
 fn the_verifier_holds_it(signed: &[u8], subject_hash: &[u8; 32]) -> Result<(), String> {
+    match what_the_verifier_refuses(signed, subject_hash) {
+        None => Ok(()),
+        Some(why) => Err(format!(
+            "no receipt was written. `timewitness verify` would refuse the receipt this run made \
+             ({why}), and a stamp never writes a receipt its own verify refuses"
+        )),
+    }
+}
+
+/// The check `timewitness verify` would refuse these bytes on, in its own words, or nothing.
+fn what_the_verifier_refuses(signed: &[u8], subject_hash: &[u8; 32]) -> Option<String> {
     let read = timewitness_verify::verify(
         signed,
         Subject::Digest(subject_hash),
@@ -1018,15 +1037,11 @@ fn the_verifier_holds_it(signed: &[u8], subject_hash: &[u8; 32]) -> Result<(), S
         &Floor::default(),
     );
     if read.holds() {
-        return Ok(());
+        return None;
     }
-    let why = read.refusal().map_or_else(
+    Some(read.refusal().map_or_else(
         || read.headline(),
         |step| format!("{}: {}", step.question, step.state.detail()),
-    );
-    Err(format!(
-        "no receipt was written. `timewitness verify` would refuse the receipt this run made \
-         ({why}), and a stamp never writes a receipt its own verify refuses"
     ))
 }
 
@@ -1163,9 +1178,15 @@ fn gather(
 /// Optional, as every attestation is: a receipt whose signature nobody witnessed is signed all the
 /// same and says so, and the verifier reports it as a receipt that places its subject and not its
 /// signing. What comes back is the receipt to write and the line the run prints about it.
+///
+/// A token the verifier refuses is left off and the next authority is asked. The witness sits outside
+/// the signature and nothing inside the receipt rests on it, so leaving it off changes no claim the
+/// receipt makes. The case it is there for is an authority whose clock puts the signing before the
+/// beacon inside it.
 fn witness_the_signature(
     outside: &mut dyn Outside,
     signed: Vec<u8>,
+    subject_hash: &[u8; 32],
     deadline: Deadline,
 ) -> (Vec<u8>, String) {
     let signature = match signature_of(&signed) {
@@ -1190,13 +1211,20 @@ fn witness_the_signature(
         match outside.witness_signature(authority, &digest) {
             Ok(blob) => match with_signature_witness(&signed, &blob) {
                 Ok(witnessed) => {
+                    if let Some(why) = what_the_verifier_refuses(&witnessed, subject_hash) {
+                        refusals.push(format!(
+                            "{name}: its token was left off, because `timewitness verify` refuses \
+                             the receipt with it ({why})"
+                        ));
+                        continue;
+                    }
                     return (
                         witnessed,
                         format!(
                             "the signature itself was witnessed by {name}, so a reader can place \
                              the signing and not only the subject"
                         ),
-                    )
+                    );
                 }
                 Err(e) => refusals.push(format!("{name}: {e}")),
             },

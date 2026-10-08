@@ -100,6 +100,8 @@ struct Elsewhere {
     beacon_lag: Nanos,
     corridors: Vec<(String, Answer<Option<Attestation>>)>,
     witnesses: Vec<(String, Answer<(Attestation, bool)>)>,
+    /// What every authority hands back when shown the digest of the signature.
+    over_the_signature: Result<Vec<u8>, String>,
 }
 
 impl Elsewhere {
@@ -122,8 +124,9 @@ impl Elsewhere {
             corridors: Vec::new(),
             witnesses: vec![(
                 "DigiCert".into(),
-                after(0, Err("not asked for in this test".into())),
+                after(0, Err("did not answer in this test".into())),
             )],
+            over_the_signature: Err("did not answer in this test".into()),
         }
     }
 
@@ -186,7 +189,7 @@ impl Outside for Elsewhere {
     }
 
     fn witness_signature(&mut self, _: usize, _: &[u8; 32]) -> Result<Vec<u8>, String> {
-        Err("not asked for in this test".into())
+        self.over_the_signature.clone()
     }
 }
 
@@ -235,6 +238,14 @@ fn stamp(
     outside: &mut Elsewhere,
     read: impl FnOnce() -> Result<Reading, String>,
 ) -> Result<Made, String> {
+    stamp_with(outside, read, true)
+}
+
+fn stamp_with(
+    outside: &mut Elsewhere,
+    read: impl FnOnce() -> Result<Reading, String>,
+    with_evidence: bool,
+) -> Result<Made, String> {
     let key = AgentKey::from_seed(&[0x22; 32]);
     let signing = Signing {
         key: &key,
@@ -246,7 +257,7 @@ fn stamp(
         sequence: 1,
         previous: None,
     };
-    finish(outside, read, signing, true, Deadline::of(300))
+    finish(outside, read, signing, with_evidence, Deadline::of(300))
 }
 
 /// What `timewitness verify` says, with no options, of the bytes the stamp would write.
@@ -337,6 +348,13 @@ fn a_corridor_that_answers_too_late_is_set_aside_rather_than_written() {
         "the run should say why the corridor it was handed is not there: {:?}",
         made.notes
     );
+    assert!(
+        made.notes
+            .iter()
+            .any(|note| note.starts_with("no corridor from time.txryan.com")),
+        "the next server should have been asked: {:?}",
+        made.notes
+    );
 }
 
 #[test]
@@ -407,8 +425,54 @@ fn a_round_the_relays_are_far_behind_on_is_set_aside() {
     assert!(
         made.notes
             .iter()
-            .any(|note| note.starts_with("no freshness beacon")),
+            .any(|note| note.starts_with("no freshness beacon")
+                && note.contains("published")
+                && note.contains("before the earliest moment this receipt claims")),
+        "the round should be set aside for its age: {:?}",
+        made.notes
+    );
+}
+
+#[test]
+fn a_witness_over_the_signature_the_verifier_refuses_is_left_off() {
+    // The authority hands back the token it signed over the subject, which is a real DigiCert token
+    // and not one over this receipt's signature. With it on, verify refuses the receipt. The token
+    // sits outside the signature, so the receipt is written without it and the run says so.
+    let clock = Clock::at(ROUND_32000947 + SECOND);
+    let mut outside = Elsewhere::at(&clock);
+    outside.over_the_signature = Ok(unhex(WITNESS));
+
+    let made = stamp(&mut outside, a_reading(&clock, 0)).expect("a receipt, without the token");
+    let read = read_as_a_stranger(&made);
+
+    assert!(read.holds(), "verify refused it: {}", why_refused(&read));
+    assert!(
+        timewitness_receipt::without_signature_witness(&made.signed).is_none(),
+        "the token verify refuses was put on the receipt"
+    );
+    assert!(
+        made.notes.iter().any(|note| note.contains("left off")),
         "{:?}",
         made.notes
+    );
+}
+
+#[test]
+fn a_stamp_with_no_evidence_asks_nobody_and_still_holds() {
+    // `--no-evidence` asks no party outside the machine, the beacon included, which on this clock
+    // would have taken a tenth of a second.
+    let clock = Clock::at(ROUND_32000947 + SECOND);
+    let mut outside = Elsewhere::at(&clock);
+    outside.beacon_takes = 7 * SECOND;
+
+    let made = stamp_with(&mut outside, a_reading(&clock, 0), false).expect("a receipt");
+    let read = read_as_a_stranger(&made);
+
+    assert!(read.holds(), "verify refused it: {}", why_refused(&read));
+    assert!(made.receipt.evidence.is_empty());
+    assert_eq!(
+        clock.now(),
+        ROUND_32000947 + SECOND + NANOS_PER_MILLI,
+        "only the reading took any time, so nothing else was asked"
     );
 }
