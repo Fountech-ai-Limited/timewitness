@@ -485,12 +485,12 @@ fn a_stamp_with_no_evidence_asks_nobody_and_still_holds() {
 
 #[test]
 fn a_slow_reading_its_prompt_corridor_contradicts_writes_no_receipt() {
-    // Two seconds after round 32000947, as in the prompt case above. The reading says the moment was
-    // a second and a half before it was taken, which is a model gone slow by more than its own
-    // bound. roughtime.se answers in 50 ms with a corridor round the true moment, so the corridor
-    // starts after the latest moment the reading claims, by more than 50 ms of waiting can explain.
-    // That is the reading being wrong rather than the corridor being late, and until v0.8.2 the
-    // stamp set the corridor aside and wrote the receipt.
+    // Two seconds after round 32000947, as in the case above where every party answers quickly. The
+    // reading says the moment was a second and a half before it was taken, which is a model gone
+    // slow by more than its own bound. roughtime.se answers in 50 ms with a corridor round the true
+    // moment, so the corridor starts after the latest moment the reading claims, by more than 50 ms
+    // of waiting can explain. That is the reading being wrong rather than the corridor being late,
+    // and until v0.8.2 the stamp set the corridor aside and wrote the receipt.
     let clock = Clock::at(ROUND_32000947 + 2 * SECOND);
     let mut outside = Elsewhere::at(&clock);
     outside.corridors = vec![(
