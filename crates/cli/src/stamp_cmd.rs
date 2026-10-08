@@ -57,12 +57,12 @@ use timewitness_clock::monotonic::SystemMonotonic;
 use timewitness_clock::{
     Applied, ClockModel, Discipline, MonotonicClock, Policy, ShadowDiscipline,
 };
-use timewitness_core::evidence::rfc3161::in_one_spelling;
+use timewitness_core::evidence::rfc3161::{in_one_spelling, Authority};
 use timewitness_core::evidence::roughtime::MIN_RADIUS_SECONDS;
 use timewitness_core::time::{Nanos, NANOS_PER_SEC};
 use timewitness_core::{Attestation, UnixNanos, Validity};
 use timewitness_platform::EnvironmentWatch;
-use timewitness_receipt::schema::{Evidence, Receipt, Role, Scheme, TakenBy};
+use timewitness_receipt::schema::{Evidence, Payload, Receipt, Role, Scheme, TakenBy};
 use timewitness_receipt::{
     chain_link, sha256_payload, signature_of, with_signature_witness, AgentKey,
 };
@@ -378,46 +378,43 @@ pub fn run(args: &Args) -> Outcome {
         },
     };
 
-    let Reading {
-        carrier: mut receipt,
-        mut notes,
-    } = match args.value("--agent") {
-        Some(endpoint_path) => match from_the_agent(args, endpoint_path) {
-            Ok(reading) => reading,
+    let signing = Signing {
+        key: &key,
+        subject_hash,
+        payload,
+        sequence,
+        previous,
+    };
+    let with_evidence = !args.flag("--no-evidence");
+    let mut outside = Published::new();
+    let finished = match args.value("--agent") {
+        Some(endpoint_path) => finish(
+            &mut outside,
+            || from_the_agent(args, endpoint_path),
+            signing,
+            with_evidence,
+            deadline,
+        ),
+        None => match poll_a_model_of_our_own(args, deadline) {
+            Ok(polled) => finish(
+                &mut outside,
+                || polled.read(),
+                signing,
+                with_evidence,
+                deadline,
+            ),
             Err(text) => return fail(&text),
         },
-        None => match from_a_model_of_our_own(args, deadline) {
-            Ok(reading) => reading,
-            Err(text) => return fail(&text),
-        },
+    };
+    let Made {
+        signed,
+        receipt,
+        notes,
+    } = match finished {
+        Ok(made) => made,
+        Err(text) => return fail(&text),
     };
 
-    // What the carrier was holding a place for. The agent never sees any of it, and the one-shot
-    // path fills in the same four fields at the same point, so a receipt is assembled once.
-    receipt.sequence = sequence;
-    receipt.chain_previous = previous;
-    receipt.payload = payload;
-    receipt.agent_public_key = key.public_key_bytes();
-
-    if !args.flag("--no-evidence") {
-        let (evidence, gathered) = gather(&subject_hash, receipt.utc_estimate, deadline);
-        receipt.evidence = evidence;
-        notes.extend(gathered);
-    }
-
-    let signed = match key.sign(&receipt) {
-        Ok(bytes) => bytes,
-        Err(e) => return fail(&format!("the receipt would not sign: {e}")),
-    };
-    // After signing, because it is about the signature. Every attestation gathered above is about
-    // the subject, so it places the thing stamped and not the signing; this one places the signing.
-    let signed = if args.flag("--no-evidence") {
-        signed
-    } else {
-        let (witnessed, said) = witness_the_signature(signed, deadline);
-        notes.push(said);
-        witnessed
-    };
     if let Err(e) = fs::write(out_path, &signed) {
         return fail(&timewitness_platform::files::unwritable(
             std::path::Path::new(out_path),
@@ -560,12 +557,23 @@ fn from_the_agent(args: &Args, endpoint_path: &str) -> Result<Reading, String> {
     })
 }
 
-/// Build a model here, poll it, read it once and throw it away.
+/// A model this run built and polled, and has not read yet.
+///
+/// The reading is a step of its own, taken when [`finish`] is ready for it, so that nothing about
+/// when it is taken is decided in here.
+struct Polled {
+    model: ClockModel,
+    watch: EnvironmentWatch,
+    clock: Arc<SystemMonotonic>,
+    policy: Policy,
+    notes: Vec<String>,
+}
+
+/// Build a model here and poll it. [`Polled::read`] reads it once, and then it is thrown away.
 ///
 /// This is what runs under continuous integration and it is what the whole of the module comment
 /// above describes. The residual it carries is the price of a baseline measured in seconds.
-#[allow(clippy::too_many_lines)]
-fn from_a_model_of_our_own(args: &Args, deadline: Deadline) -> Result<Reading, String> {
+fn poll_a_model_of_our_own(args: &Args, deadline: Deadline) -> Result<Polled, String> {
     let rounds = match args.number("--rounds") {
         Ok(Some(n)) if n >= 1 => usize::try_from(n).unwrap_or(DEFAULT_ROUNDS),
         Ok(Some(_)) => return Err("--rounds is at least one".into()),
@@ -678,29 +686,60 @@ fn from_a_model_of_our_own(args: &Args, deadline: Deadline) -> Result<Reading, S
         }
     }
 
-    // One last look before the reading. Anything that happened to this machine's clock between the
-    // final synchronisation and the stamp is exactly what a receipt must not be issued over.
-    note_interruptions(&mut model, watch.look(clock.now()), &mut notes);
+    Ok(Polled {
+        model,
+        watch,
+        clock,
+        policy,
+        notes,
+    })
+}
 
-    let stamp = model.read().map_err(|refusal| {
-        format!(
-            "no receipt: {refusal}. This is the refusal working rather than a fault. A wider \
-             interval says something true and a narrow wrong one does not"
-        )
-    })?;
+impl Polled {
+    /// Read the model once, with no network in it.
+    fn read(self) -> Result<Reading, String> {
+        let Polled {
+            mut model,
+            mut watch,
+            clock,
+            policy,
+            mut notes,
+        } = self;
 
-    // Measure and vouch, which on this machine means the system clock is left exactly as it was
-    // found. Said out loud in the run's own output because the alternative, an agent that quietly
-    // fights whatever else is disciplining the clock, is what this default exists to avoid.
+        // One last look before the reading. Anything that happened to this machine's clock between
+        // the final synchronisation and the stamp is exactly what a receipt must not be issued over.
+        note_interruptions(&mut model, watch.look(clock.now()), &mut notes);
+
+        let stamp = model.read().map_err(|refusal| {
+            format!(
+                "no receipt: {refusal}. This is the refusal working rather than a fault. A wider \
+                 interval says something true and a narrow wrong one does not"
+            )
+        })?;
+        notes.push(how_the_clock_was_left(stamp.frequency_ppm));
+
+        Ok(Reading {
+            carrier: carrier(&stamp, policy_record(&policy), TakenBy::OneShot),
+            notes,
+        })
+    }
+}
+
+/// What this run did to the system clock, in a line of its own.
+///
+/// Measure and vouch, which on this machine means the system clock is left exactly as it was
+/// found. Said out loud in the run's own output because the alternative, an agent that quietly
+/// fights whatever else is disciplining the clock, is what this default exists to avoid.
+fn how_the_clock_was_left(frequency_ppm: Option<f64>) -> String {
     let mut discipline = ShadowDiscipline;
-    match discipline.apply(stamp.frequency_ppm.unwrap_or(0.0)) {
+    match discipline.apply(frequency_ppm.unwrap_or(0.0)) {
         // Parts per million is a rate and not a distance, so this says running fast or slow rather
         // than "from UTC", which the line used to say and which invited a reader to take it as an
         // offset. Where the model would not stand behind a rate it is not printed at all: over a
         // run this short the fit measures the servers' jitter divided by two seconds, and a figure
         // in the thousands on the first line of the output is the first thing a hostile reviewer
         // reads.
-        Ok(Applied::Vouched) => notes.push(match stamp.frequency_ppm {
+        Ok(Applied::Vouched) => match frequency_ppm {
             Some(ppm) => format!(
                 "the system clock was measured and left alone, running at {ppm:.3} parts per \
                  million against the model"
@@ -711,21 +750,215 @@ fn from_a_model_of_our_own(args: &Args, deadline: Deadline) -> Result<Reading, S
                      of what the fit allowed is in the width instead"
                     .to_string()
             }
-        }),
+        },
         Ok(Applied::Rate {
             requested_ppm,
             applied_ppm,
-        }) => notes.push(format!(
+        }) => format!(
             "the system clock's rate was changed by {applied_ppm:.3} parts per million, having \
              asked for {requested_ppm:.3}"
-        )),
-        Err(e) => notes.push(format!("the clock was not disciplined: {e}")),
+        ),
+        Err(e) => format!("the clock was not disciplined: {e}"),
+    }
+}
+
+/// The parties outside this machine that a stamp asks for evidence.
+///
+/// One method for each call a stamp makes, and the stamp decides the order of the calls and the
+/// deadline between them. The published servers answer in a run. A test stands in for them with a
+/// clock of its own, because the faults that matter here are about when each answer arrived, and a
+/// test that waits on the real servers can neither choose that nor repeat it.
+trait Outside {
+    /// The newest round the beacon's relays hold, checked.
+    fn beacon(&mut self) -> Result<Attestation, String>;
+    /// The beacon's name, for the entry a round goes into.
+    fn beacon_name(&self) -> String;
+    /// The corridor servers, in the order they are asked.
+    fn corridor_servers(&self) -> Vec<String>;
+    /// One corridor server's answer over a nonce bound to the subject, where it signed one.
+    fn corridor(
+        &mut self,
+        server: usize,
+        subject_hash: &[u8; 32],
+    ) -> Result<Option<Attestation>, String>;
+    /// The timestamp authorities, in the order they are asked.
+    fn authorities(&self) -> Vec<String>;
+    /// One authority's token over a hash, and whether the authority states that its tokens are
+    /// ordered by the times they state.
+    fn witness(&mut self, authority: usize, hash: &[u8; 32])
+        -> Result<(Attestation, bool), String>;
+    /// One authority's token over the digest of a signature, in the one spelling a reader accepts.
+    fn witness_signature(&mut self, authority: usize, digest: &[u8; 32])
+        -> Result<Vec<u8>, String>;
+}
+
+/// The servers this product publishes, asked over the network.
+struct Published {
+    corridor: Vec<RoughtimeServer>,
+    beacon: DrandClient,
+    authorities: Vec<Authority>,
+    clock: SystemMonotonic,
+}
+
+impl Published {
+    fn new() -> Self {
+        Self {
+            corridor: RoughtimeServer::published(),
+            beacon: DrandClient::quicknet(),
+            authorities: published_authorities(),
+            clock: SystemMonotonic::new(),
+        }
+    }
+}
+
+impl Outside for Published {
+    fn beacon(&mut self) -> Result<Attestation, String> {
+        self.beacon.latest().map_err(|e| e.to_string())
     }
 
-    Ok(Reading {
-        carrier: carrier(&stamp, policy_record(&policy), TakenBy::OneShot),
+    fn beacon_name(&self) -> String {
+        self.beacon.chain().name.to_string()
+    }
+
+    fn corridor_servers(&self) -> Vec<String> {
+        self.corridor.iter().map(|s| s.name.clone()).collect()
+    }
+
+    fn corridor(
+        &mut self,
+        server: usize,
+        subject_hash: &[u8; 32],
+    ) -> Result<Option<Attestation>, String> {
+        let client = RoughtimeClient::new(self.corridor[server].clone());
+        client
+            .poll_for_subject(self.clock.now(), subject_hash)
+            .map(|exchange| exchange.attestation)
+            .map_err(|e| e.to_string())
+    }
+
+    fn authorities(&self) -> Vec<String> {
+        self.authorities.iter().map(|a| a.name.clone()).collect()
+    }
+
+    fn witness(
+        &mut self,
+        authority: usize,
+        hash: &[u8; 32],
+    ) -> Result<(Attestation, bool), String> {
+        let client = TimestampClient::new(self.authorities[authority].clone());
+        let attestation = client.witness(hash).map_err(|e| e.to_string())?;
+        let ordered = matches!(client.orders_by_stated_time(&attestation.blob), Ok(true));
+        Ok((attestation, ordered))
+    }
+
+    fn witness_signature(
+        &mut self,
+        authority: usize,
+        digest: &[u8; 32],
+    ) -> Result<Vec<u8>, String> {
+        // Stored in the one spelling a reader accepts, which drops any certificate the token's
+        // signature does not name, DigiCert's two beside its pinned signer apart. Both authorities
+        // already answer in that spelling, and nothing signed changes either way.
+        TimestampClient::new(self.authorities[authority].clone())
+            .witness(digest)
+            .map_err(|e| e.to_string())
+            .and_then(|attestation| {
+                in_one_spelling(&attestation.blob, digest).map_err(|e| e.to_string())
+            })
+    }
+}
+
+/// What signs a receipt and what it is about, put into it after the reading whichever path the
+/// reading came by.
+struct Signing<'a> {
+    key: &'a AgentKey,
+    subject_hash: [u8; 32],
+    payload: Payload,
+    sequence: u64,
+    previous: Option<Vec<u8>>,
+}
+
+/// What a stamp has made once it is ready to write: the bytes, the receipt they carry, and what the
+/// run has to say about how it came by them.
+struct Made {
+    signed: Vec<u8>,
+    receipt: Receipt,
+    notes: Vec<String>,
+}
+
+/// Everything from the reading to the bytes that go on disk.
+///
+/// `read` takes the reading, and it is called here rather than before so that this function, and
+/// nothing else, decides what is asked of the world outside before the reading and what after it.
+fn finish(
+    outside: &mut dyn Outside,
+    read: impl FnOnce() -> Result<Reading, String>,
+    signing: Signing<'_>,
+    with_evidence: bool,
+    deadline: Deadline,
+) -> Result<Made, String> {
+    let Reading {
+        carrier: mut receipt,
+        mut notes,
+    } = read()?;
+
+    // What the carrier was holding a place for. The agent never sees any of it, and the one-shot
+    // path fills in the same four fields at the same point, so a receipt is assembled once.
+    receipt.sequence = signing.sequence;
+    receipt.chain_previous = signing.previous;
+    receipt.payload = signing.payload;
+    receipt.agent_public_key = signing.key.public_key_bytes();
+
+    if with_evidence {
+        let (evidence, gathered) = gather(
+            outside,
+            &signing.subject_hash,
+            receipt.utc_estimate,
+            deadline,
+        );
+        receipt.evidence = evidence;
+        notes.extend(gathered);
+    }
+
+    let signed = signing
+        .key
+        .sign(&receipt)
+        .map_err(|e| format!("the receipt would not sign: {e}"))?;
+    // After signing, because it is about the signature. Every attestation gathered above is about
+    // the subject, so it places the thing stamped and not the signing; this one places the signing.
+    let signed = if with_evidence {
+        let (witnessed, said) = witness_the_signature(outside, signed, deadline);
+        notes.push(said);
+        witnessed
+    } else {
+        signed
+    };
+
+    Ok(Made {
+        signed,
+        receipt,
         notes,
     })
+}
+
+/// A beacon round, or the reason it is not near enough the reading to keep.
+fn near_the_reading(attestation: Attestation, reading: UnixNanos) -> Result<Attestation, String> {
+    let drift = attestation.at.as_nanos() - reading.as_nanos();
+    if drift > BEACON_TOLERANCE {
+        return Err(format!(
+            "the relay answered with a round dated {} s after the time this agent believes it is, \
+             which is further ahead than a relay lag explains",
+            drift / NANOS_PER_SEC
+        ));
+    }
+    if -drift > BEACON_TOLERANCE {
+        return Err(format!(
+            "the relay answered with a round {} s old, and a not-earlier-than edge that far behind \
+             the reading pins nothing",
+            -drift / NANOS_PER_SEC
+        ));
+    }
+    Ok(attestation)
 }
 
 /// One attestation in each role, or as many of the three as answered.
@@ -734,13 +967,13 @@ fn from_a_model_of_our_own(args: &Args, deadline: Deadline) -> Result<Reading, S
 /// nearest that moment. Nothing else here depends on how the reading was arrived at, which is why
 /// this takes the one value rather than the whole stamp.
 fn gather(
+    outside: &mut dyn Outside,
     subject_hash: &[u8; 32],
     reading: UnixNanos,
     deadline: Deadline,
 ) -> (Vec<Evidence>, Vec<String>) {
     let mut evidence = Vec::new();
     let mut notes = Vec::new();
-    let clock = SystemMonotonic::new();
 
     // The deadline reaches here too, and it does something different. Past it the polling refuses,
     // because a reading from a model that was not finished is not a reading. Here the reading
@@ -760,24 +993,22 @@ fn gather(
 
     // The corridor. The nonce is derived from the hash of what is being stamped and a fresh salt, so
     // the response is about this subject and could not have been fetched in advance.
-    for server in RoughtimeServer::published() {
+    for (server, name) in outside.corridor_servers().into_iter().enumerate() {
         if out_of_time(&mut notes, "corridor") {
             break;
         }
-        let client = RoughtimeClient::new(server);
-        match client.poll_for_subject(clock.now(), subject_hash) {
-            Ok(exchange) => {
-                if let Some(attestation) = exchange.attestation {
-                    evidence.push(entry(
-                        Role::AuthenticatedUtcCorridor,
-                        "roughtime",
-                        &attestation,
-                        client.server().name.clone(),
-                    ));
-                    break;
-                }
+        match outside.corridor(server, subject_hash) {
+            Ok(Some(attestation)) => {
+                evidence.push(entry(
+                    Role::AuthenticatedUtcCorridor,
+                    "roughtime",
+                    &attestation,
+                    name,
+                ));
+                break;
             }
-            Err(e) => notes.push(format!("no corridor from {}: {e}", client.server().name)),
+            Ok(None) => {}
+            Err(e) => notes.push(format!("no corridor from {name}: {e}")),
         }
     }
     if evidence.is_empty() {
@@ -789,40 +1020,41 @@ fn gather(
     }
 
     // Not earlier than.
-    let beacon = DrandClient::quicknet();
     if out_of_time(&mut notes, "freshness beacon") {
         return (evidence, notes);
     }
-    match beacon.latest_near(reading, BEACON_TOLERANCE) {
+    match outside
+        .beacon()
+        .and_then(|attestation| near_the_reading(attestation, reading))
+    {
         Ok(attestation) => evidence.push(entry(
             Role::NotEarlierThan,
             "drand",
             &attestation,
-            beacon.chain().name.to_string(),
+            outside.beacon_name(),
         )),
         Err(e) => notes.push(format!("no freshness beacon: {e}")),
     }
 
     // Not later than.
     let mut witnessed = false;
-    for authority in published_authorities() {
+    for (authority, name) in outside.authorities().into_iter().enumerate() {
         if out_of_time(&mut notes, "final witness") {
             return (evidence, notes);
         }
-        let name = authority.name.clone();
-        let client = TimestampClient::new(authority);
-        match client.witness(subject_hash) {
-            Ok(attestation) => {
+        match outside.witness(authority, subject_hash) {
+            Ok((attestation, ordered)) => {
                 // What the authority says about ordering its own tokens goes beside its name. The
                 // product's claim is unbroken order, so a reader of the receipt should not have to
                 // parse the token to find out whether the authority put its name to any of it.
-                let detail = match client.orders_by_stated_time(&attestation.blob) {
-                    Ok(true) => format!(
+                let detail = if ordered {
+                    format!(
                         "{name}, which states its own tokens are ordered by the times they state"
-                    ),
-                    _ => format!(
+                    )
+                } else {
+                    format!(
                         "{name}, which makes no claim that the times it states order its own tokens"
-                    ),
+                    )
                 };
                 evidence.push(entry(Role::NotLaterThan, "rfc3161", &attestation, detail));
                 witnessed = true;
@@ -846,7 +1078,11 @@ fn gather(
 /// Optional, as every attestation is: a receipt whose signature nobody witnessed is signed all the
 /// same and says so, and the verifier reports it as a receipt that places its subject and not its
 /// signing. What comes back is the receipt to write and the line the run prints about it.
-fn witness_the_signature(signed: Vec<u8>, deadline: Deadline) -> (Vec<u8>, String) {
+fn witness_the_signature(
+    outside: &mut dyn Outside,
+    signed: Vec<u8>,
+    deadline: Deadline,
+) -> (Vec<u8>, String) {
     let signature = match signature_of(&signed) {
         Ok(signature) => signature,
         Err(e) => return (signed, format!("no witness over the signature: {e}")),
@@ -858,7 +1094,7 @@ fn witness_the_signature(signed: Vec<u8>, deadline: Deadline) -> (Vec<u8>, Strin
         );
     };
     let mut refusals = Vec::new();
-    for authority in published_authorities() {
+    for (authority, name) in outside.authorities().into_iter().enumerate() {
         if deadline.left().is_none() {
             refusals.push(format!(
                 "this run passed its {} s deadline first",
@@ -866,17 +1102,7 @@ fn witness_the_signature(signed: Vec<u8>, deadline: Deadline) -> (Vec<u8>, Strin
             ));
             break;
         }
-        let name = authority.name.clone();
-        // Stored in the one spelling a reader accepts, which drops any certificate the token's
-        // signature does not name, DigiCert's two beside its pinned signer apart. Both authorities
-        // already answer in that spelling, and nothing signed changes either way.
-        let respelled = TimestampClient::new(authority)
-            .witness(&digest)
-            .map_err(|e| e.to_string())
-            .and_then(|attestation| {
-                in_one_spelling(&attestation.blob, &digest).map_err(|e| e.to_string())
-            });
-        match respelled {
+        match outside.witness_signature(authority, &digest) {
             Ok(blob) => match with_signature_witness(&signed, &blob) {
                 Ok(witnessed) => {
                     return (

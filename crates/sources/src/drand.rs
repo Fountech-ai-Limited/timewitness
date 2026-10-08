@@ -98,6 +98,24 @@ impl DrandClient {
         Err(last.unwrap_or_else(|| SourceError::Transport("no relay was configured".to_string())))
     }
 
+    /// Fetch whatever the relays call the latest round, from the first that answers, and check it.
+    ///
+    /// The relay chooses the number, and the one choice it cannot make is a round nobody has
+    /// published yet, because nobody can sign one early. So a round fetched before a moment is a
+    /// round published before that moment. How far behind the moment it may be is for the caller to
+    /// judge once it has the moment.
+    pub fn latest(&self) -> Result<Attestation, SourceError> {
+        let path = format!("/{}/public/latest", self.chain_hash_hex());
+        let mut last: Option<SourceError> = None;
+        for relay in &self.relays {
+            match self.fetch_and_check(&format!("{relay}{path}"), None) {
+                Ok(attestation) => return Ok(attestation),
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last.unwrap_or_else(|| SourceError::Transport("no relay was configured".to_string())))
+    }
+
     /// Fetch whatever the relay calls the latest round, and refuse it if it is not near the round
     /// the caller expected.
     ///
