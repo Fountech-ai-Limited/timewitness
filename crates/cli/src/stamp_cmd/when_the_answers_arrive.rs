@@ -522,6 +522,35 @@ fn a_slow_reading_its_prompt_corridor_contradicts_writes_no_receipt() {
 }
 
 #[test]
+fn a_slow_relay_before_the_reading_is_not_counted_as_waiting_since_it() {
+    // The case above, with the drand relay taking three seconds to answer. The round is fetched
+    // before the reading is asked for, so those three seconds pass before the reading exists and
+    // are no part of the wait since it. The clock starts that much earlier, so the reading is taken
+    // close to where it was above, 50 ms before roughtime.se answers, and the answer has to be the
+    // same. Counted from before the fetch, the wait would be over three seconds, the corridor would
+    // be set aside as late, and the slow reading would be written.
+    let clock = Clock::at(ROUND_32000947 + 2 * SECOND - 3_051 * NANOS_PER_MILLI);
+    let mut outside = Elsewhere::at(&clock);
+    outside.beacon_takes = 3 * SECOND;
+    outside.corridors = vec![(
+        "roughtime.se".into(),
+        after(50 * NANOS_PER_MILLI, Ok(Some(the_corridor()))),
+    )];
+
+    let refused = stamp(&mut outside, a_reading(&clock, 1_500 * NANOS_PER_MILLI)).map(|made| {
+        format!(
+            "a receipt was made with {} entries ({:?})",
+            made.receipt.evidence.len(),
+            made.notes
+        )
+    });
+
+    let text = refused.expect_err("no receipt");
+    assert!(text.contains("no receipt was written"), "{text}");
+    assert!(text.to_lowercase().contains("corridor"), "{text}");
+}
+
+#[test]
 fn a_corridor_asked_well_after_the_reading_is_still_set_aside() {
     // Half a second after round 32000946. The first server takes five seconds to time out, and
     // roughtime.se then answers in 50 ms with a corridor round the moment it answered. It starts
