@@ -1,5 +1,15 @@
 # What TimeWitness cannot prove
 
+Version 30, 2026-10-10. Supersedes version 29 of 2026-10-08, which it keeps whole and corrects in
+two places. The item on what a bound rests on said all three evidence roles are fetched and carried
+in the receipt, and the claim at the head of the list said the signed evidence comes from three
+parties. A receipt carries whichever of the three roles were gathered for it, which can be fewer
+than three or none. So the item now names the three ways a role is left out: its party was not
+asked, gave no usable answer in time, or gave one that was set aside. The claim now counts roles, up
+to three, and puts no number on parties. What none of the roles does is unchanged: none supports the
+width, which is the agent's own claim. The `v0.8.2` release prints version 29 until the next
+release. The list still runs to 61 items.
+
 Version 29, 2026-10-08. Supersedes version 28 of 2026-10-07, which it keeps whole and corrects in
 one place. The note on version 26 said the drand round is fetched after the reading is taken. That
 was true when it was written and stopped being true at `v0.8.1`, which fetches the round before the
@@ -257,9 +267,9 @@ of what is built today. The last group is marked, because those move.
 
 ## The claim, so the limits have something to be limits of
 
-TimeWitness says: at this local counter reading, UTC was somewhere in this interval, and here is
-signed evidence from three parties who have never heard of us, each part showing one thing about the
-time and none saying when that reading was taken. The interval is our own claim and the outside
+TimeWitness says: at this local counter reading, UTC was somewhere in this interval, and here is the
+signed evidence this receipt carries, in up to three roles, from parties who have never heard of us,
+each part showing one thing about the time and none saying when that reading was taken. The interval is our own claim and the outside
 evidence does not vouch for it. That evidence is checked, and on the receipt committed in this repository it leaves one edge and not
 two: the beacon round shows the receipt was made no earlier than that round, and the timestamp authority
 states no accuracy of its own, so nothing here puts a number on how wrong that authority's clock could be. A
@@ -682,10 +692,13 @@ It improves the clock and it is not a witness.
 **Through the resident agent the reading behind a stamp is taken with no network call at all; through the one-shot command the network call that produced it is part of the same few seconds as the stamp.** This is about the reading and the bound and not about the whole run: gathering the three attestations is network work either way, and the receipt says how many it carries. The verifier prints the age of the newest exchange behind the interval on every receipt, so a reader can see how long the model extrapolated for; that age is read off the receipt, and the receipt is the signer's. What the agent buys is not free either: the reading is extrapolated over however long ago the last round was, and the model charges for that, so the term for the oscillator grows as the term for the fit falls.
 
 **Every receipt this product issues says its bound rests on the agent's own model, so no receipt yet
-carries third-party signed evidence for its bound.** All three evidence roles are fetched, carried
-in the receipt and checked by the verifier against keys a reader chose in advance. What none of them
-does is support the width: the receipt's own bound is the agent's claim and is labelled as one. The
-format can express a bound resting on outside signatures and nothing issues a receipt that does.
+carries third-party signed evidence for its bound.** A receipt carries whichever of the three
+evidence roles were gathered for it, which can be fewer than three or none. A role is left out where
+its party was not asked, gave no usable answer in time, or gave one that was set aside as too far
+from the reading to bear on it. Each one carried is checked by the verifier against keys a reader
+chose in advance. What none of them does is support the width: the receipt's own bound is the
+agent's claim and is labelled as one. The format can express a bound resting on outside signatures
+and nothing issues a receipt that does.
 
 **The resident agent refuses any interval wider than 250 ms, and the one-shot command, which the
 GitHub Action runs, refuses one wider than 2 s.** Read on 2026-09-15 off `max_bound_width` in
