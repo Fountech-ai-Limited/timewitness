@@ -196,9 +196,9 @@ dependencies = [
 
 [[package]]
 name = "ctutils"
-version = "0.4.2"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
+checksum = "fe3e9d21d39e6f39ff46e03d5b621424f88ee23d8a1672c6bfc9ccc7f2da4f6a"
 dependencies = [
  "cmov",
 ]
@@ -592,9 +592,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "once_cell",
  "ring",
@@ -615,9 +615,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -762,7 +762,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-agent"
-version = "0.9.0-dev"
+version = "0.8.3"
 dependencies = [
  "getrandom",
  "timewitness-clock",
@@ -774,11 +774,11 @@ dependencies = [
 
 [[package]]
 name = "timewitness-architecture"
-version = "0.9.0-dev"
+version = "0.8.3"
 
 [[package]]
 name = "timewitness-cli"
-version = "0.9.0-dev"
+version = "0.8.3"
 dependencies = [
  "getrandom",
  "rustls",
@@ -796,7 +796,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-clock"
-version = "0.9.0-dev"
+version = "0.8.3"
 dependencies = [
  "timewitness-core",
  "timewitness-sources",
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-core"
-version = "0.9.0-dev"
+version = "0.8.3"
 dependencies = [
  "bls12_381",
  "curve25519-dalek",
@@ -817,7 +817,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-countersign"
-version = "0.9.0-dev"
+version = "0.8.3"
 dependencies = [
  "sha2 0.10.9",
  "timewitness-core",
@@ -826,14 +826,14 @@ dependencies = [
 
 [[package]]
 name = "timewitness-platform"
-version = "0.9.0-dev"
+version = "0.8.3"
 dependencies = [
  "timewitness-core",
 ]
 
 [[package]]
 name = "timewitness-receipt"
-version = "0.9.0-dev"
+version = "0.8.3"
 dependencies = [
  "ed25519-dalek",
  "sha2 0.10.9",
@@ -842,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-roughtime-server"
-version = "0.9.0-dev"
+version = "0.8.3"
 dependencies = [
  "ed25519-dalek",
  "getrandom",
@@ -851,7 +851,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-sources"
-version = "0.9.0-dev"
+version = "0.8.3"
 dependencies = [
  "aes-siv",
  "getrandom",
@@ -863,7 +863,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-verify"
-version = "0.9.0-dev"
+version = "0.8.3"
 dependencies = [
  "timewitness-core",
  "timewitness-receipt",
@@ -871,7 +871,7 @@ dependencies = [
 
 [[package]]
 name = "timewitness-verify-web"
-version = "0.9.0-dev"
+version = "0.8.3"
 dependencies = [
  "getrandom",
  "timewitness-core",
@@ -911,9 +911,9 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.9"
+version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+checksum = "f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171"
 dependencies = [
  "rustls-pki-types",
 ]

@@ -1,7 +1,7 @@
-name: TimeWitness
+name: TimeWitness Receipt
 description: >-
-  Stamp a build, test, signing or provenance event with a bounded-time receipt, and put it where the
-  provenance that already ships can carry it.
+  Stamp a release with a receipt: the time, a bound on how wrong it could be, and outside signatures
+  anyone can check.
 
 # The SPDX identifier sits here as well as in `LICENSE` and in `Cargo.toml` because this file is the
 # surface a stranger installs, and the tooling that audits what a workflow pulled in reads the
