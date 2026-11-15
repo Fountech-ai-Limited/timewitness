@@ -381,6 +381,12 @@ AZURE_PROFILE_SCOPE = (r"^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Mi
 # give roles, an Owner or a User Access Administrator among them, can give itself the signer role,
 # sign, and take the role away again between two reads, and a read sees only what stands when it
 # is made.
+#
+# A signing account can hold other people's profiles as well as ours, and a signer on one of those
+# signs as somebody else's publisher, not ours. So, the file may name our profile by its full address,
+# as `certificate_profile`. Where it does, only a role reaching that profile is held, at it, inside
+# it or anywhere above it, and the app's role, once given, must be on it. Where it names none, the
+# whole signing account is held, as before. Naming it reads nothing more from Azure.
 AZURE_ACCOUNT_SCOPE = (r"^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.CodeSigning/"
                        r"codeSigningAccounts/[^/]+$")
 AZURE_SUBSCRIPTION_SCOPE = r"^/subscriptions/[^/]+$"
@@ -1652,8 +1658,9 @@ def azure_reaches(scope, account):
 
 
 def judge_azure_holders(app, roles):
-    """Nobody but the app holds a role that signs anywhere reaching the signing account, nobody is
-    eligible for one, and the app's roles read the same in the whole list as in its own."""
+    """Nobody but the app holds a role that signs anywhere reaching our certificate profile, nobody is
+    eligible for one, and the app's roles read the same in the whole list as in its own. A file that
+    names no profile is held across the whole signing account."""
     account, principal, every = app.get("signing_account"), app.get("service_principal_id"), app.get("every_role_assignment")
     if not isinstance(account, str) or not re.match(AZURE_ACCOUNT_SCOPE, account):
         return ["the file names no signing account, so who else may sign there has not been read"]
@@ -1666,6 +1673,12 @@ def judge_azure_holders(app, roles):
     if (not isinstance(within, str) or not re.match(AZURE_SUBSCRIPTION_SCOPE, within)
             or not str(account).lower().startswith(within.lower() + "/")):
         return ["the file lists the role assignments of %s, and the signing account is %s" % (within, account)]
+    named, profile = "certificate_profile" in app, app.get("certificate_profile")
+    if named and (not isinstance(profile, str) or not re.match(AZURE_PROFILE_SCOPE, profile)
+                  or not profile.lower().startswith(str(account).lower() + "/certificateprofiles/")):
+        return ["the file names %s as our certificate profile, which is not a profile of the signing account %s"
+                % (json.dumps(profile), account)]
+    reach = profile if named else account
     problems, ours = [], []
     for kind in ("active", "eligible"):
         listed = every.get(kind)
@@ -1676,7 +1689,7 @@ def judge_azure_holders(app, roles):
             mine = str(a.get("principalId")).lower() == str(principal).lower()
             if kind == "active" and mine:
                 ours.append((a.get("roleDefinitionName"), str(a.get("scope")).lower()))
-            if not azure_reaches(a.get("scope"), account):
+            if not azure_reaches(a.get("scope"), reach):
                 continue
             signs = azure_signs(a)
             said = "%s %s, %s for %s on %s" % (a.get("principalType"), a.get("principalId"), kind,
@@ -1693,6 +1706,8 @@ def judge_azure_holders(app, roles):
         for r in roles:
             if not str(r.get("scope")).lower().startswith(str(account).lower() + "/certificateprofiles/"):
                 problems.append("the app's role is on %s, outside the signing account %s" % (r.get("scope"), account))
+            elif named and str(r.get("scope")).lower() != str(profile).lower():
+                problems.append("the app's role is on %s, and our certificate profile is %s" % (r.get("scope"), profile))
     return problems
 
 
@@ -3073,6 +3088,54 @@ runs:
             k: (dict(v, active=unarmed["every_role_assignment"]["active"]) if k == "every_role_assignment" and isinstance(v.get("active"), list) else v)
             for k, v in change.items()})), True)
 
+    # A signing account holds other people's profiles as well as ours. Where the file names our
+    # profile, only a role reaching that profile signs as our publisher, and a signer on another
+    # profile of the same account is somebody else's business. Where it names none, the whole
+    # account is held, as before.
+    named, unarmed_named = dict(app, certificate_profile=profile), dict(unarmed, certificate_profile=profile)
+    sibling = account + "/certificateProfiles/q"
+    expect("the Entra file naming our profile", judge_azure(named), False)
+    expect("the Entra file naming our profile, before the app's role", judge_azure(unarmed_named), False)
+    for label, given in (
+            ("another user with the signer role on another profile", dict(signer, scope=sibling)),
+            ("another user with the signer role on a profile whose name starts as ours does", dict(signer, scope=profile + "2")),
+            ("a group with the signer role on another profile", dict(signer, principalId="group-x", principalType="Group", scope=sibling)),
+            ("a managed identity with the signer role on another profile",
+             dict(signer, principalId="mi-x", principalType="ServicePrincipal", scope=sibling)),
+            ("a custom role that signs, on another profile", dict(signer, roleDefinitionName="Ours too", dataActions=["*"], scope=sibling))):
+        expect("the Entra file naming our profile, with %s" % label, judge_azure(holding(named, active=[given])), False)
+        expect("the Entra file naming our profile, before the app's role, with %s" % label,
+               judge_azure(holding(unarmed_named, active=[given])), False)
+        expect("the Entra file naming no profile, with %s" % label, judge_azure(holding(active=[given])), True)
+        expect("the Entra file naming no profile, before the app's role, with %s" % label, judge_azure(holding(unarmed, active=[given])), True)
+    expect("the Entra file naming our profile, with another user eligible on another profile",
+           judge_azure(holding(named, eligible=[dict(signer, scope=sibling)])), False)
+    for label, given in (
+            ("another user with the signer role on our profile", dict(signer)),
+            ("another user with the signer role on our profile, written in other case", dict(signer, scope=profile.upper())),
+            ("another user with the signer role inside our profile", dict(signer, scope=profile + "/x")),
+            ("another user with the signer role on the signing account", dict(signer, scope=account)),
+            ("another user with the signer role on the resource group", dict(signer, scope="/subscriptions/s/resourceGroups/g")),
+            ("another user with the signer role on the subscription", dict(signer, scope="/subscriptions/s")),
+            ("another user with the signer role on a management group",
+             dict(signer, scope="/providers/Microsoft.Management/managementGroups/m")),
+            ("another user with the signer role at the root", dict(signer, scope="/")),
+            ("another user with the signer role on no scope this can read", dict(signer, scope=None))):
+        expect("the Entra file naming our profile, with %s" % label, judge_azure(holding(named, active=[given])), True)
+        expect("the Entra file naming our profile, before the app's role, with %s" % label,
+               judge_azure(holding(unarmed_named, active=[given])), True)
+    expect("the Entra file naming our profile, with another user eligible on it", judge_azure(holding(named, eligible=[signer])), True)
+    expect("the Entra file naming our profile, the app's role on another profile of the account",
+           judge_azure(dict(app_holding(held_role[:2] + (sibling,)), certificate_profile=profile)), True)
+    expect("the Entra file naming no profile, the app's role on another profile of the account",
+           judge_azure(app_holding(held_role[:2] + (sibling,))), False)
+    for label, named_as in (
+            ("nothing", None), ("a number", 7), ("an empty name", ""), ("the signing account", account),
+            ("a profile of another signing account", other), ("something inside our profile", profile + "/x")):
+        expect("the Entra file naming %s as our profile" % label, judge_azure(dict(app, certificate_profile=named_as)), True)
+        expect("the Entra file naming %s as our profile, before the app's role" % label,
+               judge_azure(dict(unarmed, certificate_profile=named_as)), True)
+
     # Who entered the signing environments, as GitHub records each job that asked to.
     starter = {"login": login, "id": number}
 
@@ -3760,8 +3823,9 @@ def main(argv=None):
     parser.add_argument("--need-admin", action="store_true", help="fail on any setting GitHub did not show this token, "
                                                                    "rather than print it as UNSEEN")
     parser.add_argument("--azure", help="a JSON file holding the Entra app's federated, password and key "
-                                        "credentials and its role assignments, the signing account, and every role "
-                                        "assignment on the subscription, as an identity that can read them wrote it")
+                                        "credentials and its role assignments, the signing account, our certificate profile "
+                                        "where it names one, and every role assignment on the subscription, as an "
+                                        "identity that can read them wrote it")
     parser.add_argument("--may-start", nargs=2, metavar=("LOGIN", "NUMBER"),
                         help="say whether this account may start a release, exit 0 when it may and 1 when not")
     parser.add_argument("--token-subject", nargs=2, metavar=("AUDIENCE", "ENVIRONMENT"),
