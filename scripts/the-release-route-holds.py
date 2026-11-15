@@ -3131,7 +3131,9 @@ runs:
            judge_azure(app_holding(held_role[:2] + (sibling,))), False)
     for label, named_as in (
             ("nothing", None), ("a number", 7), ("an empty name", ""), ("the signing account", account),
-            ("a profile of another signing account", other), ("something inside our profile", profile + "/x")):
+            ("a profile of another signing account", other), ("something inside our profile", profile + "/x"),
+            ("a profile of a signing account nobody signs on",
+             "/subscriptions/s/resourceGroups/g3/providers/Microsoft.CodeSigning/codeSigningAccounts/b/certificateProfiles/p")):
         expect("the Entra file naming %s as our profile" % label, judge_azure(dict(app, certificate_profile=named_as)), True)
         expect("the Entra file naming %s as our profile, before the app's role" % label,
                judge_azure(dict(unarmed, certificate_profile=named_as)), True)
