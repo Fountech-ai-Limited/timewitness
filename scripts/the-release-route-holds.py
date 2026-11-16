@@ -376,8 +376,8 @@ AZURE_PROFILE_SCOPE = (r"^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Mi
 #
 # A role signs where it is one of the signer roles by name, or where any of its data actions, with
 # its wildcards, reaches the sign action, which is how a custom role signs. Its role not read is a
-# failure. Nobody but the app may hold a role that signs anywhere reaching the signing account, and
-# nobody, the app included, may be eligible for one. What this does not see: an account that may
+# failure. Nobody but the app, and whoever `AZURE_OTHER_SIGNERS` below writes down, may hold a role
+# that signs anywhere reaching the signing account, and nobody, the app included, may be eligible for one. What this does not see: an account that may
 # give roles, an Owner or a User Access Administrator among them, can give itself the signer role,
 # sign, and take the role away again between two reads, and a read sees only what stands when it
 # is made.
@@ -1679,6 +1679,15 @@ def azure_reaches(scope, account):
             or s.startswith("/providers/microsoft.management/managementgroups/"))
 
 
+def one_of_each(pairs):
+    """A JSON object with every key once. Python keeps the last of two, which would let a file say a
+    thing twice and be read for the second."""
+    keys = [k for k, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError("a key is written twice in one object: %s" % sorted({k for k in keys if keys.count(k) > 1}))
+    return dict(pairs)
+
+
 def azure_other_signer(assignment, kind, others):
     """The entry in `others` an assignment is exactly: active, by a service principal written there,
     holding its role at its scope. None where it is anything else."""
@@ -1686,7 +1695,9 @@ def azure_other_signer(assignment, kind, others):
     scope = assignment.get("scope")
     if (kind != "active" or not isinstance(entry, dict) or assignment.get("principalType") != "ServicePrincipal"
             or assignment.get("roleDefinitionName") != entry.get("role") or not isinstance(scope, str)
-            or hashlib.sha256(scope.lower().encode("utf-8")).hexdigest() != entry.get("scope_sha256")):
+            or hashlib.sha256(scope.lower().encode("utf-8")).hexdigest() != entry.get("scope_sha256")
+            or not assignment.get("dataActions")
+            or [x for x in assignment.get("dataActions") if x not in AZURE_SIGN_ACTIONS]):
         return None
     return entry
 
@@ -1704,6 +1715,7 @@ def judge_other_signer(principal, entry, read):
             said, len(federated) if isinstance(federated, list) else "no list of"))
     elif (federated[0].get("issuer") != AZURE_ISSUER or federated[0].get("audiences") != AZURE_AUDIENCES
           or not isinstance(federated[0].get("subject"), str)
+          or federated[0].get("claimsMatchingExpression") is not None
           or hashlib.sha256(federated[0]["subject"].encode("utf-8")).hexdigest() != entry.get("subject_sha256")):
         problems.append("%s trusts %s from %s for %s, which is not the credential written down for it" % (
             said, federated[0].get("subject"), federated[0].get("issuer"), federated[0].get("audiences")))
@@ -1766,10 +1778,13 @@ def judge_azure_holders(app, roles, others):
                 problems.append("%s: what its role may do was not read" % said)
             elif signs and (kind == "eligible" or not mine):
                 problems.append("%s: it may sign as our Windows publisher, and only the app may" % said)
-    held = app.get("other_signers")
-    held = {str(k).lower(): v for k, v in held.items()} if isinstance(held, dict) else {}
-    for principal in sorted(used):
-        problems += judge_other_signer(principal, used[principal], held.get(principal))
+    held, by_id = app.get("other_signers"), {}
+    for k, v in (held.items() if isinstance(held, dict) else ()):
+        if str(k).lower() in by_id:
+            problems.append("the file holds the credentials of %s twice, so which were read is not known" % k)
+        by_id[str(k).lower()] = v
+    for other in sorted(used):
+        problems += judge_other_signer(other, used[other], by_id.get(other))
     if isinstance(roles, list) and all(isinstance(r, dict) for r in roles):
         theirs = sorted(((r.get("roleDefinitionName"), str(r.get("scope")).lower()) for r in roles), key=repr)
         if sorted(ours, key=repr) != theirs:
@@ -2167,7 +2182,7 @@ def run(tree_only, need_yaml=False, github=github, fetch=get, azure=None, need_a
     else:
         try:
             with open(azure, encoding="utf-8") as f:
-                app = json.load(f)
+                app = json.load(f, object_pairs_hook=one_of_each)
             problems = judge_azure(app) if isinstance(app, dict) else ["%s is not one JSON object" % azure]
         except (OSError, ValueError, TypeError, AttributeError) as e:
             problems = ["%s could not be read: %s" % (azure, e)]
@@ -3266,7 +3281,16 @@ runs:
             ("eligible for its own role, besides holding it", [theirs], [theirs]),
             ("eligible for its own role, in place of holding it", [], [theirs]),
             ("its id, as a group", [dict(theirs, principalType="Group")], []),
-            ("its id, as a user", [dict(theirs, principalType="User")], [])):
+            ("its id, as a user", [dict(theirs, principalType="User")], []),
+            ("its type written in other case", [dict(theirs, principalType="servicePrincipal")], []),
+            ("its role's name written in other case", [dict(theirs, roleDefinitionName=theirs["roleDefinitionName"].lower())], []),
+            ("its id with a space after it", [dict(theirs, principalId="sp-theirs ")], []),
+            ("its scope with a slash after it", [dict(theirs, scope=profile + "/")], []),
+            ("its scope led by a space", [dict(theirs, scope=" " + profile)], []),
+            ("its role allowed every data action", [dict(theirs, dataActions=["*"])], []),
+            ("its role allowed more than signing", [dict(theirs, dataActions=[SIGN, "Microsoft.CodeSigning/*"])], []),
+            ("its role not read for what it may do", [{k: v for k, v in theirs.items() if k != "dataActions"}], []),
+            ("its role allowed nothing", [dict(theirs, dataActions=[])], [])):
         if active is None:
             given = holding(named, active=[dict(theirs, scope=sibling)])
             expect("the Entra file, with the signer written down and %s" % label,
@@ -3297,13 +3321,29 @@ runs:
                 dict(their_credentials["federated_credentials"][0], issuer="https://elsewhere.example")])),
             ("a credential for another audience", dict(their_credentials, federated_credentials=[
                 dict(their_credentials["federated_credentials"][0], audiences=["api://elsewhere"])])),
-            ("a credential that is not one", dict(their_credentials, federated_credentials=["x"]))):
+            ("a credential that is not one", dict(their_credentials, federated_credentials=["x"])),
+            ("a credential matching on an expression beside its subject", dict(their_credentials, federated_credentials=[
+                dict(their_credentials["federated_credentials"][0], claimsMatchingExpression={"value": "claims['sub'] matches 'repo:*'"})]))):
         expect("the Entra file, with the signer written down holding %s" % label,
                judge_azure(with_theirs(credentials=credentials), others), True)
     expect("the Entra file, with the signer written down and none of its credentials in the file",
            judge_azure(with_theirs(held={}), others), True)
     expect("the Entra file, with the signer written down and no list of other signers",
            judge_azure(dict(holding(active=[theirs]), other_signers=None), others), True)
+    expect("the Entra file, with the signer written down and its credentials held twice, the sound ones last",
+           judge_azure(with_theirs(held={"SP-THEIRS": dict(their_credentials, password_credentials=[{"keyId": "k"}]),
+                                         "sp-theirs": their_credentials}), others), True)
+    expect("the Entra file, with a credential expression written as nothing",
+           judge_azure(with_theirs(credentials=dict(their_credentials, federated_credentials=[
+               dict(their_credentials["federated_credentials"][0], claimsMatchingExpression=None)])), others), False)
+    for label, text, refused in (('an object with a key written twice', '{"a": 1, "a": 2}', True),
+                                 ('an object inside one with a key written twice', '{"a": {"b": 1, "b": 1}}', True),
+                                 ('objects with every key once', '{"a": {"b": 1}, "b": [{"a": 1}]}', False)):
+        try:
+            json.loads(text, object_pairs_hook=one_of_each)
+            expect("the Entra file read, %s" % label, [], refused)
+        except ValueError as e:
+            expect("the Entra file read, %s" % label, [str(e)], refused)
     expect("the Entra file, with the signer written down and its credentials under another id",
            judge_azure(with_theirs(held={"sp-else": their_credentials}), others), True)
     expect("the Entra file, with another service principal holding the role the signer written down holds",
