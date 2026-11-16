@@ -1697,7 +1697,7 @@ def azure_other_signer(assignment, kind, others):
             or assignment.get("roleDefinitionName") != entry.get("role") or not isinstance(scope, str)
             or hashlib.sha256(scope.lower().encode("utf-8")).hexdigest() != entry.get("scope_sha256")
             or not assignment.get("dataActions")
-            or [x for x in assignment.get("dataActions") if x not in AZURE_SIGN_ACTIONS]):
+            or [x for x in assignment.get("dataActions") or [] if x not in AZURE_SIGN_ACTIONS]):
         return None
     return entry
 
