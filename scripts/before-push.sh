@@ -25,6 +25,14 @@
 # Every step below is one step of `.github/workflows/ci.yml`, in the order that file runs them, and
 # each is named for the step it stands in for. A step added there and not here shows up as a
 # difference between two lists rather than as silence.
+#
+# One step runs here and nowhere else, `scripts/no-secret-pushed.sh`, which reads every commit a push
+# sends for a credential. A runner cannot stand in for it, since a runner only sees a commit once it
+# has been sent, and `scripts/steps-match.mjs` names it as the hook's own.
+#
+# The nightly backup push, where every ref goes to refs/backup/, runs that scan and the repository's
+# own rules and nothing else. Until 2026-11-17 it ran the whole of this file for every batch of refs,
+# which took longer than the push's own time limit of 900 seconds and turned the backup red.
 
 set -uo pipefail
 
@@ -37,10 +45,25 @@ cd "$root"
 # deletion is let through, so that a branch made before the ruleset can still be taken away. Run by
 # hand from a terminal there is nothing to read and this is skipped, and from a pipe that stays open
 # and quiet it waits ten seconds and no more, since git writes every line before the hook could ask.
+#
+# The lines are kept as read, for the secret scan, and each remote ref is held to refs/backup/. A push
+# whose every ref goes there is the nightly backup of this clone's branches, which nothing builds on
+# and no workflow runs for. Read off the refs git hands over and off nothing else, so a push with one
+# branch in it among the backups runs everything, and a run by hand, which hands over none, is never
+# a backup push.
+pushed="$(mktemp)"
+trap 'rm -f "$pushed"' EXIT
+backup_only=0
+other_refs=0
 if [ ! -t 0 ]; then
   refused_refs=0
-  while read -r -t 10 _local_ref local_sha remote_ref _remote_sha; do
+  while read -r -t 10 local_ref local_sha remote_ref remote_sha; do
     [ -n "${remote_ref:-}" ] || continue
+    printf '%s %s %s %s\n' "$local_ref" "$local_sha" "$remote_ref" "${remote_sha:-}" >>"$pushed"
+    case "$remote_ref" in
+      refs/backup/?*) ;;
+      *) other_refs=1 ;;
+    esac
     case "$local_sha" in
       *[!0]*) ;;
       *) continue ;;
@@ -72,6 +95,9 @@ if [ ! -t 0 ]; then
     echo "before-push: nothing was pushed." >&2
     exit 1
   fi
+  if [ -s "$pushed" ] && [ "$other_refs" -eq 0 ]; then
+    backup_only=1
+  fi
 fi
 
 # `scripts/repo-hygiene.sh --self-test` drives the loop above with seeded refs and stops here, so
@@ -80,6 +106,38 @@ fi
 if [ -n "${TW_BEFORE_PUSH_REFS_ONLY:-}" ]; then
   echo "before-push: the refs passed and this run was asked to stop there, so nothing was pushed." >&2
   exit 3
+fi
+
+# The nightly backup push: the secret scan over every commit the backup refs send, and the
+# repository's own rules, and no build, no lint and no suite. A key pushed to a backup ref is as public
+# on GitHub as one pushed to main, so neither is skipped; the rest is, because nothing is built from a
+# backup ref. `scan` is `step` under another name, so `scripts/steps-match.mjs`, which holds this
+# file's steps to the workflow's, reads the two below once, where every push runs them.
+if [ "$backup_only" -eq 1 ]; then
+  failed=()
+  scan() {
+    local name="$1"
+    shift
+    printf '%s ... ' "$name"
+    local out
+    if out="$("$@" 2>&1)"; then
+      printf 'ok\n'
+    else
+      printf 'FAILED\n'
+      printf '%s\n' "$out" >&2
+      failed+=("$name")
+    fi
+  }
+  echo "before-push: every ref this push sends is under refs/backup/, so the two scans run and nothing else"
+  scan "Nothing this push sends carries a secret" bash scripts/no-secret-pushed.sh "$pushed"
+  scan "Repository hygiene" bash scripts/repo-hygiene.sh
+  if [ "${#failed[@]}" -ne 0 ]; then
+    echo >&2
+    echo "before-push: a scan refused this backup push, so nothing was pushed: ${failed[*]}" >&2
+    exit 1
+  fi
+  echo "before-push: both scans pass, and a backup ref runs no build"
+  exit 0
 fi
 
 # rustup puts its shims in one place and not every shell has that place on PATH. Git Bash here is
@@ -223,6 +281,7 @@ if ! command -v x86_64-linux-gnu-gcc >/dev/null 2>&1 && [ -z "${CC_x86_64_unknow
   export AR_x86_64_unknown_linux_gnu="$archiver"
 fi
 
+step "Nothing this push sends carries a secret" bash -c 'bash scripts/no-secret-pushed.sh --self-test >/dev/null && bash scripts/no-secret-pushed.sh "$1"' _ "$pushed"
 step "The signature check holds a binary to our own identities" bash scripts/the-signing-route-checks.sh
 step "Formatting"          cargo fmt --all -- --check
 step "Lints, on Linux"     cargo clippy --workspace --all-targets --target "$target" -- -D warnings
