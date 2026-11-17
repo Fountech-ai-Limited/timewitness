@@ -38,7 +38,10 @@ const WORKFLOW_ONLY = {
 };
 
 // Steps the hook runs and the workflow does not, with why.
-const HOOK_ONLY = {};
+const HOOK_ONLY = {
+  'Nothing this push sends carries a secret':
+    'it reads the commits a push sends that no remote branch holds, which a runner only sees once they have been sent',
+};
 
 // Steps both run under different names, workflow name to hook name, with why in the name itself.
 const RENAMED = {

@@ -328,8 +328,8 @@ if [ "$mode" = "self-test" ]; then
   fi
   # And the hook's own reading of the refs a push would make, driven with seeded refs against the
   # scratch clone and told to stop after them. A branch named with a slash, or a commit no ref holds,
-  # has to stop it with 1; a plain ref and a deletion of a slash-named branch have to get as far as
-  # the stop, which is 3.
+  # has to stop it with 1; a plain ref, a backup ref, which carries slashes of its own, and a deletion
+  # of a slash-named branch have to get as far as the stop, which is 3.
   zeros="0000000000000000000000000000000000000000"
   pushed="$(git -C "$work/clone" rev-parse HEAD)" || stop "the scratch clone's head could not be read"
   left_behind="$(cat "$work/sha-left-behind" 2>/dev/null)"
@@ -339,6 +339,7 @@ if [ "$mode" = "self-test" ]; then
   for seed in "1|refs/heads/a $pushed refs/heads/a/b $zeros" \
     "1|refs/heads/a $left_behind refs/heads/a-plain-branch $zeros" \
     "3|refs/heads/a $pushed refs/heads/a-plain-branch $zeros" \
+    "3|refs/heads/a $pushed refs/backup/a-host/a $zeros" \
     "3|(delete) $zeros refs/heads/a/b $pushed"; do
     line=$((line + 1))
     want="${seed%%|*}"
