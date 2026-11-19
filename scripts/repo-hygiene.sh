@@ -570,7 +570,10 @@ fi
 # hosts take theirs from a secret store. `.dockerignore` sits at the root because a container
 # build reads it from the build context root and from nowhere else; without it a remote build
 # uploads `target/`, which is gigabytes on any machine that has built this workspace.
-allowed='^(crates/|docs/|deploy/|scripts/|verifier-page/|\.github/(workflows/)?[A-Za-z0-9._-]+$|\.cargo/audit\.toml$|action\.yml$|Cargo\.(toml|lock)$|README\.md$|LICENSE$|NOTICE$|\.gitignore$|\.dockerignore$|\.gitattributes$|rustfmt\.toml$|rust-toolchain\.toml$)'
+# `about.toml` and `deny.toml` sit at the root because `cargo about` and `cargo deny` look for them
+# there: the first says which crates the verifier page's notices are written from, and the second
+# what the dependency graph is held to.
+allowed='^(crates/|docs/|deploy/|scripts/|verifier-page/|\.github/(workflows/)?[A-Za-z0-9._-]+$|\.cargo/audit\.toml$|action\.yml$|Cargo\.(toml|lock)$|README\.md$|LICENSE$|NOTICE$|\.gitignore$|\.dockerignore$|\.gitattributes$|rustfmt\.toml$|rust-toolchain\.toml$|about\.toml$|deny\.toml$)'
 
 while IFS= read -r path; do
   [ -z "$path" ] && continue

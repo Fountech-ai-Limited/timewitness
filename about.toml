@@ -1,0 +1,30 @@
+# What `cargo about` reads to write the third-party notices for the verifier page.
+#
+# The page carries one WebAssembly module, built from `crates/verify-web` for wasm32-unknown-unknown,
+# so the notices are read off that crate's graph on that target and nothing else. A build script or a
+# test helper never reaches the page, so neither is listed. Our own crates are ours, under the LICENSE
+# and NOTICE at the root, and they are left out because this file is about other people's work.
+#
+# `scripts/third-party-notices.sh` is the only thing meant to run it, and it says how.
+
+targets = ["wasm32-unknown-unknown"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+private = { ignore = true }
+
+# The order is the order of preference where a crate offers a choice. MIT first because its text
+# carries the crate's own copyright line, which is what a reader of a notice is owed.
+accepted = ["MIT", "BSD-3-Clause", "BSD-2-Clause", "Apache-2.0"]
+
+# libm ships one LICENSE.txt that carries its MIT grant, the Apache grant its contributors give, its
+# own copyright line, and the notices of the musl and CORE-MATH code it is ported from. Read on its
+# own, `cargo about` cannot match that file to one licence and writes a bare MIT text with no holder
+# in it, which drops every one of those copyright lines. So, the file is named here whole, pinned by
+# its sha256, and a new libm with a different file stops the notices until somebody reads it again.
+[libm.clarify]
+license = "MIT"
+
+[[libm.clarify.files]]
+path = "LICENSE.txt"
+license = "MIT"
+checksum = "3823dda7cf046602f4b4e77ec8e227863dc4736037cc85bb33d9f19febe16bb7"
