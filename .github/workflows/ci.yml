@@ -321,6 +321,33 @@ jobs:
       - name: Dependency advisories
         run: bash scripts/check-advisories.sh
 
+      # Both readers come as the release binaries their authors publish, held to the sha256 written
+      # here, rather than compiled on every run. A file that hashes to anything else stops the job.
+      - name: Install the licence readers
+        run: |
+          set -euo pipefail
+          fetch() {
+            local name="$1" version="$2" sum="$3"
+            local file="$name-$version-x86_64-unknown-linux-musl.tar.gz"
+            curl -sSfL -o "$RUNNER_TEMP/$file" \
+              "https://github.com/EmbarkStudios/$name/releases/download/$version/$file"
+            echo "$sum  $RUNNER_TEMP/$file" | sha256sum --check --quiet
+            tar -xzf "$RUNNER_TEMP/$file" -C "$RUNNER_TEMP"
+            install -m 0755 "$RUNNER_TEMP/$name-$version-x86_64-unknown-linux-musl/$name" ~/.cargo/bin/
+          }
+          fetch cargo-deny 0.20.2 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+          fetch cargo-about 0.9.3 3ad1e94ea1e63d69d1961f4fb15ccbbe9575d906111f96d2cb4dce6df48f71b4
+
+      # Licences, bans, and sources, as `deny.toml` sets them. Advisories stay with the step above,
+      # which reads a pinned database for the reason `scripts/check-advisories.sh` gives.
+      - name: Dependency licences and sources
+        run: bash scripts/check-licences.sh
+
+      # The notices a host serves beside the verifier page, held to the module's graph as this commit
+      # pins it. A lockfile change that moves them fails here until the file is written again.
+      - name: The third-party notices are the module's own
+        run: bash scripts/third-party-notices.sh --check
+
   every-bit:
     # Acceptance item A-01 on the binary a consumer runs: every single-bit change to every committed
     # receipt is refused, one process per change, inside a network namespace with nothing in it. Its

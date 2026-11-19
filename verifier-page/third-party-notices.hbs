@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Third-party notices for the TimeWitness verifier page</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; background: #0b0f1a; color: #eef1f6; font-family: system-ui, sans-serif; line-height: 1.55; }
+  main { max-width: 52rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 1rem; }
+  h2 { font-size: 1.2rem; margin: 2.5rem 0 0.75rem; }
+  h3 { font-size: 1rem; margin: 2rem 0 0.5rem; }
+  p, li { max-width: 44rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+  th, td { text-align: left; padding: 0.3rem 0.75rem 0.3rem 0; border-bottom: 1px solid #2a3142; vertical-align: top; }
+  pre { white-space: pre-wrap; word-break: break-word; background: #131a2a; border: 1px solid #2a3142; border-radius: 6px; padding: 1rem; font-size: 0.85rem; }
+  code { font-family: ui-monospace, monospace; }
+  @media (prefers-color-scheme: light) {
+    body { background: #ffffff; color: #111827; }
+    th, td { border-bottom-color: #d8dde6; }
+    pre { background: #f5f7fa; border-color: #d8dde6; }
+  }
+</style>
+</head>
+<body>
+<main>
+<h1>Third-party notices for the TimeWitness verifier page</h1>
+
+<p>The verifier page carries one WebAssembly module, built from <code>crates/verify-web</code> in the
+TimeWitness repository for the <code>wasm32-unknown-unknown</code> target, against the versions pinned in
+its <code>Cargo.lock</code>. The crates below are compiled into that module, and each one is listed with
+the licence it is used under here and the licence text it ships with, copyright lines included.</p>
+
+<p>The page's own script is written in the page and uses no third-party JavaScript. Its styles, the
+brand tokens, and the lockup are ours. TimeWitness itself is under the Apache License 2.0, in the
+<code>LICENSE</code> and <code>NOTICE</code> files at the root of the repository.</p>
+
+<h2>Crates in the module</h2>
+<table>
+<thead><tr><th>Crate</th><th>Version</th><th>Licence</th></tr></thead>
+<tbody>
+{{#each crates}}<tr><td>{{package.name}}</td><td>{{package.version}}</td><td>{{license}}</td></tr>
+{{/each}}</tbody>
+</table>
+
+<h2>Licence texts</h2>
+{{#each licenses}}
+<h3>{{name}}</h3>
+<p>Used by {{#each used_by}}{{#if @index}}, {{/if}}{{crate.name}} {{crate.version}}{{/each}}.</p>
+<pre>{{text}}</pre>
+{{/each}}
+</main>
+</body>
+</html>
