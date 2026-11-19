@@ -38,7 +38,7 @@ This repository is early and it says so rather than describing a finished produc
 | Freshness beacon client, not-earlier-than | built for drand, one beacon of the two the design asks for |
 | Final witness client, not-later-than | built for RFC 3161, proved against two free authorities. No OpenTimestamps anchor |
 | Public verifier | built, as a command line tool and as one HTML page that runs from a local disk with no network, and that page is served at `timewitness.dev/verify` with no toolchain and no account, naming the commit it was built from. `docs/verifier.md` |
-| GitHub Action | built. One line in a workflow, and the receipt goes into the SLSA provenance and the container image labels that already ship. From `v0.3` the provenance names the format the receipt is written in, read off the receipt; the `v0.2` Action labelled every receipt `timewitness-receipt-v0`, which is wrong for the version 1 receipts it writes |
+| GitHub Action | built. One step in a workflow, and the receipt goes into the SLSA provenance and the container image labels that already ship. From `v0.3` the provenance names the format the receipt is written in, read off the receipt; the `v0.2` Action labelled every receipt `timewitness-receipt-v0`, which is wrong for the version 1 receipts it writes |
 | A bound resting on outside evidence | not built. Every receipt says its bound rests on the agent's own model. The outside signatures it carries are checked, and on both timestamp authorities that ship the token states no accuracy of its own, so it bounds nothing in UTC and the receipt is left with one edge rather than two. Nothing issues a receipt whose width rests on outside signatures. The format can say so, the verifier refuses the claim unless all three roles check out, and a reader who has read an authority's published practice can allow for that authority's clock in their own anchors, which gives the edge back as the reader's own figure and never as the authority's |
 | Order within a chain | built two receipts at a time, from the `v0.2` release. `timewitness order` reads two receipts offline and keeps two answers apart: the intervals say which moment came first, and a hash link says which of two receipts of one chain was signed first. Nothing walks a whole chain |
 | A public log of agent keys | built for our own key. A receipt proves whoever signed it held that key and nothing about who that was. `timewitness.dev/key-log.txt` names our two Roughtime server keys and the one agent key we vouch for, with its window, and the verifier from `v0.4` on names the entry and the window or refuses a key outside it. It is our own word and not third-party evidence. The key of the receipt committed here is not in it and nobody else's is either, and the `v0` release cannot read it |
@@ -281,7 +281,7 @@ before there is anything to count.
 
 ## Stamping a build
 
-One line in a workflow file, on a GitHub-hosted `ubuntu-latest` runner, which is the only runner it
+One step in a workflow file, on a GitHub-hosted `ubuntu-latest` runner, which is the only runner it
 has been run on:
 
 ```yaml
