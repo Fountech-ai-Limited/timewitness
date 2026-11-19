@@ -62,16 +62,25 @@ cargo about generate --locked --offline --fail \
   --output-file "$scratch" \
   verifier-page/third-party-notices.hbs
 
-# A few crates ship their licence with Windows line endings. The repository stores text with Unix
-# ones, so the file is written that way here and a checkout on any machine compares equal.
+# A few crates ship their licence with Windows line endings, and a few copyright lines carry a
+# letter outside ASCII, such as the copyright sign in libm's. The repository stores text with Unix
+# line endings and in ASCII alone (`repo-hygiene.sh` refuses anything else, here and in the site), so
+# each such letter is written as an HTML character reference, which a browser shows as the letter.
 python - "$scratch" <<'PYTHON'
 import sys
 path = sys.argv[1]
-data = open(path, "rb").read().replace(b"\r\n", b"\n")
-open(path, "wb").write(data)
+text = open(path, "rb").read().decode("utf-8").replace("\r\n", "\n")
+open(path, "wb").write(text.encode("ascii", "xmlcharrefreplace"))
 PYTHON
 
-crates=$(grep -c '^<tr><td>' "$scratch" || true)
+# grep says 1 for no match and 2 for a file it could not read, and only the second is a fault of
+# its own. Read here, with `set -e` in force, the status is taken rather than ending the run.
+status=0
+crates=$(grep -c '^<tr><td>' "$scratch") || status=$?
+if [ "$status" -gt 1 ]; then
+  echo "third-party notices: grep could not read what cargo about wrote (exit $status)." >&2
+  exit 2
+fi
 if [ "$crates" -eq 0 ]; then
   echo "third-party notices: the graph read as no crates at all, which is not this module." >&2
   exit 1
