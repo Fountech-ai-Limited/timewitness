@@ -3,9 +3,11 @@
 #
 #     bash scripts/page-for-a-host.sh <tag or commit> <folder>
 #
-# Writes two files into the folder: `verifier.html`, the page as `build-verifier-page.sh` builds it at
-# that commit, and `record.json`, naming the ref asked for, the commit it resolved to, and the size and
-# sha256 of the page. A host serves the first and checks it against the second when it builds.
+# Writes three files into the folder: `verifier.html`, the page as `build-verifier-page.sh` builds it
+# at that commit; `third-party-notices.html`, the notices for the crates in its module as that commit
+# has them; and `record.json`, naming the ref asked for, the commit it resolved to, and the size and
+# sha256 of the other two. A host serves the first two and checks them against the third when it
+# builds. The page names the address of the notices, so a host serving one serves both.
 #
 # The page is built in a clone of this repository at that commit, under `target/`, so nothing in the
 # working tree moves and what is built is exactly what anybody checking out the commit would build.
@@ -13,7 +15,9 @@
 # its own commit's command line never reaches the folder.
 #
 # A page built before pages named their commit is refused, because a host serving it could not say
-# which command line it agrees with, and `the-served-verifier-page.mjs` could not hold it to one.
+# which command line it agrees with, and `the-served-verifier-page.mjs` could not hold it to one. A
+# commit from before the notices were written is refused too, because a host would serve the
+# module's BSD code without the notice its licence asks to go with it.
 
 set -euo pipefail
 
@@ -49,26 +53,36 @@ echo "building the page at $ref ($commit)"
 (cd "$scratch" && bash scripts/build-verifier-page.sh)
 
 mkdir -p "$out"
-python - "$scratch/verifier-page/verifier.html" "$out" "$ref" "$commit" <<'PYTHON'
+python - "$scratch/verifier-page/verifier.html" "$scratch/verifier-page/third-party-notices.html" \
+         "$out" "$ref" "$commit" <<'PYTHON'
 import datetime
 import hashlib
 import json
 import os
 import sys
 
-page, out, ref, commit = sys.argv[1:5]
+page, notices, out, ref, commit = sys.argv[1:6]
 data = open(page, "rb").read()
 if ('<meta name="tw-built-from" content="%s">' % commit).encode("ascii") not in data:
     print("the page built at %s does not name %s, so no host can say which command line it agrees with"
           % (ref, commit), file=sys.stderr)
     sys.exit(1)
+if not os.path.isfile(notices):
+    print("%s has no verifier-page/third-party-notices.html, so a host would serve its module without "
+          "the notices its licences ask for. Bring a page from a later commit." % ref, file=sys.stderr)
+    sys.exit(1)
+told = open(notices, "rb").read()
 open(os.path.join(out, "verifier.html"), "wb").write(data)
+open(os.path.join(out, "third-party-notices.html"), "wb").write(told)
 record = {
     "ref": ref,
     "commit": commit,
     "page": "verifier.html",
     "bytes": len(data),
     "sha256": hashlib.sha256(data).hexdigest(),
+    "notices": "third-party-notices.html",
+    "notices_bytes": len(told),
+    "notices_sha256": hashlib.sha256(told).hexdigest(),
     "built_on": datetime.date.today().isoformat(),
 }
 with open(os.path.join(out, "record.json"), "w", encoding="utf-8", newline="\n") as handle:
