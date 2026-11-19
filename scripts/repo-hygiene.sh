@@ -487,7 +487,15 @@ done
 # it meant amending and force-pushing. A trailer lives in the last paragraph, git knows where that
 # is, and `%(trailers)` is that knowledge. The subject is exempt either way, because a subject may
 # legitimately be prefixed.
+#
+# One commit is passed by its full id, and only because main is never rewritten. The merge button
+# writes a pull request's title as the last paragraph of the merge commit, and pull request 29 was
+# titled "README: one step in a workflow file", which git reads as a footer. That merge is on main
+# at 64dc830 from 2026-11-19 and stays there. Every other commit is still held to the rule, so a
+# title shaped like that on any later pull request goes red here before it is merged.
+footer_passed=64dc830595d41e395220272557e37102edc244ab
 for sha in "${commit_ids[@]}"; do
+  [ "$sha" = "$footer_passed" ] && continue
   trailers="$(git log -1 --format='%(trailers:only=true)' "$sha")" || stop "git log could not read $sha"
   if [ -n "$trailers" ]; then
     report "the commit message of $sha carries a footer, and messages here are prose"
