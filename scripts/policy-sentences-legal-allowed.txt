@@ -314,3 +314,18 @@ as one file, and that stays true while the notice period runs out.
 @ tree:README.md
 Copyright Fountech.ai Limited. All rights reserved. This repository is not open source: the agent,
 the receipt format and the verifier are, and they are in timewitness under Apache-2.0.
+
+# The outreach privacy notice at /outreach-privacy, read by tc (TC-5054 and TC-5137, 27 Nov).
+
+@ content/outreach-privacy.json, tree:content/outreach-privacy.json, /outreach-privacy
+TimeWitness is owned and run by Fountech.ai Limited, a company registered in Cyprus with number HE 372766, whose registered office is at Evripidou 12A, Agia Zoni, 3031 Limassol, Cyprus. For anything about this notice or your data, write to privacy@timewitness.dev.
+
+@ content/outreach-privacy.json, tree:content/outreach-privacy.json, /outreach-privacy
+Public profiles and pages people publish about their own work: GitHub profiles and the public projects on them, package pages on PyPI, LinkedIn (including LinkedIn Sales Navigator) and company websites. Where an address is not published, we take it from Apollo, a business contact database, or work it out from the address format your company uses, and then check it with Hunter, an email checking service.
+
+@ content/outreach-privacy.json, tree:content/outreach-privacy.json, /outreach-privacy
+Our lawful basis
+
+@ content/outreach-privacy.json, tree:content/outreach-privacy.json, /outreach-privacy
+You can complain to a data protection authority. In Cyprus, where we are registered, that is the Commissioner for Personal Data Protection. In the UK it is the Information Commissioner's Office.
+
