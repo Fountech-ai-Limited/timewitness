@@ -347,7 +347,7 @@ cargo test --workspace
 
 ## Licence
 
-Apache License 2.0, in [LICENSE](LICENSE), copyright Fountech.ai Limited. Apache rather than MIT
+Apache License 2.0, in [LICENSE](LICENSE), copyright LuxLava Ltd. Apache rather than MIT
 because of what this is: the Action goes into other people's workflows and the receipt format is
 something other people implement, so the patent grant in section 3 and the retaliation clause beside
 it matter, and MIT has neither. [NOTICE](NOTICE) carries the copyright line that section 4d of the
