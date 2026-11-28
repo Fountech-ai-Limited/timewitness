@@ -117,7 +117,8 @@ inputs:
   send:
     description: >-
       Also give a copy of the receipt to the app that keeps an organisation's receipts, as a step
-      after the stamp. Off by default, and with it off the Action makes no call to the app at all.
+      after the stamp. Off by default, and with it off this step makes no call to the app. Giving
+      the receipt a public page is the publish input's, a separate step with a setting of its own.
       The app is asked first with no credential, and where it does not answer as the app that
       takes machines, or is not open yet, this step warns and the credential stays on the runner.
       A TIMEWITNESS_APP set in the workflow's environment names another address of the app, such
