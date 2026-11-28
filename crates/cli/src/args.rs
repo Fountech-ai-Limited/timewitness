@@ -86,6 +86,7 @@ pub const ACCEPTED: &[(&str, &[&str], usize)] = &[
         "stamp",
         &[
             "--subject",
+            "--digest",
             "--key",
             "--out",
             "--rounds",
