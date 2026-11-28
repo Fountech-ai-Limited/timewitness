@@ -111,13 +111,13 @@ try:
 except ImportError:
     yaml = None
 
-REPO = "Fountech-ai-Limited/timewitness"
+REPO = "luxlava/timewitness"
 # The organisation and this repository by number, which GitHub writes into the subject of every
 # token a job here asks for, and which no rename or repository made again under the same name
 # carries. The repository's number is written here and nowhere else in this file: a repository made
 # again moves it here, and `LINUX_SUBJECT` in `scripts/the-binaries-are-signed.py`, which is held to
 # what this file says, fails the check until it moves too.
-ORG_NUMBER = 110895113
+ORG_NUMBER = 362372010
 REPO_NUMBER = 1401363610
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOWS = os.path.join(ROOT, ".github", "workflows")
@@ -185,7 +185,7 @@ RULESETS = {
     # A pre-release tag included: it can be moved, so that a candidate can be cut again, but only an
     # administrator makes one.
     "Only an administrator makes a release tag": {
-        "updated_at": "2026-10-02T18:56:03.853Z",
+        "updated_at": "2026-11-28T15:51:52.859Z",
         "target": "tag",
         "enforcement": "active",
         "conditions": {"ref_name": {"exclude": [], "include": ["refs/tags/v*"]}},
@@ -203,7 +203,7 @@ RULESETS = {
         "bypass_actors": [],
     },
     "Only an administrator moves main": {
-        "updated_at": "2026-10-02T18:58:05.395Z",
+        "updated_at": "2026-11-28T15:51:53.861Z",
         "target": "branch",
         "enforcement": "active",
         "conditions": {"ref_name": {"exclude": [], "include": ["refs/heads/main"]}},
@@ -241,7 +241,7 @@ OIDC_SUBJECT = {"use_default": False, "use_immutable_subject": True,
 # The workflow by its file at `main`, not by a commit. A run of an older `main`, run again inside
 # GitHub's thirty days, is given the same subject, which is one reason the signing values are read
 # under names no older run reads.
-RELEASE_WORKFLOW_REF = "Fountech-ai-Limited/timewitness/.github/workflows/release.yml@refs/heads/main"
+RELEASE_WORKFLOW_REF = "luxlava/timewitness/.github/workflows/release.yml@refs/heads/main"
 
 
 def token_subject(environment):
@@ -298,8 +298,8 @@ RELEASE_STARTERS = {"nikkai1007": 76212305}
 
 # Who administers the repository, as GitHub lists the collaborators with the admin role, which takes
 # in the organisation's owners. Any of them may merge to `main`, and so change what a release runs.
-ORG = "Fountech-ai-Limited"
-ADMINISTRATORS = {"nikkai1007": 76212305, "nicolekairo": 236548393}
+ORG = "luxlava"
+ADMINISTRATORS = {"nikkai1007": 76212305}
 
 # What no app installed on the organisation may hold on this repository. `administration` edits the
 # release environment's branch policy and the rulesets, `environments` and `secrets` what the
@@ -2350,7 +2350,7 @@ def self_test(need_yaml=False):
         ours, OIDC_SUBJECT["sub_claim_prefix"] + ":ref:refs/heads/main:ref:refs/heads/main:job_workflow_ref:" + RELEASE_WORKFLOW_REF)), True)
     expect("the signature check held to the environment alone", judge_linux_subject(check_text.replace(
         ours, OIDC_SUBJECT["sub_claim_prefix"] + ":environment:linux-signing")), True)
-    expect("the signature check held to the default subject", judge_linux_subject(check_text.replace(ours, "repo:Fountech-ai-Limited/timewitness:environment:linux-signing")), True)
+    expect("the signature check held to the default subject", judge_linux_subject(check_text.replace(ours, "repo:luxlava/timewitness:environment:linux-signing")), True)
     expect("the signature check with no subject", judge_linux_subject(check_text.replace("LINUX_SUBJECT = ", "OTHER_SUBJECT = ")), True)
     expect("the build job entering release", judge_environment_users(dict(workflows, **{"release.yml": release.replace("    needs: tag\n    runs-on: ${{ matrix.runner }}\n", "    needs: tag\n    runs-on: ${{ matrix.runner }}\n    environment: release\n", 1)})), True)
     # Written so no line holds a key the patterns know, which only a parse takes apart.
