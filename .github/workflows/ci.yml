@@ -210,6 +210,12 @@ jobs:
           node scripts/steps-match.mjs --self-test
           node scripts/steps-match.mjs
 
+      - name: The Action gives a receipt a page only where it should
+        # The Action's publish step against a stand-in for curl: a public repository gets the page
+        # named in the summary, a private, internal or unstated one sends nothing, and every refusal,
+        # timeout or answer naming another page is a warning that never fails the job.
+        run: bash scripts/action-publish.sh --self-test
+
       - name: The limitation list, on the surfaces this commit ships
         # The tree route, because this job grades a commit. The markdown and the README are in it and
         # the served page is not: no commit here can move the site, which is deployed from the other
