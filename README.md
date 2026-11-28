@@ -297,10 +297,12 @@ pin, so read that file at `v0.9` rather than here: an input added on `main` reac
 with the release after it. `deadline` arrived in `v0.2`, so a workflow pinned to `@v0.1` that sets it
 gets a warning from GitHub and no deadline.
 
-From `v0.9`, on a public repository, the Action also gives the receipt a page at timewitness.dev/r/
-followed by the receipt's sha-256 and prints that address in the log and the summary. The page runs
-the verifier on the receipt alone, in the reader's browser, and is not evidence of anything the
-receipt is not. What is sent is the receipt, which carries the hash of the file and never the file.
+From `v0.9`, on a public repository, the Action also asks the app to publish the receipt at a page of
+its own, timewitness.dev/r/ followed by the receipt's sha-256, and prints that address in the log and
+the summary when the app takes it. Where the app does not take it, as while publishing is paused,
+the step warns and the job carries on. The page runs the verifier on the receipt alone, in the
+reader's browser, and is not evidence of anything the receipt is not. What is sent is the receipt,
+which carries the hash of the file and never the file.
 On a private or internal repository it is off unless `publish: true` is set, and `publish: false`
 turns it off anywhere.
 
