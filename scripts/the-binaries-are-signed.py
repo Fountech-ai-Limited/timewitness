@@ -157,7 +157,7 @@ SIGNER = (r"^https://github\.com/Fountech-ai-Limited/timewitness/\.github/workfl
 # as by name, so a repository renamed or recreated under the same name does not carry it, and the ref
 # and the workflow the job ran from, as the identity above does. The repository's number is written
 # here once, and `scripts/the-release-route-holds.py` fails while it differs from `REPO_NUMBER` there.
-LINUX_SUBJECT = "repo:Fountech-ai-Limited@110895113/timewitness@1401363610:environment:linux-signing:ref:refs/heads/main:job_workflow_ref:Fountech-ai-Limited/timewitness/.github/workflows/release.yml@refs/heads/main"
+LINUX_SUBJECT = "repo:luxlava@362372010/timewitness@1401363610:environment:linux-signing:ref:refs/heads/main:job_workflow_ref:luxlava/timewitness/.github/workflows/release.yml@refs/heads/main"
 OID_TOKEN_SUBJECT = "1.3.6.1.4.1.57264.1.24"
 
 
@@ -1181,7 +1181,7 @@ def fulcio_elsewhere():
 # The token subject each job of a release run from main is given: the Linux signing job's, and the
 # ones `sign-windows` and a job in no environment would be given.
 OUR_PREFIX = LINUX_SUBJECT.split(":environment:")[0]
-OUR_SUFFIX = ":ref:refs/heads/main:job_workflow_ref:Fountech-ai-Limited/timewitness/.github/workflows/release.yml@refs/heads/main"
+OUR_SUFFIX = ":ref:refs/heads/main:job_workflow_ref:luxlava/timewitness/.github/workflows/release.yml@refs/heads/main"
 WINDOWS_SUBJECT = OUR_PREFIX + ":environment:release" + OUR_SUFFIX
 NO_ENVIRONMENT_SUBJECT = OUR_PREFIX + ":ref:refs/heads/main" + OUR_SUFFIX
 
