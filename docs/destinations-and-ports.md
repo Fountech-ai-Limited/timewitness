@@ -36,7 +36,7 @@ Nine time servers behind six operators, two timestamp authorities and three rela
 chain. The three relays are three ways to reach the same chain rather than three beacons, and the
 two authorities are tried in order until one answers.
 
-## Four things the table does not say
+## Five things the table does not say
 
 **It is plain HTTP and not HTTPS, on port 80.** The client speaks nothing else and says so when it is
 handed an `https://` address. Everything it fetches is checked against a key or a pinned certificate
@@ -52,6 +52,12 @@ resolver is the machine's business and a host that cannot resolve a name reaches
 port the operating system picks, and the port it picked is written into the endpoint file the caller
 reads. A host firewall does not need a rule for it and an inbound rule from anywhere else would not
 reach it.
+
+**The Action reaches the app, and the command line does not.** After the stamp, the Action's
+publish step sends the receipt to `app.timewitness.dev` over HTTPS on 443/tcp with the runner's own
+curl, for a public repository unless its `publish` input says otherwise, and its `send` step does the
+same where `send` is on. Neither is the command line, so neither is in the table. Blocked, the
+receipt has no page and is not sent, and the job carries on.
 
 **`verify` connects to nothing at all.** Checking a receipt needs no destination on this list, no
 account and no call to us, and `crates/architecture/tests/verify_path_needs_nothing_of_ours.rs`
