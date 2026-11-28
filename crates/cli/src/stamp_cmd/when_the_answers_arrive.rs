@@ -724,9 +724,9 @@ fn stamped_from(argv: &[&str]) -> Made {
 
 #[test]
 fn a_stamp_over_a_digest_is_the_stamp_over_its_file() {
-    // Row 735. The app stamps the hash a browser sends, and the file never reaches it. What comes
-    // back has to be the receipt the file would have had, or the visitor holds something that checks
-    // against nothing they own.
+    // The app stamps the hash a browser sends, and the file never reaches it. What comes back has to
+    // be the receipt the file would have had, or the visitor holds something that checks against
+    // nothing they own.
     let dir = std::env::temp_dir().join(format!("timewitness-digest-stamp-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();

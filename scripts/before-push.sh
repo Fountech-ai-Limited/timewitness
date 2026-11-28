@@ -30,9 +30,9 @@
 # sends for a credential. A runner cannot stand in for it, since a runner only sees a commit once it
 # has been sent, and `scripts/steps-match.mjs` names it as the hook's own.
 #
-# The nightly backup push, where every ref goes to refs/backup/, runs that scan and the repository's
-# own rules and nothing else. Until 2026-11-17 it ran the whole of this file for every batch of refs,
-# which took longer than the push's own time limit of 900 seconds and turned the backup red.
+# A push that makes a ref under refs/backup/ is refused: anybody can list the refs of this
+# repository, and a copy of a working branch belongs in a private one. A push that only takes such
+# refs away runs the secret scan and the repository's own rules and nothing else.
 
 set -uo pipefail
 
@@ -47,10 +47,9 @@ cd "$root"
 # and quiet it waits ten seconds and no more, since git writes every line before the hook could ask.
 #
 # The lines are kept as read, for the secret scan, and each remote ref is held to refs/backup/. A push
-# whose every ref goes there is the nightly backup of this clone's branches, which nothing builds on
-# and no workflow runs for. Read off the refs git hands over and off nothing else, so a push with one
-# branch in it among the backups runs everything, and a run by hand, which hands over none, is never
-# a backup push.
+# whose every ref is there can only be taking backup refs away, since making one is refused below, and
+# nothing builds on that. Read off the refs git hands over and off nothing else, so a push with one
+# branch in it among them runs everything, and a run by hand, which hands over none, is never one.
 pushed="$(mktemp)"
 trap 'rm -f "$pushed"' EXIT
 backup_only=0
@@ -67,6 +66,15 @@ if [ ! -t 0 ]; then
     case "$local_sha" in
       *[!0]*) ;;
       *) continue ;;
+    esac
+    # Anybody can list this repository's refs, so a copy of a working branch is never made here,
+    # whatever machine it comes from. Taking one away is a deletion and was let through above.
+    case "$remote_ref" in
+      refs/backup/*)
+        echo "before-push: $remote_ref would put a copy of a working branch where anybody can list it; keep it in a private copy" >&2
+        refused_refs=1
+        continue
+        ;;
     esac
     python3 scripts/times-and-refs.py --ref "$remote_ref"
     status=$?
@@ -108,10 +116,9 @@ if [ -n "${TW_BEFORE_PUSH_REFS_ONLY:-}" ]; then
   exit 3
 fi
 
-# The nightly backup push: the secret scan over every commit the backup refs send, and the
-# repository's own rules, and no build, no lint and no suite. A key pushed to a backup ref is as public
-# on GitHub as one pushed to main, so neither is skipped; the rest is, because nothing is built from a
-# backup ref. `scan` is `step` under another name, so `scripts/steps-match.mjs`, which holds this
+# A push that only takes backup refs away: the secret scan and the repository's own rules, and no
+# build, no lint and no suite, because nothing is built from a ref that is going. `scan` is `step`
+# under another name, so `scripts/steps-match.mjs`, which holds this
 # file's steps to the workflow's, reads the two below once, where every push runs them.
 if [ "$backup_only" -eq 1 ]; then
   failed=()
@@ -336,6 +343,7 @@ step "The verifier page asks for nothing" bash -c "node scripts/verifier-page-of
 step "The page as a host serves it" node scripts/the-served-verifier-page.mjs --self-test
 step "Repository hygiene"  bash scripts/repo-hygiene.sh
 step "Repository hygiene still refuses its seeds" bash scripts/repo-hygiene.sh --self-test
+step "Nothing in it names how the work is organised" bash -c "python3 scripts/no-internal-reference.py --self-test && python3 scripts/no-internal-reference.py"
 step "The guards are written to the contract" bash -c "bash scripts/guard-lint.sh --self-test && bash scripts/guard-lint.sh scripts"
 step "The hook's steps are this file's" bash -c "node scripts/steps-match.mjs --self-test && node scripts/steps-match.mjs"
 step "The Action gives a receipt a page only where it should" bash scripts/action-publish.sh --self-test
