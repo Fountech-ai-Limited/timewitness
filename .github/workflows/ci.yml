@@ -19,6 +19,8 @@ jobs:
   check:
     name: build, lint and test
     runs-on: ubuntu-latest
+    # A normal run takes about 38 minutes. One that hangs is stopped at an hour rather than six.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
