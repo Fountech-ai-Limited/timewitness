@@ -81,6 +81,12 @@ pub fn usage() -> String {
     out.push_str("  timewitness stamp --subject <file> --key <file> --out <file> [options]\n");
     out.push_str("      Take a bounded-time receipt over the hash of a file. This one does use\n");
     out.push_str("      the network, because it has to ask the sources what time it is.\n\n");
+    out.push_str(
+        "      --digest <hex>      in place of --subject, the sha-256 of the file as 64\n",
+    );
+    out.push_str("                          hex characters, where you took it yourself and the\n");
+    out.push_str("                          file stays where it is. The receipt is the one\n");
+    out.push_str("                          --subject makes, and checks with verify --subject\n");
     out.push_str("      --rounds <n>        how many times to poll the sources, and a longer\n");
     out.push_str("                          wait. Below three the model cannot fit a line, so\n");
     out.push_str("                          the scatter of its own measurements is never\n");

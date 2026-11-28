@@ -60,9 +60,19 @@ pub fn sha256_payload(bytes: &[u8]) -> Payload {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(bytes);
+    sha256_payload_of_digest(hasher.finalize().into())
+}
+
+/// The payload record for a SHA-256 somebody has already taken, of a file this machine never sees.
+///
+/// `sha256_payload` comes through here too, so a record made from a file and one made from that
+/// file's digest are one record built one way, and cannot drift into two spellings of the same hash.
+/// A stamp over a digest is only worth having if it is the stamp the file would have had.
+#[must_use]
+pub fn sha256_payload_of_digest(digest: [u8; 32]) -> Payload {
     Payload {
         algorithm: "sha-256".to_string(),
-        hash: hasher.finalize().to_vec(),
+        hash: digest.to_vec(),
     }
 }
 
@@ -87,4 +97,20 @@ pub fn chain_link(signed_receipt: &[u8]) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(as_signed.as_deref().unwrap_or(signed_receipt));
     hasher.finalize().to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn a_digest_makes_the_record_its_file_makes() {
+        let file = b"a file that stays on the machine it was made on";
+        let digest: [u8; 32] = Sha256::digest(file).into();
+
+        assert_eq!(sha256_payload_of_digest(digest), sha256_payload(file));
+        assert_eq!(sha256_payload_of_digest(digest).algorithm, "sha-256");
+        assert_eq!(sha256_payload_of_digest(digest).hash, digest.to_vec());
+    }
 }
