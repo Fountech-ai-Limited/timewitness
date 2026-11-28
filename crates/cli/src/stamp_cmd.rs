@@ -1565,7 +1565,7 @@ mod tests {
         let prefixed = format!("0x{}", &EMPTY[..62]);
         let spaced = format!("{} {}", &EMPTY[..32], &EMPTY[32..]);
         let not_hex = format!("{}g", &EMPTY[..63]);
-        let wide = "é".repeat(32);
+        let wide = "\u{e9}".repeat(32);
         for bad in [
             "",
             short,
