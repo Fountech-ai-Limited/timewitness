@@ -1,0 +1,6 @@
+# Commits already published on main whose message names something scripts/no-internal-reference.py
+# now refuses. A published commit stays fetchable by its id whatever is done to the history, so a
+# rewrite would take nothing back. One full commit id, a space, the reason. Nothing else belongs here,
+# and an entry naming a commit the history does not hold is refused.
+a1356b81b5a47f22c0dd889acab450fa9adc7fd4 a commit message published on main, so it cannot be rewritten; read 2026-11-28
+7a71ffb4c13dc38b28eefc8600cd84aca3ab4d95 the merge commit of pull request 31, whose message repeats it; published on main, so it cannot be rewritten; read 2026-11-28

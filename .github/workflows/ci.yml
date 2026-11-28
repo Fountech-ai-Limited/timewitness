@@ -192,6 +192,29 @@ jobs:
         # watching it refuse anything.
         run: bash scripts/repo-hygiene.sh --self-test
 
+      - name: Nothing in it names how the work is organised
+        # Every tracked file and every commit message, read for a reference a stranger cannot follow:
+        # a numbered item of a list kept elsewhere, a row of one, or the name a machine was given.
+        # Watched refusing a seed of each shape first, so a reader that is not connected cannot pass.
+        # A commit already published is named in scripts/no-internal-reference-allowed.txt.
+        run: python3 scripts/no-internal-reference.py --self-test && python3 scripts/no-internal-reference.py
+
+      - name: Nor does its pull request, or a ref anyone can list
+        # A pull request's title and body and the refs the repository lists live on GitHub and not
+        # in the tree, so the step above never sees them. A copy of somebody's working branch under
+        # refs/backup/ is refused by name, wherever it was pushed from.
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+          EVENT: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            printf '%s\n\n%s\n' "$TITLE" "$BODY" > "$RUNNER_TEMP/pull-request.txt"
+            python3 scripts/no-internal-reference.py --message "$RUNNER_TEMP/pull-request.txt"
+          fi
+          python3 scripts/no-internal-reference.py --refs "https://github.com/$REPOSITORY"
+
       - name: The guards are written to the contract
         # Every shell script under scripts/ is read for the three shapes of shell that read a
         # check that could not run as a check that passed, and the lint is first watched refusing a
