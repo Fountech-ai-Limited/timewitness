@@ -136,8 +136,8 @@ self_test() {
 #!/usr/bin/env bash
 out='' body=''
 while [ $# -gt 0 ]; do
-    case "$1" in
-        -o) out="$2"; shift ;;
+    case "${1}" in
+        -o) out="${2}"; shift ;;
         --data-binary) body="${2#@}"; shift ;;
     esac
     shift
@@ -151,14 +151,14 @@ EOF
 
     # One case: the environment, then what the log and the summary must and must not say.
     case_of() {
-        local name="$1" want_page="$2" want_line="$3"
+        local name="${1}" want_page="${2}" want_line="${3}"
         shift 3
         summary="$scratch/summary"
         : > "$summary"
         rm -f "$scratch/seen"
         out=$(env -u TW_PUBLISH -u TW_VISIBILITY -u TW_PRIVATE -u TIMEWITNESS_RECEIPTS_URL \
             PATH="$scratch/bin:$PATH" TW_RECEIPT="$receipt" GITHUB_STEP_SUMMARY="$summary" \
-            FAKE_SEEN="$scratch/seen" "$@" bash "$0")
+            FAKE_SEEN="$scratch/seen" "$@" bash "${0}")
         local code=$?
         local summary_text
         summary_text=$(cat "$summary")
