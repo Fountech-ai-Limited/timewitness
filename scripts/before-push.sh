@@ -338,6 +338,7 @@ step "Repository hygiene"  bash scripts/repo-hygiene.sh
 step "Repository hygiene still refuses its seeds" bash scripts/repo-hygiene.sh --self-test
 step "The guards are written to the contract" bash -c "bash scripts/guard-lint.sh --self-test && bash scripts/guard-lint.sh scripts"
 step "The hook's steps are this file's" bash -c "node scripts/steps-match.mjs --self-test && node scripts/steps-match.mjs"
+step "The Action gives a receipt a page only where it should" bash scripts/action-publish.sh --self-test
 # CI runs this on the tree route, because it grades a commit and the served page is not in one. Here
 # the sibling checkout is on disk, so the same script compares all three and this machine is the one
 # place that catches a markdown change before it ships without the site copy beside it. Strictly more

@@ -22,7 +22,9 @@ use timewitness_receipt::schema::{Payload, Role};
 use timewitness_receipt::AgentKey;
 use timewitness_verify::{anchor_file, verify, Assessment, Floor, Subject};
 
-use super::{finish, late_rather_than_wrong, Deadline, Made, Outside, Reading, Signing};
+use super::{
+    finish, late_rather_than_wrong, what_is_stamped, Deadline, Made, Outside, Reading, Signing,
+};
 
 const SECOND: Nanos = NANOS_PER_SEC;
 
@@ -253,13 +255,25 @@ fn stamp_with(
     with_evidence: bool,
 ) -> Result<Made, String> {
     let key = AgentKey::from_seed(&[0x22; 32]);
+    // Through `--digest`, the way the app asks, so every capture below also holds the evidence a
+    // stamp over a digest gathers to what a stranger's verifier reads.
+    let line = [
+        "stamp".to_string(),
+        "--digest".to_string(),
+        crate::render::hex(&SUBJECT),
+    ];
+    let payload = what_is_stamped(&crate::args::parse(&line).expect("the parser takes these"))?;
+    assert_eq!(
+        payload,
+        Payload {
+            algorithm: "sha-256".into(),
+            hash: SUBJECT.to_vec(),
+        }
+    );
     let signing = Signing {
         key: &key,
         subject_hash: SUBJECT,
-        payload: Payload {
-            algorithm: "sha-256".into(),
-            hash: SUBJECT.to_vec(),
-        },
+        payload,
         sequence: 1,
         previous: None,
     };
@@ -658,4 +672,100 @@ fn a_corridor_is_late_up_to_the_wait_and_its_radius_and_no_further() {
         0
     ));
     assert!(!late_rather_than_wrong(&corridor(SECOND), &claim, wait));
+}
+
+/// The payload record as the receipt encodes it: a map of two, `alg` then `hash`, in the
+/// deterministic encoding, written out byte by byte here so the test does not ask the encoder what
+/// the encoder does.
+fn the_record_for(digest: &[u8; 32]) -> Vec<u8> {
+    let mut record = vec![0xa2, 0x63];
+    record.extend_from_slice(b"alg");
+    record.push(0x67);
+    record.extend_from_slice(b"sha-256");
+    record.push(0x64);
+    record.extend_from_slice(b"hash");
+    record.extend_from_slice(&[0x58, 0x20]);
+    record.extend_from_slice(digest);
+    record
+}
+
+fn times_in(haystack: &[u8], needle: &[u8]) -> usize {
+    haystack
+        .windows(needle.len())
+        .filter(|window| *window == needle)
+        .count()
+}
+
+/// A stamp made the way `timewitness stamp` makes one, from its own command line.
+fn stamped_from(argv: &[&str]) -> Made {
+    let mut line = vec!["stamp".to_string()];
+    line.extend(argv.iter().map(|s| (*s).to_string()));
+    let args = crate::args::parse(&line).expect("the parser takes these");
+    let payload = what_is_stamped(&args).expect("a payload record");
+    let clock = Clock::at(ROUND_32000947 + SECOND);
+    let mut outside = Elsewhere::at(&clock);
+    let key = AgentKey::from_seed(&[0x22; 32]);
+    let signing = Signing {
+        key: &key,
+        subject_hash: payload.hash.clone().try_into().expect("32 bytes"),
+        payload,
+        sequence: 1,
+        previous: None,
+    };
+    finish(
+        &mut outside,
+        a_reading(&clock, 0),
+        signing,
+        false,
+        Deadline::of(300),
+    )
+    .expect("a receipt")
+}
+
+#[test]
+fn a_stamp_over_a_digest_is_the_stamp_over_its_file() {
+    // Row 735. The app stamps the hash a browser sends, and the file never reaches it. What comes
+    // back has to be the receipt the file would have had, or the visitor holds something that checks
+    // against nothing they own.
+    let dir = std::env::temp_dir().join(format!("timewitness-digest-stamp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("never-shown.txt");
+    let bytes = b"a file the stamping machine is never shown";
+    std::fs::write(&file, bytes).unwrap();
+    let digest: [u8; 32] = timewitness_receipt::sha256_payload(bytes)
+        .hash
+        .try_into()
+        .expect("32 bytes");
+
+    let by_file = stamped_from(&["--subject", file.to_str().unwrap()]);
+    let by_digest = stamped_from(&["--digest", &crate::render::hex(&digest)]);
+
+    // The same reading, key and sequence, so every byte is the same, and the payload record with them.
+    assert_eq!(by_digest.signed, by_file.signed);
+    assert_eq!(by_digest.receipt.payload, by_file.receipt.payload);
+    // Once, in the canonical encoding.
+    assert_eq!(times_in(&by_digest.signed, &the_record_for(&digest)), 1);
+
+    // And it checks against the file, as `timewitness verify --subject` does, and against no other.
+    let against_the_file = verify(
+        &by_digest.signed,
+        Subject::Bytes(bytes),
+        &anchor_file::published(),
+        &Floor::default(),
+    );
+    assert!(
+        against_the_file.holds(),
+        "verify refused it: {}",
+        why_refused(&against_the_file)
+    );
+    let against_another = verify(
+        &by_digest.signed,
+        Subject::Bytes(b"a different file"),
+        &anchor_file::published(),
+        &Floor::default(),
+    );
+    assert!(!against_another.holds());
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

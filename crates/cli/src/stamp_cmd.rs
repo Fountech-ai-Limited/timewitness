@@ -64,7 +64,8 @@ use timewitness_core::{Attestation, MonotonicNanos, UnixNanos, Validity};
 use timewitness_platform::EnvironmentWatch;
 use timewitness_receipt::schema::{AgentClaim, Evidence, Payload, Receipt, Role, Scheme, TakenBy};
 use timewitness_receipt::{
-    chain_link, sha256_payload, signature_of, with_signature_witness, AgentKey,
+    chain_link, sha256_payload, sha256_payload_of_digest, signature_of, with_signature_witness,
+    AgentKey,
 };
 use timewitness_sources::drand::DrandClient;
 use timewitness_sources::ntp::{NtpClient, NtpServer};
@@ -328,25 +329,14 @@ pub fn run(args: &Args) -> Outcome {
         Err(text) => return fail(&text),
     };
 
-    let subject_path = match args.required("--subject") {
-        Ok(path) => path,
-        Err(e) => return fail(&e.0),
+    let payload = match what_is_stamped(args) {
+        Ok(payload) => payload,
+        Err(text) => return fail(&text),
     };
     let out_path = match args.required("--out") {
         Ok(path) => path,
         Err(e) => return fail(&e.0),
     };
-
-    let subject = match fs::read(subject_path) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            return fail(&timewitness_platform::files::unreadable(
-                std::path::Path::new(subject_path),
-                &e,
-            ))
-        }
-    };
-    let payload = sha256_payload(&subject);
     let subject_hash: [u8; 32] = match payload.hash.clone().try_into() {
         Ok(hash) => hash,
         Err(_) => return fail("a sha-256 hash is 32 bytes"),
@@ -439,6 +429,59 @@ pub fn run(args: &Args) -> Outcome {
     text.push_str(&whose_key(&render::hex(&receipt.agent_public_key)));
 
     Outcome { text, code: 0 }
+}
+
+/// The payload record this stamp signs, from a file or from the sha-256 somebody took of one.
+///
+/// `--digest` is for the caller who has the hash and not the file, or has the file and will not hand
+/// it over: a page that hashed it in a browser and sent nothing else. The record it makes is the
+/// record `--subject` makes for a file with that hash, built by the same function, so the receipt
+/// checks with `timewitness verify --subject` on the file and nobody reading it can tell which way it
+/// was asked for. The evidence is the same too, since every attestation is asked for over the hash
+/// and never over the file.
+///
+/// Both are refused before a key is made or a source is asked.
+fn what_is_stamped(args: &Args) -> Result<Payload, String> {
+    match (args.value("--subject"), args.value("--digest")) {
+        (Some(_), Some(_)) => {
+            Err("--subject and --digest say the same thing two ways; give one".into())
+        }
+        (Some(path), None) => fs::read(path)
+            .map(|bytes| sha256_payload(&bytes))
+            .map_err(|e| timewitness_platform::files::unreadable(std::path::Path::new(path), &e)),
+        (None, Some(text)) => a_sha256_digest(text).map(sha256_payload_of_digest),
+        (None, None) => Err(
+            "stamp needs --subject <file>, or --digest <sha-256> where the hash was taken already"
+                .into(),
+        ),
+    }
+}
+
+/// A sha-256 digest written as exactly 64 hexadecimal characters, or the sentence refusing it.
+///
+/// Stricter than `verify --digest`, which forgives spaces. A stamp signs whatever this returns, so
+/// nothing is guessed at: no spaces, no `0x`, no shorter or longer value padded or cut to fit. A
+/// value that is not a whole digest names nothing a receipt could stand for, and signing it would
+/// put our signature on a moment for no thing at all.
+fn a_sha256_digest(text: &str) -> Result<[u8; 32], String> {
+    if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!(
+            "--digest takes a sha-256 as exactly 64 hexadecimal characters, and {} is not one. \
+             `sha256sum <file>` prints one",
+            if text.len() > 80 {
+                format!("a value {} characters long", text.chars().count())
+            } else {
+                format!("{text:?}")
+            }
+        ));
+    }
+    let mut digest = [0u8; 32];
+    for (byte, pair) in digest.iter_mut().zip(text.as_bytes().chunks(2)) {
+        let high = (pair[0] as char).to_digit(16).unwrap_or(0);
+        let low = (pair[1] as char).to_digit(16).unwrap_or(0);
+        *byte = u8::try_from(high * 16 + low).unwrap_or(0);
+    }
+    Ok(digest)
 }
 
 /// The lines a stamp ends with, about the key that signed it.
@@ -1478,5 +1521,101 @@ mod tests {
         let outcome = run(&args);
         assert_eq!(outcome.code, 1);
         assert!(outcome.text.contains("--subject"), "{}", outcome.text);
+        assert!(outcome.text.contains("--digest"), "{}", outcome.text);
+    }
+
+    fn stamp_args(pairs: &[&str]) -> Args {
+        let mut argv = vec!["stamp".to_string()];
+        argv.extend(pairs.iter().map(|s| (*s).to_string()));
+        crate::args::parse(&argv).expect("the parser takes these")
+    }
+
+    /// The sha-256 of the empty file, which `sha256sum` prints for `/dev/null`.
+    const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    #[test]
+    fn a_digest_is_the_record_its_file_would_have_had() {
+        let dir = a_scratch_folder("digest-record");
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a-file.txt");
+        fs::write(&file, b"stamped by its hash alone").unwrap();
+        let hex = render::hex(&sha256_payload(&fs::read(&file).unwrap()).hash);
+
+        let by_file = what_is_stamped(&stamp_args(&["--subject", file.to_str().unwrap()]));
+        let by_digest = what_is_stamped(&stamp_args(&["--digest", &hex]));
+        let by_upper = what_is_stamped(&stamp_args(&["--digest", &hex.to_uppercase()]));
+
+        assert_eq!(by_digest, by_file);
+        assert_eq!(by_upper, by_file);
+        assert_eq!(
+            what_is_stamped(&stamp_args(&["--digest", EMPTY])),
+            Ok(sha256_payload(b""))
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn anything_but_a_whole_digest_is_refused_before_a_key_is_made() {
+        let dir = a_scratch_folder("digest-refused");
+        fs::create_dir_all(&dir).unwrap();
+        let key = dir.join("agent.key");
+        let out = dir.join("receipt.cbor");
+        let short = &EMPTY[..63];
+        let long = format!("{EMPTY}0");
+        let prefixed = format!("0x{}", &EMPTY[..62]);
+        let spaced = format!("{} {}", &EMPTY[..32], &EMPTY[32..]);
+        let not_hex = format!("{}g", &EMPTY[..63]);
+        let wide = "\u{e9}".repeat(32);
+        for bad in [
+            "",
+            short,
+            long.as_str(),
+            prefixed.as_str(),
+            spaced.as_str(),
+            not_hex.as_str(),
+            wide.as_str(),
+        ] {
+            let outcome = run(&stamp_args(&[
+                "--digest",
+                bad,
+                "--key",
+                key.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+                "--no-evidence",
+            ]));
+            assert_eq!(outcome.code, 1, "{bad:?} was taken: {}", outcome.text);
+            assert!(
+                outcome.text.contains("exactly 64 hexadecimal characters"),
+                "{bad:?}: {}",
+                outcome.text
+            );
+            assert!(!key.exists(), "{bad:?} left a key on disk");
+            assert!(!out.exists(), "{bad:?} left a receipt on disk");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_digest_and_a_file_together_are_refused() {
+        let dir = a_scratch_folder("digest-and-file");
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a-file.txt");
+        fs::write(&file, b"").unwrap();
+        let key = dir.join("agent.key");
+        let outcome = run(&stamp_args(&[
+            "--subject",
+            file.to_str().unwrap(),
+            "--digest",
+            EMPTY,
+            "--key",
+            key.to_str().unwrap(),
+            "--out",
+            dir.join("receipt.cbor").to_str().unwrap(),
+        ]));
+        assert_eq!(outcome.code, 1);
+        assert!(outcome.text.contains("give one"), "{}", outcome.text);
+        assert!(!key.exists());
+        let _ = fs::remove_dir_all(&dir);
     }
 }

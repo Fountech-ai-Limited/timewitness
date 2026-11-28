@@ -117,7 +117,8 @@ inputs:
   send:
     description: >-
       Also give a copy of the receipt to the app that keeps an organisation's receipts, as a step
-      after the stamp. Off by default, and with it off the Action makes no call to the app at all.
+      after the stamp. Off by default, and with it off this step makes no call to the app. Giving
+      the receipt a public page is the publish input's, a separate step with a setting of its own.
       The app is asked first with no credential, and where it does not answer as the app that
       takes machines, or is not open yet, this step warns and the credential stays on the runner.
       A TIMEWITNESS_APP set in the workflow's environment names another address of the app, such
@@ -128,6 +129,18 @@ inputs:
       checks the same with the free verifier whether or not the app holds a copy.
     required: false
     default: "false"
+  publish:
+    description: >-
+      Give the receipt a public page that checks it in the reader's browser, at
+      timewitness.dev/r/ followed by the receipt's sha-256, and print that address in the log and the
+      job summary. With auto, the default, this happens for a public repository and never for a
+      private or internal one, or where the event does not say which it is. With true it happens
+      whatever the repository is, and with false it never does. What is sent is the receipt alone,
+      which carries the hash of the file it stamps and never the file. A publish that fails is a
+      warning and never fails the job: the receipt is already written, and it checks the same with
+      the free verifier whether or not it has a page.
+    required: false
+    default: auto
 
 outputs:
   receipt:
@@ -180,6 +193,19 @@ runs:
         TW_IMAGE: ${{ inputs.image }}
         TW_ACTION_PATH: ${{ github.action_path }}
       run: bash "${{ github.action_path }}/scripts/action-stamp.sh"
+
+    # After the stamp, and like the send below it cannot fail the job: the script ends every path
+    # with a warning or a notice and exit 0. Whether the repository is public is read from the
+    # event, and where the event does not say, auto leaves the receipt without a page.
+    - name: Give the receipt a page and print its address
+      if: inputs.publish != 'false'
+      shell: bash
+      env:
+        TW_RECEIPT: ${{ steps.stamp.outputs.receipt }}
+        TW_PUBLISH: ${{ inputs.publish }}
+        TW_VISIBILITY: ${{ github.event.repository.visibility }}
+        TW_PRIVATE: ${{ github.event.repository.private }}
+      run: bash "${{ github.action_path }}/scripts/action-publish.sh" || true
 
     # Its own step, after the stamp, and one that cannot fail the job. The stamp has already
     # finished and written the receipt by the time this runs, so nothing here can change it.
